@@ -1,0 +1,31 @@
+[build-system]
+requires    = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chuk-tool-processor"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.11.3",
+]
+
+# Tell setuptools to look in src/ for your a2a package
+[tool.setuptools.packages.find]
+where   = ["src"]
+include = ["chuk_tool_processor*"]
+
+# pytest settings so it finds your src/ layout automatically
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-v"
+asyncio_default_fixture_loop_scope = "function"
+asyncio_mode = "strict"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.5",
+]
