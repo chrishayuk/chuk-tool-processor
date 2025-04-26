@@ -1,44 +1,44 @@
 # chuk_tool_processor/registry/provider.py
 """
-Registry provider that maintains a global tool registry.
+Global access to *the* tool-registry instance.
 """
+from __future__ import annotations
+
 from typing import Optional
 
-# imports
-from chuk_tool_processor.registry.interface import ToolRegistryInterface
-from chuk_tool_processor.registry.providers import get_registry
+from .interface import ToolRegistryInterface
+from .providers.memory import InMemoryToolRegistry   # default impl
+
+# ───────────────────────────────────────────────────────────────────────────
+_REGISTRY: Optional[ToolRegistryInterface] = None
+# ───────────────────────────────────────────────────────────────────────────
 
 
-class ToolRegistryProvider:
-    """
-    Global provider for a ToolRegistryInterface implementation.
-    Use `set_registry` to override (e.g., for testing).
-    
-    This class provides a singleton-like access to a registry implementation,
-    allowing components throughout the application to access the same registry
-    without having to pass it explicitly.
-    """
-    # Initialize with default registry
-    _registry: Optional[ToolRegistryInterface] = None
+def get_registry() -> ToolRegistryInterface:
+    """Return the single, process-wide registry instance."""
+    global _REGISTRY
+    if _REGISTRY is None:
+        _REGISTRY = InMemoryToolRegistry()
+    return _REGISTRY
 
-    @classmethod
-    def get_registry(cls) -> ToolRegistryInterface:
-        """
-        Get the current registry instance.
-        
-        Returns:
-            The current registry instance.
-        """
-        if cls._registry is None:
-            cls._registry = get_registry()
-        return cls._registry
 
-    @classmethod
-    def set_registry(cls, registry: ToolRegistryInterface) -> None:
-        """
-        Set the global registry instance.
-        
-        Args:
-            registry: The registry instance to use.
-        """
-        cls._registry = registry
+def set_registry(registry: ToolRegistryInterface) -> None:
+    """Swap in another implementation (tests, multi-process, …)."""
+    global _REGISTRY
+    _REGISTRY = registry
+
+
+# ------------------------------------------------------------------------- #
+# 🔌 backward-compat shim – lets old `from … import ToolRegistryProvider`
+#    statements keep working without changes.
+# ------------------------------------------------------------------------- #
+class ToolRegistryProvider:                          # noqa: D401
+    """Compatibility wrapper around the new helpers."""
+
+    @staticmethod
+    def get_registry() -> ToolRegistryInterface:     # same signature
+        return get_registry()
+
+    @staticmethod
+    def set_registry(registry: ToolRegistryInterface) -> None:
+        set_registry(registry)
