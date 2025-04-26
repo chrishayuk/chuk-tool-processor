@@ -1,1 +1,1 @@
-# chuk_tool_processor/plugins/parsers__init__.py
+# chuk_tool_processor/plugins/parsers/__init__.py

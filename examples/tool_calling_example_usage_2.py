@@ -12,7 +12,7 @@ from chuk_tool_processor.core.processor import ToolProcessor
 from chuk_tool_processor.execution.wrappers.retry import retryable
 from chuk_tool_processor.execution.wrappers.caching import cacheable
 from chuk_tool_processor.execution.wrappers.rate_limiting import rate_limited
-from chuk_tool_processor.utils.logging import request_logging, get_logger, log_context_span
+from chuk_tool_processor.logging import request_logging, get_logger, log_context_span
 
 # Set up logger
 logger = get_logger("example")

@@ -2,7 +2,7 @@
 import pytest
 import json
 
-from chuk_tool_processor.plugins.parsers.function_call_tool import FunctionCallPlugin
+from chuk_tool_processor.plugins.parsers.function_call_tool_plugin import FunctionCallPlugin
 from chuk_tool_processor.models.tool_call import ToolCall
 
 @pytest.fixture

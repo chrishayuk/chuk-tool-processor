@@ -1,41 +1,45 @@
 # chuk_tool_processor/plugins/xml_tool.py
-import re
+"""XML tool-call parser plugin.
+Understands `<tool name="..." args='{"x":1}'/>` single-line constructs –
+format used by many examples and test-fixtures.
+"""
+from __future__ import annotations
+
 import json
+import re
 from typing import List
 from pydantic import ValidationError
 
-# tool processor
+# imports
+from .base import ParserPlugin
 from chuk_tool_processor.models.tool_call import ToolCall
 
-class XmlToolPlugin:
-    """
-    Parse XML-like `<tool name="..." args='{"x":1}'/>` constructs,
-    supporting both single- and double-quoted attributes.
-    """
-    _pattern = re.compile(
-        r'<tool\s+'
-        r'name=(?P<q1>["\'])(?P<tool>.+?)(?P=q1)\s+'
-        r'args=(?P<q2>["\'])(?P<args>.*?)(?P=q2)\s*/>'
+
+
+class XmlToolPlugin(ParserPlugin):
+    """Parse XML-like tool-call tags."""
+
+    _TAG = re.compile(
+        r"<tool\s+"
+        r"name=(?P<q1>[\"\'])(?P<tool>.+?)(?P=q1)\s+"
+        r"args=(?P<q2>[\"\'])(?P<args>.*?)(?P=q2)\s*/>"
     )
 
-    def try_parse(self, raw: str) -> List[ToolCall]:
+    def try_parse(self, raw):  # type: ignore[override]
+        if not isinstance(raw, str):  # XML form only exists in strings
+            return []
+
         calls: List[ToolCall] = []
-        for m in self._pattern.finditer(raw):
-            tool_name = m.group('tool')
-            raw_args = m.group('args')
-            # Decode the JSON payload in the args attribute
+        for m in self._TAG.finditer(raw):
+            tool_name = m.group("tool")
+            raw_args = m.group("args")
             try:
                 args = json.loads(raw_args) if raw_args else {}
-            except (json.JSONDecodeError, ValidationError):
+            except json.JSONDecodeError:
                 args = {}
 
-            # Validate & construct the ToolCall
             try:
-                call = ToolCall(tool=tool_name, arguments=args)
-                calls.append(call)
+                calls.append(ToolCall(tool=tool_name, arguments=args))
             except ValidationError:
-                # Skip malformed calls
-                continue
-
+                continue  # skip malformed
         return calls
-

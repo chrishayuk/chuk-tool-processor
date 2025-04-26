@@ -24,7 +24,7 @@ from chuk_tool_processor.plugins.discovery import plugin, plugin_registry, disco
 from chuk_tool_processor.core.processor import ToolProcessor
 from chuk_tool_processor.registry import register_tool, ToolRegistryProvider
 from chuk_tool_processor.registry.providers.memory import InMemoryToolRegistry
-from chuk_tool_processor.utils.logging import get_logger
+from chuk_tool_processor.logging import get_logger
 
 # Set up logger
 logger = get_logger("plugin_example")

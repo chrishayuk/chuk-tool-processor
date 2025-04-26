@@ -1,7 +1,7 @@
 # tests/tool_processor/plugins/test_json_tool.py
 import pytest
 import json
-from chuk_tool_processor.plugins.parsers.json_tool import JsonToolPlugin
+from chuk_tool_processor.plugins.parsers.json_tool_plugin import JsonToolPlugin
 from chuk_tool_processor.models.tool_call import ToolCall
 
 @pytest.fixture

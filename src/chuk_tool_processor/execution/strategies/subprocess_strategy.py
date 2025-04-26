@@ -12,7 +12,7 @@ from concurrent.futures import ProcessPoolExecutor
 from chuk_tool_processor.models.execution_strategy import ExecutionStrategy
 from chuk_tool_processor.models.tool_call import ToolCall
 from chuk_tool_processor.models.tool_result import ToolResult
-from chuk_tool_processor.utils.logging import get_logger
+from chuk_tool_processor.logging import get_logger
 
 logger = get_logger("chuk_tool_processor.execution.subprocess_strategy")
 

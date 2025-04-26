@@ -29,12 +29,12 @@ from chuk_tool_processor.execution.tool_executor import ToolExecutor
 from chuk_tool_processor.execution.strategies.inprocess_strategy import InProcessStrategy
 from chuk_tool_processor.execution.strategies.subprocess_strategy import SubprocessStrategy
 
-from chuk_tool_processor.plugins.parsers.json_tool import JsonToolPlugin
+from chuk_tool_processor.plugins.parsers.json_tool_plugin import JsonToolPlugin
 from chuk_tool_processor.plugins.parsers.xml_tool import XmlToolPlugin
-from chuk_tool_processor.plugins.parsers.function_call_tool import FunctionCallPlugin
+from chuk_tool_processor.plugins.parsers.function_call_tool_plugin import FunctionCallPlugin
 from chuk_tool_processor.models.tool_call import ToolCall
 from chuk_tool_processor.models.tool_result import ToolResult
-from chuk_tool_processor.utils.logging import get_logger, log_context_span
+from chuk_tool_processor.logging import get_logger, log_context_span
 
 # Set up logger
 logger = get_logger("example")

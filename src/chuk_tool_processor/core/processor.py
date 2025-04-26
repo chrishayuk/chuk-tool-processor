@@ -13,7 +13,7 @@ from chuk_tool_processor.execution.wrappers.caching import CacheInterface, InMem
 from chuk_tool_processor.execution.wrappers.rate_limiting import RateLimiter, RateLimitedToolExecutor
 from chuk_tool_processor.execution.wrappers.retry import RetryConfig, RetryableToolExecutor
 from chuk_tool_processor.plugins.discovery import plugin_registry, discover_default_plugins
-from chuk_tool_processor.utils.logging import get_logger, log_context_span, request_logging, log_tool_call, metrics
+from chuk_tool_processor.logging import get_logger, log_context_span, request_logging, log_tool_call, metrics
 
 
 class ToolProcessor:

@@ -1,95 +1,118 @@
-import pytest
+"""
+Unit-tests for the delegating `SubprocessStrategy`.
+
+NB:  The real strategy now just wraps an `InProcessStrategy`, so we only
+     need to verify the high-level behaviour, not the fork/exec path.
+"""
+from __future__ import annotations
+
 import asyncio
-import os
 import time
 from datetime import datetime, timezone
-import importlib
 
-from chuk_tool_processor.execution.strategies.subprocess_strategy import SubprocessStrategy, _execute_tool_in_process
+import pytest
+
+from chuk_tool_processor.execution.strategies.subprocess_strategy import (
+    SubprocessStrategy,
+)
 from chuk_tool_processor.models.tool_call import ToolCall
-from chuk_tool_processor.models.tool_result import ToolResult
 
 
+# --------------------------------------------------------------------------- #
+# minimal fake registry
+# --------------------------------------------------------------------------- #
 class DummyRegistry:
     def __init__(self, tools=None):
-        # tools: dict of name -> implementation (class or instance)
         self._tools = tools or {}
 
     def get_tool(self, name):
         return self._tools.get(name)
 
 
-def test_tool_not_found(tmp_path):
-    registry = DummyRegistry()
-    strat = SubprocessStrategy(registry=registry, max_workers=1)
+# --------------------------------------------------------------------------- #
+# helper tool classes
+# --------------------------------------------------------------------------- #
+class SyncTool:
+    def _execute(self, x, y):
+        return x + y
 
-    call = ToolCall(tool='missing', arguments={})
-    results = asyncio.get_event_loop().run_until_complete(strat.run([call], timeout=0.1))
-    res = results[0]
-    assert res.error == 'Tool not found'
+
+class AsyncTool:
+    async def _aexecute(self, a, b):
+        await asyncio.sleep(0)
+        return a * b
+
+
+class SleepTool:
+    def _execute(self):  # still sync – used to force timeout quickly
+        time.sleep(0.2)
+        return "done"
+
+
+class ErrorTool:
+    def _execute(self):
+        raise RuntimeError("fail_op")
+
+
+# --------------------------------------------------------------------------- #
+# individual tests
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_tool_not_found():
+    strat = SubprocessStrategy(registry=DummyRegistry(), max_workers=1)
+
+    res = (await strat.run([ToolCall(tool="missing", arguments={})], timeout=0.1))[0]
+    assert res.error == "Tool not found"
     assert res.result is None
 
 
-def test_sync_tool_execution(tmp_path):
-    # Define a sync tool in this module
-    class SyncTool:
-        def execute(self, x, y):
-            return x + y
+@pytest.mark.asyncio
+async def test_sync_tool_execution():
+    reg = DummyRegistry({"add": SyncTool})
+    strat = SubprocessStrategy(registry=reg, max_workers=1)
 
-    registry = DummyRegistry(tools={'add': SyncTool})
-    strat = SubprocessStrategy(registry=registry, max_workers=1)
-    call = ToolCall(tool='add', arguments={'x': 2, 'y': 3})
-    results = asyncio.get_event_loop().run_until_complete(strat.run([call], timeout=1))
-    res = results[0]
+    res = (
+        await strat.run([ToolCall(tool="add", arguments={"x": 2, "y": 3})], timeout=1)
+    )[0]
     assert res.error is None
     assert res.result == 5
-    assert res.tool == 'add'
-    assert isinstance(res.start_time, datetime)
-    assert isinstance(res.end_time, datetime)
+    assert res.tool == "add"
+    assert isinstance(res.start_time, datetime) and isinstance(
+        res.end_time, datetime
+    )
+    assert res.end_time >= res.start_time
 
 
-def test_async_tool_execution(tmp_path):
-    # Define an async tool in this module
-    class AsyncTool:
-        async def execute(self, a, b):
-            await asyncio.sleep(0)
-            return a * b
+@pytest.mark.asyncio
+async def test_async_tool_execution():
+    reg = DummyRegistry({"mul": AsyncTool})
+    strat = SubprocessStrategy(registry=reg, max_workers=1)
 
-    registry = DummyRegistry(tools={'mul': AsyncTool})
-    strat = SubprocessStrategy(registry=registry, max_workers=1)
-    call = ToolCall(tool='mul', arguments={'a': 4, 'b': 5})
-    results = asyncio.get_event_loop().run_until_complete(strat.run([call], timeout=1))
-    res = results[0]
+    res = (
+        await strat.run([ToolCall(tool="mul", arguments={"a": 4, "b": 5})], timeout=1)
+    )[0]
     assert res.error is None
     assert res.result == 20
 
 
-def test_timeout_error(tmp_path):
-    # Sync tool that sleeps
-    class SleepTool:
-        def execute(self):
-            time.sleep(0.2)
-            return 'done'
+@pytest.mark.asyncio
+async def test_timeout_error():
+    reg = DummyRegistry({"sleep": SleepTool})
+    strat = SubprocessStrategy(registry=reg, max_workers=1)
 
-    registry = DummyRegistry(tools={'sleep': SleepTool})
-    strat = SubprocessStrategy(registry=registry, max_workers=1)
-    call = ToolCall(tool='sleep', arguments={})
-    results = asyncio.get_event_loop().run_until_complete(strat.run([call], timeout=0.05))
-    res = results[0]
-    assert 'Timeout after' in res.error
+    res = (
+        await strat.run([ToolCall(tool="sleep", arguments={})], timeout=0.05)
+    )[0]
     assert res.result is None
+    assert res.error.startswith("Timeout after")
 
 
-def test_unexpected_exception(tmp_path):
-    # Sync tool that raises
-    class ErrorTool:
-        def execute(self):
-            raise RuntimeError('fail_op')
+@pytest.mark.asyncio
+async def test_unexpected_exception():
+    reg = DummyRegistry({"err": ErrorTool})
+    strat = SubprocessStrategy(registry=reg, max_workers=1)
 
-    registry = DummyRegistry(tools={'err': ErrorTool})
-    strat = SubprocessStrategy(registry=registry, max_workers=1)
-    call = ToolCall(tool='err', arguments={})
-    results = asyncio.get_event_loop().run_until_complete(strat.run([call], timeout=1))
-    res = results[0]
-    assert res.error == 'fail_op'
+    res = (await strat.run([ToolCall(tool="err", arguments={})], timeout=1))[0]
     assert res.result is None
+    assert res.error == "fail_op"
+

@@ -1,205 +1,138 @@
 # chuk_tool_processor/plugins/discovery.py
+"""Plugin discovery & registry utilities for chuk_tool_processor"""
+from __future__ import annotations
+
 import importlib
 import inspect
-import pkgutil
-import sys
-from typing import Dict, List, Optional, Set, Type, Any
 import logging
+import pkgutil
+from typing import Any, Dict, List, Optional, Set, Type
 
 logger = logging.getLogger(__name__)
 
 
 class PluginRegistry:
-    """
-    Registry for discovered plugins.
-    """
-    def __init__(self):
+    """In‑memory registry keyed by *category → name*."""
+
+    def __init__(self) -> None:  # no side‑effects in import time
         self._plugins: Dict[str, Dict[str, Any]] = {}
-    
+
+    # ------------------------------------------------------------------
     def register_plugin(self, category: str, name: str, plugin: Any) -> None:
-        """
-        Register a plugin in the registry.
-        
-        Args:
-            category: Plugin category (e.g., "parser", "executor").
-            name: Plugin name.
-            plugin: Plugin implementation.
-        """
-        # Ensure category exists
-        if category not in self._plugins:
-            self._plugins[category] = {}
-            
-        # Register plugin
-        self._plugins[category][name] = plugin
-        logger.debug(f"Registered plugin: {category}.{name}")
-    
+        self._plugins.setdefault(category, {})[name] = plugin
+        logger.debug("Registered plugin %s.%s", category, name)
+
     def get_plugin(self, category: str, name: str) -> Optional[Any]:
-        """
-        Get a plugin from the registry.
-        
-        Args:
-            category: Plugin category.
-            name: Plugin name.
-            
-        Returns:
-            Plugin implementation or None if not found.
-        """
         return self._plugins.get(category, {}).get(name)
-    
-    def list_plugins(self, category: Optional[str] = None) -> Dict[str, List[str]]:
-        """
-        List registered plugins.
-        
-        Args:
-            category: Optional category filter.
-            
-        Returns:
-            Dict mapping categories to lists of plugin names.
-        """
+
+    def list_plugins(self, category: str | None = None) -> Dict[str, List[str]]:
         if category:
-            return {category: list(self._plugins.get(category, {}).keys())}
-        else:
-            return {cat: list(plugins.keys()) for cat, plugins in self._plugins.items()}
+            return {category: list(self._plugins.get(category, {}))}
+        return {cat: list(names) for cat, names in self._plugins.items()}
 
 
 class PluginDiscovery:
-    """
-    Discovers and loads plugins from specified packages.
-    """
-    def __init__(self, registry: PluginRegistry):
-        """
-        Initialize the plugin discovery.
-        
-        Args:
-            registry: Plugin registry to register discovered plugins.
-        """
+    """Recursively scans packages for plugin classes and registers them."""
+
+    def __init__(self, registry: PluginRegistry) -> None:
         self.registry = registry
-        self._discovered_modules: Set[str] = set()
-    
+        self._seen: Set[str] = set()
+
+        # optional parser subsystem
+        try:
+            from chuk_tool_processor.parsers.base import ParserPlugin as _PP  # noqa: WPS433
+        except ModuleNotFoundError:
+            _PP = None
+        self.ParserPlugin = _PP
+
+        # ExecutionStrategy always present inside core models
+        from chuk_tool_processor.models.execution_strategy import ExecutionStrategy  # noqa: WPS433
+
+        self.ExecutionStrategy = ExecutionStrategy
+
+    # ------------------------------------------------------------------
     def discover_plugins(self, package_paths: List[str]) -> None:
-        """
-        Discover plugins in the specified packages.
-        
-        Args:
-            package_paths: List of package paths to search for plugins.
-        """
-        for package_path in package_paths:
-            self._discover_in_package(package_path)
-    
-    def _discover_in_package(self, package_path: str) -> None:
-        """
-        Discover plugins in a single package.
-        
-        Args:
-            package_path: Package path to search.
-        """
+        for pkg in package_paths:
+            self._walk(pkg)
+
+    # ------------------------------------------------------------------
+    def _walk(self, pkg_path: str) -> None:
         try:
-            # Import the package
-            package = importlib.import_module(package_path)
-            
-            # Walk through package modules
-            for _, name, is_pkg in pkgutil.iter_modules(package.__path__, package.__name__ + "."):
-                # Skip if already processed
-                if name in self._discovered_modules:
-                    continue
-                    
-                self._discovered_modules.add(name)
-                
-                # Process module
-                self._process_module(name)
-                
-                # Recurse into subpackages
-                if is_pkg:
-                    self._discover_in_package(name)
-                    
-        except ImportError as e:
-            logger.warning(f"Failed to import package {package_path}: {e}")
-    
-    def _process_module(self, module_name: str) -> None:
-        """
-        Process a module for plugins.
-        
-        Args:
-            module_name: Module name to process.
-        """
+            pkg = importlib.import_module(pkg_path)
+        except ImportError as exc:  # pragma: no cover
+            logger.warning("Cannot import package %s: %s", pkg_path, exc)
+            return
+
+        for _, mod_name, is_pkg in pkgutil.iter_modules(pkg.__path__, pkg.__name__ + "."):
+            if mod_name in self._seen:
+                continue
+            self._seen.add(mod_name)
+            self._inspect_module(mod_name)
+            if is_pkg:
+                self._walk(mod_name)
+
+    # ------------------------------------------------------------------
+    def _inspect_module(self, mod_name: str) -> None:
         try:
-            # Import the module
-            module = importlib.import_module(module_name)
-            
-            # Find all classes in the module
-            for attr_name in dir(module):
-                attr = getattr(module, attr_name)
-                
-                # Skip non-classes
-                if not inspect.isclass(attr):
-                    continue
-                
-                # Check if it's a plugin
-                self._register_if_plugin(attr)
-                
-        except ImportError as e:
-            logger.warning(f"Failed to import module {module_name}: {e}")
-    
-    def _register_if_plugin(self, cls: Type) -> None:
-        """
-        Register a class if it's a plugin.
-        
-        Args:
-            cls: Class to check.
-        """
-        # Check if it's a parser plugin
-        if hasattr(cls, "try_parse") and callable(getattr(cls, "try_parse")):
-            self.registry.register_plugin("parser", cls.__name__, cls())
-        
-        # Check if it's an execution strategy
-        if "ExecutionStrategy" in [base.__name__ for base in cls.__mro__]:
+            module = importlib.import_module(mod_name)
+        except ImportError as exc:  # pragma: no cover
+            logger.warning("Cannot import module %s: %s", mod_name, exc)
+            return
+
+        for attr in module.__dict__.values():
+            if inspect.isclass(attr):
+                self._maybe_register(attr)
+
+    # ------------------------------------------------------------------
+    def _maybe_register(self, cls: Type) -> None:
+        """Register *cls* in all relevant plugin categories."""
+
+        # ---------------- parser plugins ------------------------------
+        looks_like_parser = callable(getattr(cls, "try_parse", None))
+        if looks_like_parser and not inspect.isabstract(cls):
+            # skip ABC base itself if available
+            if self.ParserPlugin and cls is self.ParserPlugin:
+                pass
+            else:
+                self.registry.register_plugin("parser", cls.__name__, cls())
+
+        # --------------- execution strategies -------------------------
+        if (
+            issubclass(cls, self.ExecutionStrategy)
+            and cls is not self.ExecutionStrategy
+            and not inspect.isabstract(cls)
+        ):
             self.registry.register_plugin("execution_strategy", cls.__name__, cls)
-        
-        # Check if it has plugin metadata
-        if hasattr(cls, "_plugin_meta"):
-            meta = getattr(cls, "_plugin_meta")
+
+        # --------------- explicit @plugin decorator -------------------
+        meta = getattr(cls, "_plugin_meta", None)
+        if meta and not inspect.isabstract(cls):
             self.registry.register_plugin(meta.get("category", "unknown"), meta.get("name", cls.__name__), cls())
 
 
-def plugin(category: str, name: Optional[str] = None):
-    """
-    Decorator to mark a class as a plugin.
-    
-    Example:
-        @plugin(category="parser", name="custom_format")
-        class CustomFormatParser:
-            def try_parse(self, raw: str):
-                ...
-    """
+# ----------------------------------------------------------------------
+# public decorator helper
+# ----------------------------------------------------------------------
+
+def plugin(category: str, name: str | None = None):
+    """Decorator to mark a class as a plugin for explicit registration."""
+
     def decorator(cls):
-        cls._plugin_meta = {
-            "category": category,
-            "name": name or cls.__name__
-        }
+        cls._plugin_meta = {"category": category, "name": name or cls.__name__}
         return cls
+
     return decorator
 
 
-# Initialize the global plugin registry
+# ----------------------------------------------------------------------
+# Singletons & convenience wrappers
+# ----------------------------------------------------------------------
 plugin_registry = PluginRegistry()
 
 
-# Function to discover plugins in the default package
-def discover_default_plugins():
-    """
-    Discover plugins in the default package.
-    """
-    discovery = PluginDiscovery(plugin_registry)
-    discovery.discover_plugins(["chuk_tool_processor.plugins"])
+def discover_default_plugins() -> None:
+    PluginDiscovery(plugin_registry).discover_plugins(["chuk_tool_processor.plugins"])
 
 
-# Function to discover plugins in custom packages
-def discover_plugins(package_paths: List[str]):
-    """
-    Discover plugins in custom packages.
-    
-    Args:
-        package_paths: List of package paths to search for plugins.
-    """
-    discovery = PluginDiscovery(plugin_registry)
-    discovery.discover_plugins(package_paths)
+def discover_plugins(package_paths: List[str]) -> None:
+    PluginDiscovery(plugin_registry).discover_plugins(package_paths)

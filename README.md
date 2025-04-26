@@ -214,7 +214,7 @@ plugin_registry.register_plugin("parser", "BracketToolParser", BracketToolParser
 ### Structured Logging
 
 ```python
-from chuk_tool_processor.utils.logging import get_logger, log_context_span
+from chuk_tool_processor.logging import get_logger, log_context_span
 
 logger = get_logger("my_module")
 

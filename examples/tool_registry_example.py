@@ -25,7 +25,7 @@ from chuk_tool_processor.registry import (
     ToolRegistryProvider,
     get_registry
 )
-from chuk_tool_processor.utils.logging import get_logger
+from chuk_tool_processor.logging import get_logger
 
 # Set up logger
 logger = get_logger("example")

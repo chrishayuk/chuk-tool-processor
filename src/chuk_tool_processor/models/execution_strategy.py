@@ -1,4 +1,4 @@
-# chuk_tool_processor/execution/execution_strategy.py
+# chuk_tool_processor/models/execution_strategy.py
 from abc import ABC, abstractmethod
 from typing import List, Optional
 
