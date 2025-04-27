@@ -72,14 +72,14 @@ class ToolProcessor:
         
         # Apply optional wrappers
         if enable_retries:
-            self.logger.info("Enabling retry logic")
+            self.logger.debug("Enabling retry logic")
             self.executor = RetryableToolExecutor(
                 executor=self.executor,
                 default_config=RetryConfig(max_retries=max_retries)
             )
         
         if enable_rate_limiting:
-            self.logger.info("Enabling rate limiting")
+            self.logger.debug("Enabling rate limiting")
             rate_limiter = RateLimiter(
                 global_limit=global_rate_limit,
                 tool_limits=tool_rate_limits
@@ -90,7 +90,7 @@ class ToolProcessor:
             )
         
         if enable_caching:
-            self.logger.info("Enabling result caching")
+            self.logger.debug("Enabling result caching")
             cache = InMemoryCache(default_ttl=cache_ttl)
             self.executor = CachingToolExecutor(
                 executor=self.executor,
@@ -116,7 +116,7 @@ class ToolProcessor:
                 for name in parser_names
             ]
         
-        self.logger.info(f"Initialized with {len(self.parsers)} parser plugins")
+        self.logger.debug(f"Initialized with {len(self.parsers)} parser plugins")
     
     async def process_text(
         self,
@@ -139,16 +139,16 @@ class ToolProcessor:
         """
         # Create request context
         with request_logging(request_id) as req_id:
-            self.logger.info(f"Processing text ({len(text)} chars)")
+            self.logger.debug(f"Processing text ({len(text)} chars)")
             
             # Extract tool calls
             calls = await self._extract_tool_calls(text)
             
             if not calls:
-                self.logger.info("No tool calls found")
+                self.logger.debug("No tool calls found")
                 return []
             
-            self.logger.info(f"Found {len(calls)} tool calls")
+            self.logger.debug(f"Found {len(calls)} tool calls")
             
             # Execute tool calls
             with log_context_span("tool_execution", {"num_calls": len(calls)}):

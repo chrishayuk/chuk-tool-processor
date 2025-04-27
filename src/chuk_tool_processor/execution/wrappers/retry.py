@@ -103,7 +103,7 @@ class RetryableToolExecutor:
                 if result.error:
                     last_error = result.error
                     if config.should_retry(attempt, error_str=result.error):
-                        logger.info(
+                        logger.debug(
                             f"Retrying tool {call.tool} after error: {result.error} (attempt {attempt + 1})"
                         )
                         await asyncio.sleep(config.get_delay(attempt))
