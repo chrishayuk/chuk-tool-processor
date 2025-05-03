@@ -10,6 +10,7 @@ The CHUK Tool Processor is a Python library designed to handle the execution of 
 2. **Executing tools** with proper isolation and error handling
 3. **Managing tool executions** with retry logic, caching, and rate limiting
 4. **Monitoring tool usage** with comprehensive logging
+5. **MCP (Model Context Protocol) Integration** for remote tool execution
 
 ## Features
 
@@ -23,6 +24,7 @@ The CHUK Tool Processor is a Python library designed to handle the execution of 
 - **Retry Logic**: Automatically retry transient failures with exponential backoff
 - **Structured Logging**: Comprehensive logging system for debugging and monitoring
 - **Plugin Discovery**: Dynamically discover and load plugins from packages
+- **MCP Integration**: Connect to and execute remote tools via Model Context Protocol
 
 ## Installation
 
@@ -88,6 +90,159 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+```
+
+## MCP Integration
+
+The CHUK Tool Processor supports Model Context Protocol (MCP) for connecting to remote tool servers. This enables distributed tool execution and integration with third-party services.
+
+### MCP with Stdio Transport
+
+```python
+import asyncio
+from chuk_tool_processor.mcp import setup_mcp_stdio
+
+async def main():
+    # Configure MCP server
+    config_file = "server_config.json"
+    servers = ["echo", "calculator", "search"]
+    server_names = {0: "echo", 1: "calculator", 2: "search"}
+    
+    # Setup MCP with stdio transport
+    processor, stream_manager = await setup_mcp_stdio(
+        config_file=config_file,
+        servers=servers,
+        server_names=server_names,
+        namespace="mcp",  # All tools will be registered under this namespace
+        enable_caching=True,
+        enable_retries=True
+    )
+    
+    # Process text with MCP tool calls
+    llm_text = """
+    Let me echo your message using the MCP server.
+    
+    <tool name="mcp.echo" args='{"message": "Hello from MCP!"}'/>
+    """
+    
+    results = await processor.process_text(llm_text)
+    
+    for result in results:
+        print(f"Tool: {result.tool}")
+        print(f"Result: {result.result}")
+    
+    # Clean up
+    await stream_manager.close()
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+### MCP Server Configuration
+
+Create a server configuration file (`server_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "echo": {
+      "command": "uv",
+      "args": ["--directory", "/path/to/echo-server", "run", "src/echo_server/main.py"]
+    },
+    "calculator": {
+      "command": "node",
+      "args": ["/path/to/calculator-server/index.js"]
+    },
+    "search": {
+      "command": "python",
+      "args": ["/path/to/search-server/main.py"]
+    }
+  }
+}
+```
+
+### Namespaced Tool Access
+
+MCP tools are automatically registered in both their namespace and the default namespace:
+
+```python
+# These are equivalent:
+<tool name="echo" args='{"message": "Hello"}'/>
+<tool name="mcp.echo" args='{"message": "Hello"}'/>
+```
+
+### MCP with SSE Transport
+
+```python
+import asyncio
+from chuk_tool_processor.mcp import setup_mcp_sse
+
+async def main():
+    # Configure SSE servers
+    sse_servers = [
+        {
+            "name": "weather",
+            "url": "https://api.example.com/sse/weather",
+            "api_key": "your_api_key"
+        },
+        {
+            "name": "geocoding",
+            "url": "https://api.example.com/sse/geocoding"
+        }
+    ]
+    
+    # Setup MCP with SSE transport
+    processor, stream_manager = await setup_mcp_sse(
+        servers=sse_servers,
+        server_names={0: "weather", 1: "geocoding"},
+        namespace="remote",
+        enable_caching=True
+    )
+    
+    # Process tool calls
+    llm_text = """
+    Get the weather for New York.
+    
+    <tool name="remote.weather" args='{"location": "New York", "units": "imperial"}'/>
+    """
+    
+    results = await processor.process_text(llm_text)
+    
+    await stream_manager.close()
+```
+
+### MCP Stream Manager
+
+The `StreamManager` class handles all MCP communication:
+
+```python
+from chuk_tool_processor.mcp.stream_manager import StreamManager
+
+# Create and initialize
+stream_manager = await StreamManager.create(
+    config_file="config.json",
+    servers=["echo", "search"],
+    transport_type="stdio"
+)
+
+# Get available tools
+tools = stream_manager.get_all_tools()
+for tool in tools:
+    print(f"Tool: {tool['name']}")
+
+# Get server information
+server_info = stream_manager.get_server_info()
+for server in server_info:
+    print(f"Server: {server['name']}, Status: {server['status']}")
+
+# Call a tool directly
+result = await stream_manager.call_tool(
+    tool_name="echo",
+    arguments={"message": "Hello"}
+)
+
+# Clean up
+await stream_manager.close()
 ```
 
 ## Advanced Usage
@@ -248,11 +403,16 @@ The tool processor has several key components organized into a modular structure
    - `plugins/discovery.py`: Plugin discovery mechanism
    - `plugins/parsers/`: Parser plugins for different formats
 
-5. **Utils**: Shared utilities
+5. **MCP Integration**: Model Context Protocol support
+   - `mcp/stream_manager.py`: Manages MCP server connections
+   - `mcp/transport/`: Transport implementations (stdio, SSE)
+   - `mcp/setup_mcp_*.py`: Easy setup functions for MCP integration
+
+6. **Utils**: Shared utilities
    - `utils/logging.py`: Structured logging system
    - `utils/validation.py`: Argument and result validation
 
-6. **Core**: Central components
+7. **Core**: Central components
    - `core/processor.py`: Main processor for handling tool calls
    - `core/exceptions.py`: Exception hierarchy
 
@@ -263,6 +423,8 @@ The repository includes several example scripts:
 - `examples/tool_registry_example.py`: Demonstrates tool registration and usage
 - `examples/plugin_example.py`: Shows how to create and use custom plugins
 - `examples/tool_calling_example_usage.py`: Basic example demonstrating tool execution
+- `examples/mcp_stdio_example.py`: MCP stdio transport demonstration
+- `examples/mcp_stdio_example_calling_usage.py`: Complete MCP integration example
 
 Run examples with:
 
@@ -275,6 +437,9 @@ uv run examples/plugin_example.py
 
 # Tool execution example
 uv run examples/tool_calling_example_usage.py
+
+# MCP example
+uv run examples/mcp_stdio_example.py
 
 # Enable debug logging
 LOGLEVEL=DEBUG uv run examples/tool_calling_example_usage.py
