@@ -11,3 +11,6 @@ wheels/
 
 # env
 .env
+
+# DS Store
+.DS_Store

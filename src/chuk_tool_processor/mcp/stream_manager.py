@@ -5,299 +5,299 @@ StreamManager for CHUK Tool Processor.
 from __future__ import annotations
 
 import asyncio
-import json
-from typing import Dict, List, Optional, Any
+from typing import Any, Dict, List, Optional, Tuple
 
-# tool processor imports
+# --------------------------------------------------------------------------- #
+#  CHUK imports                                                               #
+# --------------------------------------------------------------------------- #
 from chuk_mcp.config import load_config
-from chuk_tool_processor.mcp.transport import MCPBaseTransport, StdioTransport, SSETransport
+from chuk_tool_processor.mcp.transport import (
+    MCPBaseTransport,
+    StdioTransport,
+    SSETransport,
+)
 from chuk_tool_processor.logging import get_logger
 
-# logger
 logger = get_logger("chuk_tool_processor.mcp.stream_manager")
+
 
 class StreamManager:
     """
     Manager for MCP server streams with support for multiple transport types.
     """
-    
-    def __init__(self):
-        """Initialize the StreamManager."""
+
+    # ------------------------------------------------------------------ #
+    #  construction                                                      #
+    # ------------------------------------------------------------------ #
+    def __init__(self) -> None:
         self.transports: Dict[str, MCPBaseTransport] = {}
         self.server_info: List[Dict[str, Any]] = []
         self.tool_to_server_map: Dict[str, str] = {}
         self.server_names: Dict[int, str] = {}
         self.all_tools: List[Dict[str, Any]] = []
         self._lock = asyncio.Lock()
-        
+
+    # ------------------------------------------------------------------ #
+    #  factory helpers                                                   #
+    # ------------------------------------------------------------------ #
     @classmethod
     async def create(
         cls,
         config_file: str,
         servers: List[str],
         server_names: Optional[Dict[int, str]] = None,
-        transport_type: str = "stdio"
-    ) -> StreamManager:
-        """
-        Create and initialize a StreamManager.
-        
-        Args:
-            config_file: Path to the config file
-            servers: List of server names to connect to
-            server_names: Optional mapping of server indices to names
-            transport_type: Transport type ("stdio" or "sse")
-            
-        Returns:
-            Initialized StreamManager
-        """
-        manager = cls()
-        await manager.initialize(config_file, servers, server_names, transport_type)
-        return manager
-        
+        transport_type: str = "stdio",
+    ) -> "StreamManager":
+        inst = cls()
+        await inst.initialize(config_file, servers, server_names, transport_type)
+        return inst
+
     @classmethod
     async def create_with_sse(
         cls,
         servers: List[Dict[str, str]],
-        server_names: Optional[Dict[int, str]] = None
-    ) -> StreamManager:
-        """
-        Create and initialize a StreamManager with SSE transport.
-        
-        Args:
-            servers: List of server configurations with "name" and "url" keys
-            server_names: Optional mapping of server indices to names
-            
-        Returns:
-            Initialized StreamManager
-        """
-        manager = cls()
-        await manager.initialize_with_sse(servers, server_names)
-        return manager
-        
+        server_names: Optional[Dict[int, str]] = None,
+    ) -> "StreamManager":
+        inst = cls()
+        await inst.initialize_with_sse(servers, server_names)
+        return inst
+
+    # ------------------------------------------------------------------ #
+    #  initialisation – stdio / sse                                      #
+    # ------------------------------------------------------------------ #
     async def initialize(
         self,
         config_file: str,
         servers: List[str],
         server_names: Optional[Dict[int, str]] = None,
-        transport_type: str = "stdio"
+        transport_type: str = "stdio",
     ) -> None:
-        """
-        Initialize the StreamManager.
-        
-        Args:
-            config_file: Path to the config file
-            servers: List of server names to connect to
-            server_names: Optional mapping of server indices to names
-            transport_type: Transport type ("stdio" or "sse")
-        """
         async with self._lock:
-            # Store server names mapping
             self.server_names = server_names or {}
-            
-            # Initialize servers
-            for i, server_name in enumerate(servers):
+
+            for idx, server_name in enumerate(servers):
                 try:
                     if transport_type == "stdio":
-                        # Load configuration
-                        server_params = await load_config(config_file, server_name)
-                        
-                        # Create transport
-                        transport = StdioTransport(server_params)
+                        params = await load_config(config_file, server_name)
+                        transport: MCPBaseTransport = StdioTransport(params)
                     elif transport_type == "sse":
-                        # For SSE, we would parse the config differently
-                        # This is just a placeholder
                         transport = SSETransport("http://localhost:8000")
                     else:
-                        logger.error(f"Unsupported transport type: {transport_type}")
+                        logger.error("Unsupported transport type: %s", transport_type)
                         continue
-                    
-                    # Initialize transport
+
                     if not await transport.initialize():
-                        logger.error(f"Failed to initialize transport for server: {server_name}")
+                        logger.error("Failed to init %s", server_name)
                         continue
-                        
-                    # Store transport
+
+                    #  store transport
                     self.transports[server_name] = transport
-                    
-                    # Check server is responsive
-                    ping_result = await transport.send_ping()
-                    status = "Up" if ping_result else "Down"
-                    
-                    # Get available tools
+
+                    #  ping + gather tools
+                    status = "Up" if await transport.send_ping() else "Down"
                     tools = await transport.get_tools()
-                    
-                    # Map tools to server
-                    for tool in tools:
-                        tool_name = tool.get("name")
-                        if tool_name:
-                            self.tool_to_server_map[tool_name] = server_name
-                    
-                    # Add to all tools
+
+                    for t in tools:
+                        name = t.get("name")
+                        if name:
+                            self.tool_to_server_map[name] = server_name
                     self.all_tools.extend(tools)
-                    
-                    # Add server info
-                    self.server_info.append({
-                        "id": i,
-                        "name": server_name,
-                        "tools": len(tools),
-                        "status": status
-                    })
-                    
-                    logger.info(f"Initialized server {server_name} with {len(tools)} tools")
-                    
-                except Exception as e:
-                    logger.error(f"Error initializing server {server_name}: {e}")
-                    
-            logger.info(f"StreamManager initialized with {len(self.transports)} servers and {len(self.all_tools)} tools")
-            
+
+                    self.server_info.append(
+                        {
+                            "id": idx,
+                            "name": server_name,
+                            "tools": len(tools),
+                            "status": status,
+                        }
+                    )
+                    logger.info("Initialised %s – %d tool(s)", server_name, len(tools))
+                except Exception as exc:  # noqa: BLE001
+                    logger.error("Error initialising %s: %s", server_name, exc)
+
+            logger.info(
+                "StreamManager ready – %d server(s), %d tool(s)",
+                len(self.transports),
+                len(self.all_tools),
+            )
+
     async def initialize_with_sse(
         self,
         servers: List[Dict[str, str]],
-        server_names: Optional[Dict[int, str]] = None
+        server_names: Optional[Dict[int, str]] = None,
     ) -> None:
-        """
-        Initialize the StreamManager with SSE transport.
-        
-        Args:
-            servers: List of server configurations with "name" and "url" keys
-            server_names: Optional mapping of server indices to names
-        """
         async with self._lock:
-            # Store server names mapping
             self.server_names = server_names or {}
-            
-            # Initialize servers
-            for i, server_config in enumerate(servers):
-                server_name = server_config.get("name")
-                url = server_config.get("url")
-                api_key = server_config.get("api_key")
-                
-                if not server_name or not url:
-                    logger.error(f"Invalid server configuration: {server_config}")
+
+            for idx, cfg in enumerate(servers):
+                name, url = cfg.get("name"), cfg.get("url")
+                if not (name and url):
+                    logger.error("Bad server config: %s", cfg)
                     continue
-                
                 try:
-                    # Create transport
-                    transport = SSETransport(url, api_key)
-                    
-                    # Initialize transport
+                    transport = SSETransport(url, cfg.get("api_key"))
                     if not await transport.initialize():
-                        logger.error(f"Failed to initialize SSE transport for server: {server_name}")
+                        logger.error("Failed to init SSE %s", name)
                         continue
-                        
-                    # Store transport
-                    self.transports[server_name] = transport
-                    
-                    # Check server is responsive
-                    ping_result = await transport.send_ping()
-                    status = "Up" if ping_result else "Down"
-                    
-                    # Get available tools
+
+                    self.transports[name] = transport
+                    status = "Up" if await transport.send_ping() else "Down"
                     tools = await transport.get_tools()
-                    
-                    # Map tools to server
-                    for tool in tools:
-                        tool_name = tool.get("name")
-                        if tool_name:
-                            self.tool_to_server_map[tool_name] = server_name
-                    
-                    # Add to all tools
+
+                    for t in tools:
+                        tname = t.get("name")
+                        if tname:
+                            self.tool_to_server_map[tname] = name
                     self.all_tools.extend(tools)
-                    
-                    # Add server info
-                    self.server_info.append({
-                        "id": i,
-                        "name": server_name,
-                        "tools": len(tools),
-                        "status": status
-                    })
-                    
-                    logger.info(f"Initialized SSE server {server_name} with {len(tools)} tools")
-                    
-                except Exception as e:
-                    logger.error(f"Error initializing SSE server {server_name}: {e}")
-            
-            logger.info(f"StreamManager initialized with {len(self.transports)} SSE servers and {len(self.all_tools)} tools")
-    
+
+                    self.server_info.append(
+                        {"id": idx, "name": name, "tools": len(tools), "status": status}
+                    )
+                    logger.info("Initialised SSE %s – %d tool(s)", name, len(tools))
+                except Exception as exc:  # noqa: BLE001
+                    logger.error("Error initialising SSE %s: %s", name, exc)
+
+            logger.info(
+                "StreamManager ready – %d SSE server(s), %d tool(s)",
+                len(self.transports),
+                len(self.all_tools),
+            )
+
+    # ------------------------------------------------------------------ #
+    #  queries                                                           #
+    # ------------------------------------------------------------------ #
     def get_all_tools(self) -> List[Dict[str, Any]]:
-        """
-        Get all available tools.
-        
-        Returns:
-            List of tool definitions
-        """
         return self.all_tools
-        
+
     def get_server_for_tool(self, tool_name: str) -> Optional[str]:
-        """
-        Get the server name for a tool.
-        
-        Args:
-            tool_name: Tool name
-            
-        Returns:
-            Server name or None if not found
-        """
         return self.tool_to_server_map.get(tool_name)
-        
+
     def get_server_info(self) -> List[Dict[str, Any]]:
-        """
-        Get information about all servers.
-        
-        Returns:
-            List of server info dictionaries
-        """
         return self.server_info
-        
+
+    # ------------------------------------------------------------------ #
+    #  EXTRA HELPERS – ping / resources / prompts                        #
+    # ------------------------------------------------------------------ #
+    async def ping_servers(self) -> List[Dict[str, Any]]:
+        """
+        Ping *every* connected server and return a status list:
+
+        `[{"server": "sqlite", "ok": True}, … ]`
+        """
+        async def _ping_one(name: str, tr: MCPBaseTransport):
+            try:
+                ok = await tr.send_ping()
+            except Exception:  # pragma: no cover
+                ok = False
+            return {"server": name, "ok": ok}
+
+        tasks = [_ping_one(n, t) for n, t in self.transports.items()]
+        return await asyncio.gather(*tasks)
+
+    async def list_resources(self) -> List[Dict[str, Any]]:
+        """
+        Fetch **all resources** from every server via the transport’s
+        *list_resources()* helper and flatten the result.
+        """
+        out: List[Dict[str, Any]] = []
+
+        async def _one(name: str, tr: MCPBaseTransport):
+            if not hasattr(tr, "list_resources"):
+                logger.debug("Transport %s has no list_resources()", name)
+                return
+            try:
+                res = await tr.list_resources()  # type: ignore[arg-type]
+                for item in res.get("resources", []):
+                    item = dict(item)
+                    item["server"] = name
+                    out.append(item)
+            except Exception as exc:
+                logger.debug("resources/list failed for %s: %s", name, exc)
+
+        await asyncio.gather(*(_one(n, t) for n, t in self.transports.items()))
+        return out
+
+    async def list_prompts(self) -> List[Dict[str, Any]]:
+        """
+        Fetch **all prompts** from every server via the transport’s
+        *list_prompts()* helper and flatten the result.
+        """
+        out: List[Dict[str, Any]] = []
+
+        async def _one(name: str, tr: MCPBaseTransport):
+            if not hasattr(tr, "list_prompts"):
+                logger.debug("Transport %s has no list_prompts()", name)
+                return
+            try:
+                res = await tr.list_prompts()  # type: ignore[arg-type]
+                for item in res.get("prompts", []):
+                    item = dict(item)
+                    item["server"] = name
+                    out.append(item)
+            except Exception as exc:
+                logger.debug("prompts/list failed for %s: %s", name, exc)
+
+        await asyncio.gather(*(_one(n, t) for n, t in self.transports.items()))
+        return out
+
+    # ------------------------------------------------------------------ #
+    #  tool execution                                                    #
+    # ------------------------------------------------------------------ #
     async def call_tool(
         self,
         tool_name: str,
         arguments: Dict[str, Any],
-        server_name: Optional[str] = None
+        server_name: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """
-        Call a tool.
-        
-        Args:
-            tool_name: Tool name
-            arguments: Tool arguments
-            server_name: Optional server name override
-            
-        Returns:
-            Tool result
-        """
-        # Get server name
-        if not server_name:
-            server_name = self.get_server_for_tool(tool_name)
-            
+        server_name = server_name or self.get_server_for_tool(tool_name)
         if not server_name or server_name not in self.transports:
-            return {
-                "isError": True,
-                "error": f"No server found for tool: {tool_name}"
-            }
-            
-        # Get transport
-        transport = self.transports[server_name]
-        
-        # Call tool
-        return await transport.call_tool(tool_name, arguments)
-    
+            return {"isError": True, "error": f"No server for tool {tool_name!r}"}
+        return await self.transports[server_name].call_tool(tool_name, arguments)
+
+    # ------------------------------------------------------------------ #
+    #  shutdown                                                          #
+    # ------------------------------------------------------------------ #
     async def close(self) -> None:
-        """Close all transports."""
-        close_tasks = []
-        for name, transport in self.transports.items():
-            close_tasks.append(transport.close())
-        
-        if close_tasks:
+        tasks = [tr.close() for tr in self.transports.values()]
+        if tasks:
             try:
-                await asyncio.gather(*close_tasks)
-            except asyncio.CancelledError:
-                # Ignore cancellation during cleanup
+                await asyncio.gather(*tasks)
+            except asyncio.CancelledError:  # pragma: no cover
                 pass
-            except Exception as e:
-                logger.error(f"Error closing transports: {e}")
-        
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Error during close: %s", exc)
+
         self.transports.clear()
         self.server_info.clear()
         self.tool_to_server_map.clear()
         self.all_tools.clear()
+
+    # ------------------------------------------------------------------ #
+    #  backwards-compat: streams helper                                   #
+    # ------------------------------------------------------------------ #
+    def get_streams(self) -> List[Tuple[Any, Any]]:
+        """
+        Return a list of ``(read_stream, write_stream)`` tuples for **all**
+        transports.  Older CLI commands (`/resources`, `/prompts`, …) rely on
+        this helper instead of talking to transports directly.
+        """
+        pairs: List[Tuple[Any, Any]] = []
+
+        for tr in self.transports.values():
+            # 1️⃣: if the transport offers its own helper, use it
+            if hasattr(tr, "get_streams") and callable(tr.get_streams):
+                pairs.extend(tr.get_streams())  # type: ignore[arg-type]
+                continue
+
+            # 2️⃣: fall back to raw attributes (stdio transport)
+            rd = getattr(tr, "read_stream", None)
+            wr = getattr(tr, "write_stream", None)
+            if rd and wr:
+                pairs.append((rd, wr))
+
+        return pairs
+
+    # attribute alias
+    @property
+    def streams(self) -> List[Tuple[Any, Any]]:  # pragma: no cover
+        return self.get_streams()
