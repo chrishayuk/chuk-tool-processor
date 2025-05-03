@@ -179,11 +179,6 @@ class StreamManager:
     #  EXTRA HELPERS – ping / resources / prompts                        #
     # ------------------------------------------------------------------ #
     async def ping_servers(self) -> List[Dict[str, Any]]:
-        """
-        Ping *every* connected server and return a status list:
-
-        `[{"server": "sqlite", "ok": True}, … ]`
-        """
         async def _ping_one(name: str, tr: MCPBaseTransport):
             try:
                 ok = await tr.send_ping()
@@ -191,23 +186,21 @@ class StreamManager:
                 ok = False
             return {"server": name, "ok": ok}
 
-        tasks = [_ping_one(n, t) for n, t in self.transports.items()]
-        return await asyncio.gather(*tasks)
+        return await asyncio.gather(*(_ping_one(n, t) for n, t in self.transports.items()))
 
     async def list_resources(self) -> List[Dict[str, Any]]:
-        """
-        Fetch **all resources** from every server via the transport’s
-        *list_resources()* helper and flatten the result.
-        """
         out: List[Dict[str, Any]] = []
 
         async def _one(name: str, tr: MCPBaseTransport):
             if not hasattr(tr, "list_resources"):
-                logger.debug("Transport %s has no list_resources()", name)
                 return
             try:
-                res = await tr.list_resources()  # type: ignore[arg-type]
-                for item in res.get("resources", []):
+                res = await tr.list_resources()  # type: ignore[attr-defined]
+                # accept either {"resources": [...]} **or** a plain list
+                resources = (
+                    res.get("resources", []) if isinstance(res, dict) else res
+                )
+                for item in resources:
                     item = dict(item)
                     item["server"] = name
                     out.append(item)
@@ -218,19 +211,15 @@ class StreamManager:
         return out
 
     async def list_prompts(self) -> List[Dict[str, Any]]:
-        """
-        Fetch **all prompts** from every server via the transport’s
-        *list_prompts()* helper and flatten the result.
-        """
         out: List[Dict[str, Any]] = []
 
         async def _one(name: str, tr: MCPBaseTransport):
             if not hasattr(tr, "list_prompts"):
-                logger.debug("Transport %s has no list_prompts()", name)
                 return
             try:
-                res = await tr.list_prompts()  # type: ignore[arg-type]
-                for item in res.get("prompts", []):
+                res = await tr.list_prompts()  # type: ignore[attr-defined]
+                prompts = res.get("prompts", []) if isinstance(res, dict) else res
+                for item in prompts:
                     item = dict(item)
                     item["server"] = name
                     out.append(item)
@@ -251,7 +240,11 @@ class StreamManager:
     ) -> Dict[str, Any]:
         server_name = server_name or self.get_server_for_tool(tool_name)
         if not server_name or server_name not in self.transports:
-            return {"isError": True, "error": f"No server for tool {tool_name!r}"}
+            # wording kept exactly for unit-test expectation
+            return {
+                "isError": True,
+                "error": f"No server found for tool: {tool_name}",
+            }
         return await self.transports[server_name].call_tool(tool_name, arguments)
 
     # ------------------------------------------------------------------ #
@@ -273,23 +266,20 @@ class StreamManager:
         self.all_tools.clear()
 
     # ------------------------------------------------------------------ #
-    #  backwards-compat: streams helper                                   #
+    #  backwards-compat: streams helper                                  #
     # ------------------------------------------------------------------ #
     def get_streams(self) -> List[Tuple[Any, Any]]:
         """
         Return a list of ``(read_stream, write_stream)`` tuples for **all**
-        transports.  Older CLI commands (`/resources`, `/prompts`, …) rely on
-        this helper instead of talking to transports directly.
+        transports.  Older CLI commands rely on this helper.
         """
         pairs: List[Tuple[Any, Any]] = []
 
         for tr in self.transports.values():
-            # 1️⃣: if the transport offers its own helper, use it
             if hasattr(tr, "get_streams") and callable(tr.get_streams):
                 pairs.extend(tr.get_streams())  # type: ignore[arg-type]
                 continue
 
-            # 2️⃣: fall back to raw attributes (stdio transport)
             rd = getattr(tr, "read_stream", None)
             wr = getattr(tr, "write_stream", None)
             if rd and wr:
@@ -297,7 +287,7 @@ class StreamManager:
 
         return pairs
 
-    # attribute alias
+    # convenience alias
     @property
     def streams(self) -> List[Tuple[Any, Any]]:  # pragma: no cover
         return self.get_streams()
