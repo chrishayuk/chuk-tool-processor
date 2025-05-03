@@ -9,6 +9,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "chuk-mcp>=0.1.12",
     "dotenv>=0.9.9",
     "openai>=1.76.0",
     "pydantic>=2.11.3",
@@ -32,4 +33,5 @@ asyncio_mode = "strict"
 dev = [
     "pytest-asyncio>=0.26.0",
     "pytest>=8.3.5",
+    "colorama>=0.4.6",
 ]
