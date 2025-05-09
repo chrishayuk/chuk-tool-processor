@@ -174,6 +174,34 @@ class StreamManager:
 
     def get_server_info(self) -> List[Dict[str, Any]]:
         return self.server_info
+    
+    async def list_tools(self, server_name: str) -> List[Dict[str, Any]]:
+        """
+        List all tools available from a specific server.
+        
+        This method is required by ProxyServerManager for proper tool discovery.
+        
+        Args:
+            server_name: Name of the server to query
+            
+        Returns:
+            List of tool definitions from the server
+        """
+        if server_name not in self.transports:
+            logger.error(f"Server '{server_name}' not found in transports")
+            return []
+        
+        # Get the transport for this server
+        transport = self.transports[server_name]
+        
+        try:
+            # Call the get_tools method on the transport
+            tools = await transport.get_tools()
+            logger.debug(f"Found {len(tools)} tools for server {server_name}")
+            return tools
+        except Exception as e:
+            logger.error(f"Error listing tools for server {server_name}: {e}")
+            return []
 
     # ------------------------------------------------------------------ #
     #  EXTRA HELPERS – ping / resources / prompts                        #
