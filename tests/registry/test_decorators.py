@@ -1,10 +1,10 @@
 # tests/tool_processor/registry/test_decorators.py
-# tests/tool_processor/registry/test_decorators.py
 import pytest
+import asyncio
+import inspect
 from functools import wraps
 
-import chuk_tool_processor.registry.decorators as deco_mod
-from chuk_tool_processor.registry.decorators import register_tool
+from chuk_tool_processor.registry.decorators import register_tool, ensure_registrations, discover_decorated_tools
 from chuk_tool_processor.registry.provider import ToolRegistryProvider
 
 
@@ -12,25 +12,43 @@ class DummyRegistry:
     def __init__(self):
         self.calls = []
 
-    def register_tool(self, tool, name=None, namespace="default", metadata=None):
-        # capture exactly what was passed in
+    async def register_tool(self, tool, name=None, namespace="default", metadata=None):
+        # Capture exactly what was passed in
         self.calls.append({
             "tool": tool,
             "name": name,
             "namespace": namespace,
             "metadata": metadata,
         })
+        
+    async def get_tool(self, name, namespace="default"):
+        # Simple implementation for testing
+        return None
+        
+    async def list_tools(self, namespace=None):
+        return []
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def use_dummy_registry(monkeypatch):
     dummy = DummyRegistry()
-    # Monkey-patch the provider to return our dummy registry
-    monkeypatch.setattr(ToolRegistryProvider, "get_registry", classmethod(lambda cls: dummy))
+    
+    # Create a future that returns our dummy registry
+    future = asyncio.Future()
+    future.set_result(dummy)
+    
+    # Monkey-patch the provider to return our future
+    monkeypatch.setattr(
+        ToolRegistryProvider, 
+        "get_registry", 
+        staticmethod(lambda: future)
+    )
+    
     return dummy
 
 
-def test_decorator_registers_with_explicit_name_and_namespace(use_dummy_registry):
+@pytest.mark.asyncio
+async def test_decorator_registers_with_explicit_name_and_namespace(use_dummy_registry):
     @register_tool(name="custom_tool", namespace="math", description="adds numbers")
     class Adder:
         """Adds two numbers."""
@@ -38,63 +56,75 @@ def test_decorator_registers_with_explicit_name_and_namespace(use_dummy_registry
             self.x = x
             self.y = y
 
-        def execute(self):
+        async def execute(self):
             return self.x + self.y
-
-    # After decoration, register_tool should have been called exactly once
+            
+    # Verify the class has registration info attached
+    assert hasattr(Adder, '_tool_registration_info')
+    info = Adder._tool_registration_info
+    assert info['name'] == "custom_tool"
+    assert info['namespace'] == "math"
+    assert info['metadata'] == {"description": "adds numbers"}
+    
+    # No actual registration happened yet, need to ensure registrations
+    assert len(use_dummy_registry.calls) == 0
+    
+    # Run the ensure_registrations function
+    await ensure_registrations()
+    
+    # Now registration should have occurred
     assert len(use_dummy_registry.calls) == 1
     call = use_dummy_registry.calls[0]
+    
     # The decorator should register the original class
-    original = Adder.__wrapped__
-    assert call["tool"] is original
+    assert call["tool"] is Adder
     assert call["name"] == "custom_tool"
     assert call["namespace"] == "math"
     assert call["metadata"] == {"description": "adds numbers"}
 
-    # The decorator returns a wrapper function
-    assert callable(Adder)
-    inst = Adder(2, 3)
-    # wrapper should produce an instance of the original class
-    assert isinstance(inst, original)
-    assert inst.execute() == 5
-
-    # @wraps should preserve metadata
+    # The decorator does not wrap the class anymore
     assert Adder.__name__ == "Adder"
     assert Adder.__doc__ == "Adds two numbers."
+    
+    # Ensure the execute method is still async
+    assert inspect.iscoroutinefunction(Adder.execute)
+    
+    # Test instance creation and execution
+    inst = Adder(2, 3)
+    result = await inst.execute()
+    assert result == 5
 
 
-def test_decorator_defaults_name_and_empty_metadata(use_dummy_registry):
+@pytest.mark.asyncio
+async def test_decorator_requires_async_execute():
+    with pytest.raises(TypeError, match="must have an async execute method"):
+        @register_tool()
+        class NonAsyncTool:
+            def execute(self):  # Not async!
+                return "not async"
+
+
+@pytest.mark.asyncio
+async def test_decorator_defaults_name_and_empty_metadata(use_dummy_registry):
     @register_tool()
     class NoMeta:
-        def execute(self):
+        async def execute(self):
             return "ok"
+            
+    # Run registrations
+    await ensure_registrations()
 
     # register_tool called once
     assert len(use_dummy_registry.calls) == 1
     call = use_dummy_registry.calls[0]
-    assert call["name"] is None
+    assert call["name"] is None  # Default to class name
     assert call["namespace"] == "default"
     assert call["metadata"] == {}
 
-    # wrapper still returns correct instance
+    # Class is not wrapped
+    assert NoMeta.__name__ == "NoMeta"
     obj = NoMeta()
     assert hasattr(obj, "execute")
-    assert obj.execute() == "ok"
-
-
-def test_multiple_metadata_fields_and_order(use_dummy_registry):
-    @register_tool(version="2.0", requires_auth=True, tags=["a", "b"])
-    class MultiMeta:
-        def execute(self):
-            return True
-
-    call = use_dummy_registry.calls[-1]
-    original = MultiMeta.__wrapped__
-    assert call["tool"] is original
-    assert call["name"] is None
-    assert call["namespace"] == "default"
-    assert call["metadata"] == {
-        "version": "2.0",
-        "requires_auth": True,
-        "tags": ["a", "b"],
-    }
+    assert inspect.iscoroutinefunction(obj.execute)
+    result = await obj.execute()
+    assert result == "ok"

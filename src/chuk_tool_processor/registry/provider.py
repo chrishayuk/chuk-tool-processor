@@ -1,5 +1,6 @@
+# chuk_tool_processor/registry/provider.py
 """
-Global access to *the* tool registry instance.
+Global access to the async tool registry instance.
 
 There are two public faces:
 
@@ -8,92 +9,130 @@ There are two public faces:
       and memoises it in the module-level variable ``_REGISTRY``.  
     • `set_registry()` lets callers replace or reset that singleton.
 
-2.  **`ToolRegistryProvider` shim**  
-    Earlier versions exposed a static wrapper.  Tests rely on being able to
-    monkey-patch the *module-level* factory and to clear the cached instance
-    by setting `ToolRegistryProvider._registry = None`.  We therefore keep a
-    **separate class-level cache** (`_registry`) and call the *current*
-    module-level `get_registry()` **only when the cache is empty**.
+2.  **`ToolRegistryProvider` class**  
+    Provides static methods for async-safe access to the registry.
 
 The contract verified by the test-suite is:
 
 * The module-level factory is invoked **exactly once** per fresh cache.
-* `ToolRegistryProvider.set_registry(obj)` overrides subsequent retrievals.
-* `ToolRegistryProvider.set_registry(None)` resets the cache so the next
-  `get_registry()` call invokes (and honours any monkey-patched) factory.
+* `await ToolRegistryProvider.set_registry(obj)` overrides subsequent retrievals.
+* `await ToolRegistryProvider.set_registry(None)` resets the cache so the next
+  `await get_registry()` call invokes (and honours any monkey-patched) factory.
 """
 from __future__ import annotations
 
-from typing import Optional
+import asyncio
+import importlib
+import sys
+from typing import Optional, Callable, Awaitable, Dict, Any
 
+# registry
 from .interface import ToolRegistryInterface
-from .providers.memory import InMemoryToolRegistry
 
 # --------------------------------------------------------------------------- #
 # Module-level singleton used by the helper functions
 # --------------------------------------------------------------------------- #
 _REGISTRY: Optional[ToolRegistryInterface] = None
+_REGISTRY_LOCK = asyncio.Lock()
 # --------------------------------------------------------------------------- #
 
 
-def _default_registry() -> ToolRegistryInterface:
-    """Create the default in-memory registry."""
+async def _default_registry() -> ToolRegistryInterface:
+    """Create the default in-memory registry asynchronously."""
+    # Import here to avoid circular import
+    from .providers.memory import InMemoryToolRegistry
     return InMemoryToolRegistry()
 
 
-def get_registry() -> ToolRegistryInterface:
+async def get_registry() -> ToolRegistryInterface:
     """
-    Return the process-wide registry, creating it on first use.
-
-    This function *may* be monkey-patched in tests; call it via
-    ``globals()["get_registry"]()`` if you need the latest binding.
+    Return the process-wide registry asynchronously, creating it on first use.
+    
+    This function is thread-safe and will only create the registry once,
+    even with concurrent calls.
     """
     global _REGISTRY
     if _REGISTRY is None:
-        _REGISTRY = _default_registry()
+        async with _REGISTRY_LOCK:
+            # Double-check pattern: check again after acquiring the lock
+            if _REGISTRY is None:
+                _REGISTRY = await _default_registry()
     return _REGISTRY
 
 
-def set_registry(registry: ToolRegistryInterface | None) -> None:
+async def set_registry(registry: ToolRegistryInterface | None) -> None:
     """
-    Replace or clear the global registry.
+    Replace or clear the global registry asynchronously.
 
     Passing ``None`` resets the singleton so that the next `get_registry()`
     call recreates it (useful in tests).
     """
     global _REGISTRY
-    _REGISTRY = registry
+    async with _REGISTRY_LOCK:
+        _REGISTRY = registry
 
 
 # --------------------------------------------------------------------------- #
-# Back-compat shim used by legacy import paths and the test-suite
+# Provider class for consistent access to the registry
 # --------------------------------------------------------------------------- #
-class ToolRegistryProvider:                       # noqa: D401
-    """Legacy static wrapper retaining historical semantics."""
+class ToolRegistryProvider:
+    """Async static wrapper for registry access."""
 
-    # The test-suite directly mutates this attribute, so we keep it.
+    # Thread-safe singleton management
     _registry: Optional[ToolRegistryInterface] = None
+    _lock = asyncio.Lock()
 
     # ------------------------ public API ------------------------ #
     @staticmethod
-    def get_registry() -> ToolRegistryInterface:
+    async def get_registry() -> ToolRegistryInterface:
         """
-        Return the cached instance or, if absent, call the *current*
-        module-level `get_registry()` exactly once to populate it.
+        Return the cached instance or initialize a new one asynchronously.
+        
+        This method ensures thread-safety when initializing the registry.
         """
         if ToolRegistryProvider._registry is None:
-            # Honour any runtime monkey-patching of the factory.
-            ToolRegistryProvider._registry = globals()["get_registry"]()
+            async with ToolRegistryProvider._lock:
+                # Check again after acquiring the lock
+                if ToolRegistryProvider._registry is None:
+                    # Dynamically import to get the latest definition
+                    module = sys.modules[__name__]
+                    get_registry_func: Callable[[], Awaitable[ToolRegistryInterface]] = getattr(
+                        module, "get_registry"
+                    )
+                    # Call it to get the registry
+                    ToolRegistryProvider._registry = await get_registry_func()
+        
         return ToolRegistryProvider._registry
 
     @staticmethod
-    def set_registry(registry: ToolRegistryInterface | None) -> None:
+    async def set_registry(registry: ToolRegistryInterface | None) -> None:
         """
-        Override the cached registry.
+        Override the cached registry asynchronously.
 
         *   If ``registry`` is an object, all subsequent `get_registry()`
             calls return it without touching the factory.
         *   If ``registry`` is ``None``, the cache is cleared so the next
-            `get_registry()` call invokes the (possibly patched) factory.
+            `get_registry()` call invokes the factory.
         """
-        ToolRegistryProvider._registry = registry
+        async with ToolRegistryProvider._lock:
+            ToolRegistryProvider._registry = registry
+            
+    @staticmethod
+    async def reset() -> None:
+        """
+        Reset both the module-level and class-level registry caches.
+        
+        This is primarily used in tests to ensure a clean state.
+        """
+        async with ToolRegistryProvider._lock:
+            ToolRegistryProvider._registry = None
+            await set_registry(None)
+            
+    @staticmethod
+    async def get_global_registry() -> ToolRegistryInterface:
+        """
+        Get the module-level registry directly.
+        
+        This bypasses the class-level cache and always returns the module-level registry.
+        """
+        return await get_registry()
