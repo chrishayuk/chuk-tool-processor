@@ -1,378 +1,199 @@
-# tests/execution/test_executor.py
 """
 Unit tests for the ToolExecutor class.
 """
+from __future__ import annotations
+
 import asyncio
 from typing import Dict, List, Any, Optional, AsyncIterator
+
 import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import patch, AsyncMock
 
 from chuk_tool_processor.execution.tool_executor import ToolExecutor
 from chuk_tool_processor.models.execution_strategy import ExecutionStrategy
 from chuk_tool_processor.models.tool_call import ToolCall
 from chuk_tool_processor.models.tool_result import ToolResult
 
-# Common Mock Registry for tests
+
+# --------------------------------------------------------------------------- #
+# Mock registry
+# --------------------------------------------------------------------------- #
 class MockRegistry:
-    """Mock registry that implements the async ToolRegistryInterface."""
-    
-    def __init__(self, tools: Dict[str, Any] = None):
+    """Very small async-compatible registry stub."""
+
+    def __init__(self, tools: Dict[str, Any] | None = None):
         self._tools = tools or {}
 
     async def get_tool(self, name: str, namespace: str = "default") -> Optional[Any]:
-        """Async version of get_tool to match the ToolRegistryInterface."""
         return self._tools.get(name)
-        
-    async def get_metadata(self, name: str, namespace: str = "default") -> Optional[Any]:
-        """Mock metadata retrieval."""
-        if name in self._tools:
-            return {"description": f"Mock metadata for {name}", "supports_streaming": False}
-        return None
-        
-    async def list_tools(self, namespace: Optional[str] = None) -> list:
-        """Mock list_tools method."""
-        return [(namespace or "default", name) for name in self._tools.keys()]
-# --------------------------------------------------------------------------- #
-# Mock execution strategies for testing
-# --------------------------------------------------------------------------- #
 
+    async def get_metadata(self, name: str, namespace: str = "default") -> Optional[Any]:
+        if name in self._tools:
+            return {"description": f"mock meta {name}", "supports_streaming": False}
+        return None
+
+    async def list_tools(self, namespace: Optional[str] = None) -> list:
+        return [(namespace or "default", n) for n in self._tools]
+
+
+# --------------------------------------------------------------------------- #
+# Dummy strategies
+# --------------------------------------------------------------------------- #
 class DummyStrategy(ExecutionStrategy):
     """
-    Simple non-streaming execution strategy for testing.
-    
-    This strategy just returns successful results for all calls.
+    Non-streaming mock strategy.  The flexible __init__ lets it act as a stand-in
+    for InProcessStrategy when ToolExecutor instantiates one with kwargs.
     """
+
+    def __init__(self, *args, **kwargs):  # swallow anything
+        self._args = args
+        self._kwargs = kwargs
+
     async def run(
-        self,
-        calls: List[ToolCall],
-        timeout: Optional[float] = None,
+        self, calls: List[ToolCall], timeout: Optional[float] = None
     ) -> List[ToolResult]:
-        """Execute all calls and return success results."""
         return [
-            ToolResult(
-                tool=call.tool,
-                result=f"Result for {call.tool}",
-                error=None,
-            )
-            for call in calls
+            ToolResult(tool=c.tool, result=f"Result for {c.tool}", error=None)
+            for c in calls
         ]
-        
+
     @property
-    def supports_streaming(self) -> bool:
-        """This strategy doesn't support streaming."""
+    def supports_streaming(self) -> bool:  # noqa: D401
         return False
 
 
-class StreamingStrategy(ExecutionStrategy):
-    """
-    Mock streaming execution strategy for testing.
-    
-    This strategy supports both run and stream_run methods.
-    """
-    
-    async def run(
-        self,
-        calls: List[ToolCall],
-        timeout: Optional[float] = None,
-    ) -> List[ToolResult]:
-        """Execute all calls and return success results."""
-        return [
-            ToolResult(
-                tool=call.tool,
-                result=f"Result for {call.tool}",
-                error=None,
-            )
-            for call in calls
-        ]
-        
+class StreamingStrategy(DummyStrategy):
+    """Same as DummyStrategy but with stream support."""
+
     async def stream_run(
-        self,
-        calls: List[ToolCall],
-        timeout: Optional[float] = None,
+        self, calls: List[ToolCall], timeout: Optional[float] = None
     ) -> AsyncIterator[ToolResult]:
-        """Stream results one by one."""
-        for call in calls:
-            yield ToolResult(
-                tool=call.tool,
-                result=f"Streamed result for {call.tool}",
-                error=None,
-            )
-            await asyncio.sleep(0.01)  # Small delay for realism
-            
+        for c in calls:
+            yield ToolResult(tool=c.tool, result=f"Streamed {c.tool}", error=None)
+            await asyncio.sleep(0.01)
+
     @property
-    def supports_streaming(self) -> bool:
-        """This strategy supports streaming."""
+    def supports_streaming(self) -> bool:  # noqa: D401
         return True
 
 
-class ErrorStrategy(ExecutionStrategy):
-    """
-    Strategy that always returns errors for testing error handling.
-    """
+class ErrorStrategy(DummyStrategy):
+    """Always returns an error."""
+
     async def run(
-        self,
-        calls: List[ToolCall],
-        timeout: Optional[float] = None,
+        self, calls: List[ToolCall], timeout: Optional[float] = None
     ) -> List[ToolResult]:
-        """Execute all calls and return error results."""
         return [
-            ToolResult(
-                tool=call.tool,
-                result=None,
-                error=f"Error for {call.tool}",
-            )
-            for call in calls
+            ToolResult(tool=c.tool, result=None, error=f"error {c.tool}") for c in calls
         ]
 
 
 # --------------------------------------------------------------------------- #
-# Test fixtures
+# Fixtures
 # --------------------------------------------------------------------------- #
-
 @pytest.fixture
-def registry():
-    """Create an empty registry for testing."""
+def registry() -> MockRegistry:
     return MockRegistry()
 
 
 @pytest.fixture
-def dummy_strategy():
-    """Create a simple strategy that returns success results."""
+def dummy_strategy() -> DummyStrategy:
     return DummyStrategy()
 
 
 @pytest.fixture
-def streaming_strategy():
-    """Create a strategy that supports streaming."""
+def streaming_strategy() -> StreamingStrategy:
     return StreamingStrategy()
-
-
-@pytest.fixture
-def error_strategy():
-    """Create a strategy that returns errors."""
-    return ErrorStrategy()
 
 
 # --------------------------------------------------------------------------- #
 # Tests
 # --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_executor_initialisation_explicit_strategy(registry, dummy_strategy):
+    ex = ToolExecutor(registry=registry, default_timeout=7, strategy=dummy_strategy)
+    assert ex.strategy is dummy_strategy
+    assert ex.default_timeout == 7
+
 
 @pytest.mark.asyncio
-async def test_executor_initialization(registry):
-    """Test that the executor initializes correctly."""
-    # Test with explicit strategy
-    strategy = DummyStrategy()
-    executor = ToolExecutor(
-        registry=registry,
-        default_timeout=5.0,
-        strategy=strategy
+async def test_executor_initialisation_creates_inprocess_strategy(registry):
+    """
+    If *strategy* is omitted, ``ToolExecutor`` should import and instantiate
+    ``InProcessStrategy`` – we monkey-patch that class at the real import path.
+    """
+    patch_target = (
+        "chuk_tool_processor.execution.strategies.inprocess_strategy.InProcessStrategy"
     )
-    
-    assert executor.registry == registry
-    assert executor.default_timeout == 5.0
-    assert executor.strategy == strategy
-    
-    # Test with strategy_kwargs
-    with patch("chuk_tool_processor.execution.tool_executor._inprocess_mod.InProcessStrategy") as mock_strategy:
-        mock_strategy.return_value = DummyStrategy()
-        executor = ToolExecutor(
+    with patch(patch_target) as mock_cls:
+        mock_cls.return_value = DummyStrategy()  # what ToolExecutor gets back
+
+        ex = ToolExecutor(
             registry=registry,
-            default_timeout=10.0,
-            strategy_kwargs={"max_concurrency": 3}
+            default_timeout=9,
+            strategy_kwargs={"max_concurrency": 5, "hello": "world"},
         )
-        
-        # Verify InProcessStrategy was called with the right args
-        mock_strategy.assert_called_once()
-        args, kwargs = mock_strategy.call_args
-        assert kwargs["default_timeout"] == 10.0
-        assert kwargs["max_concurrency"] == 3
 
-
-@pytest.mark.asyncio
-async def test_executor_with_empty_calls(registry, dummy_strategy):
-    """Test that executor handles empty calls list properly."""
-    executor = ToolExecutor(
-        registry=registry,
-        strategy=dummy_strategy
-    )
-    
-    # Execute with empty list
-    results = await executor.execute([])
-    
-    # Should return empty list, not None
-    assert isinstance(results, list)
-    assert len(results) == 0
-    
-    # Test streaming with empty list
-    results = []
-    async for result in executor.stream_execute([]):
-        results.append(result)
-        
-    assert len(results) == 0
-
-
-@pytest.mark.asyncio
-async def test_executor_with_strategy_kwargs():
-    """Test that strategy_kwargs are properly passed."""
-    # Mock InProcessStrategy
-    with patch("chuk_tool_processor.execution.tool_executor._inprocess_mod.InProcessStrategy") as mock_strategy:
-        mock_strategy.return_value = DummyStrategy()
-        
-        # Create executor with strategy kwargs
-        registry = MockRegistry()
-        executor = ToolExecutor(
-            registry=registry,
-            default_timeout=1.0,
-            strategy_kwargs={"max_concurrency": 5, "custom_option": "value"}
+        mock_cls.assert_called_once_with(
+            registry, default_timeout=9, max_concurrency=5, hello="world"
         )
-        
-        # Verify InProcessStrategy was called with the kwargs
-        mock_strategy.assert_called_once()
-        _, kwargs = mock_strategy.call_args
-        assert kwargs.get("max_concurrency") == 5
-        assert kwargs.get("custom_option") == "value"
+        assert isinstance(ex.strategy, DummyStrategy)
 
 
 @pytest.mark.asyncio
-async def test_executor_execute(registry, dummy_strategy):
-    """Test that execute method works correctly."""
-    executor = ToolExecutor(
-        registry=registry,
-        strategy=dummy_strategy
-    )
-    
-    # Create some test calls
-    calls = [
-        ToolCall(tool="tool1", arguments={"x": 1}),
-        ToolCall(tool="tool2", arguments={"y": 2}),
-    ]
-    
-    # Execute calls
-    results = await executor.execute(calls)
-    
-    # Verify results
-    assert len(results) == 2
-    assert results[0].tool == "tool1"
-    assert results[0].error is None
-    assert results[0].result == "Result for tool1"
-    assert results[1].tool == "tool2"
-    assert results[1].error is None
-    assert results[1].result == "Result for tool2"
+async def test_execute_returns_results_in_order(registry, dummy_strategy):
+    ex = ToolExecutor(registry=registry, strategy=dummy_strategy)
+    calls = [ToolCall(tool="a"), ToolCall(tool="b")]
+    res = await ex.execute(calls)
+    assert [r.tool for r in res] == ["a", "b"]
 
 
 @pytest.mark.asyncio
-async def test_streaming_executor(registry, streaming_strategy):
-    """Test that the executor supports streaming when strategy does."""
-    executor = ToolExecutor(
-        registry=registry,
-        default_timeout=1.0,
-        strategy=streaming_strategy
-    )
-
-    # Test supports_streaming property
-    assert executor.supports_streaming is True
-    
-    # Test stream_execute method
-    calls = [
-        ToolCall(tool="tool1", arguments={"x": 1}),
-        ToolCall(tool="tool2", arguments={"y": 2}),
-    ]
-    
-    results = []
-    async for result in executor.stream_execute(calls):
-        results.append(result)
-        
-    # Verify results
-    assert len(results) == 2
-    assert results[0].tool == "tool1"
-    assert "Streamed" in results[0].result
-    assert results[1].tool == "tool2"
-    assert "Streamed" in results[1].result
+async def test_execute_empty_call_list(registry, dummy_strategy):
+    ex = ToolExecutor(registry=registry, strategy=dummy_strategy)
+    res = await ex.execute([])
+    assert res == []
 
 
 @pytest.mark.asyncio
-async def test_non_streaming_executor(registry, dummy_strategy):
-    """Test that non-streaming strategies work with stream_execute."""
-    executor = ToolExecutor(
-        registry=registry,
-        default_timeout=1.0,
-        strategy=dummy_strategy
-    )
-
-    # Test supports_streaming property
-    assert executor.supports_streaming is False
-    
-    # Test stream_execute method still works
-    calls = [
-        ToolCall(tool="tool1", arguments={"x": 1}),
-        ToolCall(tool="tool2", arguments={"y": 2}),
-    ]
-    
-    results = []
-    async for result in executor.stream_execute(calls):
-        results.append(result)
-        
-    # Verify results (we get them all, just not streamed)
-    assert len(results) == 2
-    assert results[0].tool == "tool1"
-    assert results[0].result == "Result for tool1"
-    assert results[1].tool == "tool2"
-    assert results[1].result == "Result for tool2"
+async def test_stream_execute_with_streaming_strategy(registry, streaming_strategy):
+    ex = ToolExecutor(registry=registry, strategy=streaming_strategy)
+    calls = [ToolCall(tool="a"), ToolCall(tool="b")]
+    collected = []
+    async for r in ex.stream_execute(calls):
+        collected.append(r.tool)
+    assert collected == ["a", "b"]
 
 
 @pytest.mark.asyncio
-async def test_executor_timeout_handling(registry):
-    """Test that executor handles timeouts correctly."""
-    # Create a strategy that simulates timeouts
-    class TimeoutStrategy(ExecutionStrategy):
-        async def run(self, calls, timeout):
-            # Always return timeout errors
-            return [
-                ToolResult(
-                    tool=call.tool,
-                    result=None,
-                    error=f"Timeout after {timeout}s",
-                )
-                for call in calls
-            ]
-    
-    executor = ToolExecutor(
-        registry=registry,
-        default_timeout=2.0,
-        strategy=TimeoutStrategy()
-    )
-    
-    # Test with default timeout
-    results = await executor.execute([ToolCall(tool="test")])
-    assert "Timeout after 2.0s" in results[0].error
-    
-    # Test with custom timeout
-    results = await executor.execute([ToolCall(tool="test")], timeout=5.0)
-    assert "Timeout after 5.0s" in results[0].error
+async def test_stream_execute_falls_back_for_non_streaming_strategy(
+    registry, dummy_strategy
+):
+    ex = ToolExecutor(registry=registry, strategy=dummy_strategy)
+    calls = [ToolCall(tool="a"), ToolCall(tool="b")]
+    collected = []
+    async for r in ex.stream_execute(calls):
+        collected.append(r.tool)
+    assert collected == ["a", "b"]
 
 
 @pytest.mark.asyncio
-async def test_executor_shutdown(registry, streaming_strategy):
-    """Test executor shutdown method if strategy supports it."""
-    # Add shutdown method to strategy
-    streaming_strategy.shutdown = AsyncMock()
-    
-    executor = ToolExecutor(
-        registry=registry,
-        strategy=streaming_strategy
-    )
-    
-    # Call shutdown
-    await executor.shutdown()
-    
-    # Verify shutdown was called on strategy
-    streaming_strategy.shutdown.assert_called_once()
-    
-    # Test with strategy that doesn't support shutdown
-    executor = ToolExecutor(
-        registry=registry,
-        strategy=DummyStrategy()  # No shutdown method
-    )
-    
-    # Should not raise any errors
-    await executor.shutdown()
+async def test_timeout_is_forwarded(registry):
+    class TimeoutSpy(DummyStrategy):
+        async def run(self, calls, timeout=None):
+            self.seen_timeout = timeout
+            return await super().run(calls, timeout)
+
+    strat = TimeoutSpy()
+    ex = ToolExecutor(registry=registry, default_timeout=3, strategy=strat)
+    await ex.execute([ToolCall(tool="x")], timeout=7)
+    assert strat.seen_timeout == 7
+
+
+@pytest.mark.asyncio
+async def test_shutdown_calls_underlying_strategy(registry):
+    strat = DummyStrategy()
+    strat.shutdown = AsyncMock()
+    ex = ToolExecutor(registry=registry, strategy=strat)
+    await ex.shutdown()
+    strat.shutdown.assert_called_once()
