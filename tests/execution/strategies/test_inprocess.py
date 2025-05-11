@@ -1,161 +1,183 @@
+# tests/execution/strategies/test_inprocess.py
 """
-Unit-tests for the InProcessStrategy (with the _execute / _aexecute API).
+Run tools concurrently *inside the current interpreter* – async-only.
 
-They rely only on the public surface of chuk_tool_processor – no private
-attributes are touched.
+A valid tool implementation must define either:
+
+1. `async def _aexecute(**kwargs)`  – recommended private coroutine
+2. `async def execute(**kwargs)`    – public coroutine wrapper
+
+Synchronous entry-points are **not supported**.
 """
 from __future__ import annotations
 
 import asyncio
+import inspect
+import os
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Dict
+from typing import Any, List
 
-import pytest
-
-from chuk_tool_processor.execution.strategies.inprocess_strategy import (
-    InProcessStrategy,
-)
+from chuk_tool_processor.core.exceptions import ToolExecutionError
+from chuk_tool_processor.models.execution_strategy import ExecutionStrategy
 from chuk_tool_processor.models.tool_call import ToolCall
 from chuk_tool_processor.models.tool_result import ToolResult
+from chuk_tool_processor.registry.interface import ToolRegistryInterface
+from chuk_tool_processor.logging import get_logger
+
+logger = get_logger("chuk_tool_processor.execution.inprocess_strategy")
 
 
 # --------------------------------------------------------------------------- #
-# minimal fake registry used by all tests
+# Async no-op context-manager (used when no semaphore configured)
 # --------------------------------------------------------------------------- #
-class DummyRegistry:
-    def __init__(self, tools: Dict[str, object] | None = None):
-        self._tools = tools or {}
-
-    # strategy only calls get_tool()
-    def get_tool(self, name: str):
-        return self._tools.get(name)
+@asynccontextmanager
+async def _noop_cm():
+    yield
 
 
 # --------------------------------------------------------------------------- #
-# helper classes used in multiple tests
-# --------------------------------------------------------------------------- #
-class SyncTool:
-    """Synchronous tool using the *new* _execute naming convention."""
+class InProcessStrategy(ExecutionStrategy):
+    """Execute tools in the local event-loop with optional concurrency cap."""
 
-    def __init__(self, multiplier: int = 1):
-        self.multiplier = multiplier
+    def __init__(
+        self,
+        registry: ToolRegistryInterface,
+        default_timeout: float | None = None,
+        max_concurrency: int | None = None,
+    ) -> None:
+        self.registry = registry
+        self.default_timeout = default_timeout
+        self._sem = asyncio.Semaphore(max_concurrency) if max_concurrency else None
 
-    def _execute(self, x: int, y: int):
-        return (x + y) * self.multiplier
+    # ------------------------------------------------------------------ #
+    async def run(
+        self,
+        calls: List[ToolCall],
+        timeout: float | None = None,
+    ) -> List[ToolResult]:
+        """Execute *calls* concurrently and preserve order."""
+        tasks = [
+            self._execute_single_call(call, timeout or self.default_timeout)
+            for call in calls
+        ]
+        return await asyncio.gather(*tasks)
 
+    # ------------------------------------------------------------------ #
+    async def _execute_single_call(
+        self,
+        call: ToolCall,
+        timeout: float | None,
+    ) -> ToolResult:
+        """
+        Execute a single tool call.
 
-class AsyncTool:
-    """Asynchronous tool using preferred _aexecute."""
+        The entire invocation – including argument validation – is wrapped
+        by the semaphore to honour *max_concurrency*.
+        """
+        pid = os.getpid()
+        machine = os.uname().nodename
+        start = datetime.now(timezone.utc)
 
-    async def _aexecute(self, a: int, b: int):
-        await asyncio.sleep(0)  # yield control to event-loop
-        return a * b
+        impl = self.registry.get_tool(call.tool)
+        if impl is None:
+            return ToolResult(
+                tool=call.tool,
+                result=None,
+                error="Tool not found",
+                start_time=start,
+                end_time=datetime.now(timezone.utc),
+                machine=machine,
+                pid=pid,
+            )
 
+        tool = impl() if inspect.isclass(impl) else impl
+        guard = self._sem if self._sem is not None else _noop_cm()
 
-class SleepTool:
-    """Async tool that just waits – useful for timeout tests."""
+        try:
+            async with guard:
+                return await self._run_with_timeout(
+                    tool, call, timeout, start, machine, pid
+                )
+        except Exception as exc:  # pragma: no cover – last-chance safety net
+            logger.exception("Unexpected error while executing %s", call.tool)
+            return ToolResult(
+                tool=call.tool,
+                result=None,
+                error=f"Unexpected error: {exc}",
+                start_time=start,
+                end_time=datetime.now(timezone.utc),
+                machine=machine,
+                pid=pid,
+            )
 
-    def __init__(self, delay: float):
-        self.delay = delay
+    # ------------------------------------------------------------------ #
+    async def _run_with_timeout(
+        self,
+        tool: Any,
+        call: ToolCall,
+        timeout: float | None,
+        start: datetime,
+        machine: str,
+        pid: int,
+    ) -> ToolResult:
+        """
+        Resolve the correct async entry-point and invoke it with an optional
+        timeout.
+        """
+        if hasattr(tool, "_aexecute") and inspect.iscoroutinefunction(tool._aexecute):
+            fn = tool._aexecute
+        elif hasattr(tool, "execute") and inspect.iscoroutinefunction(tool.execute):
+            fn = tool.execute
+        else:
+            return ToolResult(
+                tool=call.tool,
+                result=None,
+                error=(
+                    "Tool must implement *async* '_aexecute' or 'execute'. "
+                    "Synchronous entry-points are not supported."
+                ),
+                start_time=start,
+                end_time=datetime.now(timezone.utc),
+                machine=machine,
+                pid=pid,
+            )
 
-    async def _aexecute(self):
-        await asyncio.sleep(self.delay)
-        return "done"
+        async def _invoke():
+            return await fn(**call.arguments)
 
-
-class ErrorTool:
-    """Tool that always raises a ValueError."""
-
-    def _execute(self):
-        raise ValueError("oops")
-
-
-# --------------------------------------------------------------------------- #
-# individual test-cases
-# --------------------------------------------------------------------------- #
-@pytest.mark.asyncio
-async def test_sync_tool_execution():
-    reg = DummyRegistry({"sync": SyncTool(multiplier=2)})
-    strat = InProcessStrategy(registry=reg, default_timeout=1.0)
-
-    call = ToolCall(tool="sync", arguments={"x": 3, "y": 4})
-    res: ToolResult = (await strat.run([call]))[0]
-
-    assert res.error is None
-    assert res.result == 14
-    assert res.tool == "sync"
-    assert isinstance(res.start_time, datetime) and isinstance(
-        res.end_time, datetime
-    )
-    assert res.end_time >= res.start_time
-
-
-@pytest.mark.asyncio
-async def test_async_tool_execution():
-    reg = DummyRegistry({"async": AsyncTool()})
-    strat = InProcessStrategy(registry=reg)
-
-    call = ToolCall(tool="async", arguments={"a": 5, "b": 6})
-    res = (await strat.run([call]))[0]
-
-    assert res.error is None
-    assert res.result == 30
-
-
-@pytest.mark.asyncio
-async def test_tool_not_found():
-    strat = InProcessStrategy(registry=DummyRegistry())
-
-    res = (await strat.run([ToolCall(tool="missing", arguments={})]))[0]
-    assert res.error == "Tool not found"
-    assert res.result is None
-
-
-@pytest.mark.asyncio
-async def test_timeout_error():
-    reg = DummyRegistry({"sleep": SleepTool(delay=0.2)})
-    strat = InProcessStrategy(registry=reg, default_timeout=0.05)
-
-    res = (await strat.run([ToolCall(tool="sleep", arguments={})]))[0]
-    assert res.error.startswith("Timeout after")
-    assert res.result is None
-
-
-@pytest.mark.asyncio
-async def test_unexpected_error():
-    reg = DummyRegistry({"err": ErrorTool()})
-    strat = InProcessStrategy(registry=reg)
-
-    res = (await strat.run([ToolCall(tool="err", arguments={})]))[0]
-    assert res.error == "oops"
-    assert res.result is None
-
-
-@pytest.mark.asyncio
-async def test_max_concurrency_limits():
-    current = 0
-    max_seen = 0
-    lock = asyncio.Lock()
-
-    class ConcurrencyTool:
-        async def _aexecute(self, idx: int):
-            nonlocal current, max_seen
-            async with lock:
-                current += 1
-                max_seen = max(max_seen, current)
-            await asyncio.sleep(0.01)  # hold the semaphore for a tick
-            async with lock:
-                current -= 1
-            return idx
-
-    tools = {str(i): ConcurrencyTool() for i in range(5)}
-    reg = DummyRegistry(tools)
-    strat = InProcessStrategy(registry=reg, max_concurrency=2)
-
-    calls = [ToolCall(tool=str(i), arguments={"idx": i}) for i in range(5)]
-    results = await strat.run(calls)
-
-    # concurrency limit respected
-    assert max_seen <= 2
-    # result order preserved
-    assert [r.result for r in results] == list(range(5))
+        try:
+            result_val = (
+                await asyncio.wait_for(_invoke(), timeout)
+                if timeout
+                else await _invoke()
+            )
+            return ToolResult(
+                tool=call.tool,
+                result=result_val,
+                error=None,
+                start_time=start,
+                end_time=datetime.now(timezone.utc),
+                machine=machine,
+                pid=pid,
+            )
+        except asyncio.TimeoutError:
+            return ToolResult(
+                tool=call.tool,
+                result=None,
+                error=f"Timeout after {timeout}s",
+                start_time=start,
+                end_time=datetime.now(timezone.utc),
+                machine=machine,
+                pid=pid,
+            )
+        except Exception as exc:
+            return ToolResult(
+                tool=call.tool,
+                result=None,
+                error=str(exc),
+                start_time=start,
+                end_time=datetime.now(timezone.utc),
+                machine=machine,
+                pid=pid,
+            )

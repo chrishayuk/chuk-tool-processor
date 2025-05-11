@@ -1,126 +1,171 @@
-import pytest
+# tests/execution/wrappers/test_retry.py
 import asyncio
 import random
 from datetime import datetime, timezone
-from chuk_tool_processor.execution.wrappers.retry import RetryConfig, RetryableToolExecutor
+from typing import List, Optional
+
+import pytest
+
+from chuk_tool_processor.execution.wrappers.retry import (
+    RetryConfig,
+    RetryableToolExecutor,
+)
 from chuk_tool_processor.models.tool_call import ToolCall
 from chuk_tool_processor.models.tool_result import ToolResult
 
-# Ensure deterministic jitter
+
+# --------------------------------------------------------------------------- #
+# Global fixtures
+# --------------------------------------------------------------------------- #
 @pytest.fixture(autouse=True)
 def fixed_random(monkeypatch):
-    monkeypatch.setattr(random, 'random', lambda: 0.5)
+    """Make jitter deterministic (random.random → 0.5)."""
+    monkeypatch.setattr(random, "random", lambda: 0.5)
 
-# Monkeypatch asyncio.sleep to avoid real delays
+
 @pytest.fixture(autouse=True)
-def dummy_sleep(monkeypatch):
-    async def sleep(duration):
-        # no-op
+def fast_sleep(monkeypatch):
+    """Patch asyncio.sleep so tests run instantly."""
+    async def _noop(_):
         return
-    monkeypatch.setattr(asyncio, 'sleep', sleep)
 
+    monkeypatch.setattr(asyncio, "sleep", _noop)
+
+
+# --------------------------------------------------------------------------- #
+# Dummy executor used in tests
+# --------------------------------------------------------------------------- #
 class DummyExecutor:
     """
-    Simulate an executor that fails first N times then succeeds.
+    Fails the first *fail_times* invocations, then succeeds.
     """
-    def __init__(self, fail_times, error_message="err"):
+
+    def __init__(self, fail_times: int, error_message: str = "err") -> None:
         self.fail_times = fail_times
-        self.called = 0
+        self.calls = 0
         self.error_message = error_message
 
-    async def execute(self, calls, timeout=None):
-        # Always single call for simplicity
-        self.called += 1
+    async def execute(
+        self, calls: List[ToolCall], timeout: Optional[float] = None
+    ) -> List[ToolResult]:
+        self.calls += 1
         call = calls[0]
-        if self.called <= self.fail_times:
-            # return a ToolResult with error
-            return [ToolResult(
-                tool=call.tool,
-                result=None,
-                error=self.error_message,
-                start_time=datetime.now(timezone.utc),
-                end_time=datetime.now(timezone.utc),
-                machine="test",
-                pid=123
-            )]
-        else:
-            # succeed
-            return [ToolResult(
+        if self.calls <= self.fail_times:
+            return [
+                ToolResult(
+                    tool=call.tool,
+                    result=None,
+                    error=self.error_message,
+                    start_time=datetime.now(timezone.utc),
+                    end_time=datetime.now(timezone.utc),
+                    machine="test",
+                    pid=123,
+                )
+            ]
+        return [
+            ToolResult(
                 tool=call.tool,
                 result="success",
                 error=None,
                 start_time=datetime.now(timezone.utc),
                 end_time=datetime.now(timezone.utc),
                 machine="test",
-                pid=123
-            )]
+                pid=123,
+            )
+        ]
 
-@pytest.mark.parametrize("max_retries,attempt,expect", [
-    (0, 0, False),
-    (1, 0, True),
-    (1, 1, False),
-])
+
+# --------------------------------------------------------------------------- #
+# RetryConfig unit tests
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    "max_retries, attempt, expect",
+    [(0, 0, False), (1, 0, True), (1, 1, False)],
+)
 def test_retry_config_attempt_limit(max_retries, attempt, expect):
     cfg = RetryConfig(max_retries=max_retries)
     assert cfg.should_retry(attempt) == expect
 
-@pytest.mark.parametrize("substrs,error_str,expect", [
-    (["foo"], "this has foo", True),
-    (["bar"], "no match", False),
-])
+
+@pytest.mark.parametrize(
+    "substrs, error_str, expect",
+    [(["foo"], "msg has foo", True), (["bar"], "no match", False)],
+)
 def test_retry_config_error_substrings(substrs, error_str, expect):
     cfg = RetryConfig(max_retries=3, retry_on_error_substrings=substrs)
     assert cfg.should_retry(0, error_str=error_str) == expect
 
+
 def test_retry_config_exceptions():
-    class MyErr(Exception): pass
+    class MyErr(Exception):
+        ...
+
     cfg = RetryConfig(max_retries=3, retry_on_exceptions=[MyErr])
     assert cfg.should_retry(0, error=MyErr())
     assert not cfg.should_retry(0, error=ValueError())
 
+
 def test_retry_config_get_delay_no_jitter():
     cfg = RetryConfig(max_retries=3, base_delay=2.0, max_delay=10.0, jitter=False)
-    # delays: attempt=0->2,1->4,2->8,3->10 (capped)
     assert cfg.get_delay(0) == 2.0
     assert cfg.get_delay(1) == 4.0
     assert cfg.get_delay(2) == 8.0
-    assert cfg.get_delay(3) == 10.0
+    assert cfg.get_delay(3) == 10.0  # capped at max_delay
 
+
+# --------------------------------------------------------------------------- #
+# RetryableToolExecutor integration tests
+# --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
-async def test_retryable_tool_executor_succeeds_after_retries():
-    # fail twice, succeed on third
+async def test_retry_executor_succeeds_after_retries():
     dummy = DummyExecutor(fail_times=2)
-    wrapper = RetryableToolExecutor(executor=dummy, default_config=RetryConfig(max_retries=3, base_delay=0.1, jitter=False))
+    wrapper = RetryableToolExecutor(
+        executor=dummy,
+        default_config=RetryConfig(max_retries=3, base_delay=0.1, jitter=False),
+    )
+
     call = ToolCall(tool="t1", arguments={})
-    results = await wrapper.execute([call])
-    assert results[0].result == "success"
-    # attempts count on final result should be >=1
-    assert hasattr(results[0], 'attempts') and results[0].attempts >= 1
+    res = (await wrapper.execute([call]))[0]
+
+    assert res.result == "success"
+    assert res.attempts >= 1  # at least one retry happened
+
 
 @pytest.mark.asyncio
-async def test_retryable_tool_executor_max_retries_exceeded():
-    # always fail
+async def test_retry_executor_max_retries_exceeded():
     dummy = DummyExecutor(fail_times=5)
-    wrapper = RetryableToolExecutor(executor=dummy, default_config=RetryConfig(max_retries=2, base_delay=0.1, jitter=False))
-    call = ToolCall(tool="t2", arguments={})
-    results = await wrapper.execute([call])
-    res = results[0]
+    wrapper = RetryableToolExecutor(
+        executor=dummy,
+        default_config=RetryConfig(max_retries=2, base_delay=0.1, jitter=False),
+    )
+
+    res = (await wrapper.execute([ToolCall(tool="t2", arguments={})]))[0]
     assert res.error.startswith("Max retries reached")
-    assert res.attempts == 2
+    assert res.attempts == 2  # exhausted retries
+
 
 @pytest.mark.asyncio
-async def test_retryable_with_exception_raised():
+async def test_retry_executor_handles_exceptions():
     class ExcExecutor:
-        def __init__(self): self.called = 0
+        def __init__(self):
+            self.calls = 0
+
         async def execute(self, calls, timeout=None):
-            self.called += 1
+            self.calls += 1
             raise RuntimeError("boom")
+
     exc_exec = ExcExecutor()
-    wrapper = RetryableToolExecutor(executor=exc_exec, default_config=RetryConfig(max_retries=1, base_delay=0.1, jitter=False, retry_on_exceptions=[RuntimeError]))
-    call = ToolCall(tool="t3", arguments={})
-    results = await wrapper.execute([call])
-    res = results[0]
-    # should retry once then return error
-    assert exc_exec.called == 2
+    wrapper = RetryableToolExecutor(
+        executor=exc_exec,
+        default_config=RetryConfig(
+            max_retries=1,
+            base_delay=0.1,
+            jitter=False,
+            retry_on_exceptions=[RuntimeError],
+        ),
+    )
+
+    res = (await wrapper.execute([ToolCall(tool="t3", arguments={})]))[0]
+    assert exc_exec.calls == 2  # one retry
     assert "boom" in res.error
     assert res.attempts == 2
