@@ -1,82 +1,100 @@
+#!/usr/bin/env python
 # chuk_tool_processor/mcp/register_mcp_tools.py
 """
-Registration functions for MCP tools.
+Discover the remote MCP tools exposed by a :class:`~chuk_tool_processor.mcp.stream_manager.StreamManager`
+instance and register them in the local CHUK registry.
+
+The helper is now **async-native** – call it with ``await``.
 """
 
-from typing import List, Dict, Any
+from __future__ import annotations
 
+from typing import Any, Dict, List
+
+from chuk_tool_processor.logging import get_logger
 from chuk_tool_processor.mcp.mcp_tool import MCPTool
 from chuk_tool_processor.mcp.stream_manager import StreamManager
 from chuk_tool_processor.registry.provider import ToolRegistryProvider
-from chuk_tool_processor.logging import get_logger
 
 logger = get_logger("chuk_tool_processor.mcp.register")
 
 
-def register_mcp_tools(
+# --------------------------------------------------------------------------- #
+# public API
+# --------------------------------------------------------------------------- #
+async def register_mcp_tools(
     stream_manager: StreamManager,
-    namespace: str = "mcp"
+    namespace: str = "mcp",
 ) -> List[str]:
     """
-    Register MCP tools with the CHUK registry.
-    
-    Args:
-        stream_manager: StreamManager instance
-        namespace: Namespace for the tools
-        
-    Returns:
-        List of registered tool names
+    Pull the *remote* tool catalogue from *stream_manager* and create a local
+    async wrapper (:class:`MCPTool`) for each entry.
+
+    Parameters
+    ----------
+    stream_manager
+        An **initialised** :class:`~chuk_tool_processor.mcp.stream_manager.StreamManager`.
+    namespace
+        All tools are registered twice:
+
+        * under their original name in *namespace* (e.g. ``"mcp.echo"``), and
+        * mirrored into the ``"default"`` namespace as ``"{namespace}.{name}"``
+          so that parsers may reference them unambiguously.
+
+    Returns
+    -------
+    list[str]
+        The *plain* tool names that were registered (duplicates are ignored).
     """
-    registry = ToolRegistryProvider.get_registry()
-    registered_tools = []
-    
-    # Get all tools from StreamManager
-    mcp_tools = stream_manager.get_all_tools()
-    
+    registry = await ToolRegistryProvider.get_registry()
+    registered: List[str] = []
+
+    # 1️⃣  ask the stream-manager for its catalogue
+    mcp_tools: List[Dict[str, Any]] = stream_manager.get_all_tools()
+
     for tool_def in mcp_tools:
         tool_name = tool_def.get("name")
         if not tool_name:
-            logger.warning("Tool definition missing name")
+            logger.warning("Remote tool definition without a 'name' field – skipped")
             continue
-            
-        description = tool_def.get("description", f"MCP tool: {tool_name}")
-        
+
+        description = tool_def.get("description") or f"MCP tool • {tool_name}"
+        meta: Dict[str, Any] = {
+            "description": description,
+            "is_async": True,
+            "tags": {"mcp", "remote"},
+            "argument_schema": tool_def.get("inputSchema", {}),
+        }
+
         try:
-            # Create tool
-            tool = MCPTool(tool_name, stream_manager)
-            
-            # Register with registry under the original name in the given namespace
-            registry.register_tool(
-                tool,
+            wrapper = MCPTool(tool_name, stream_manager)
+
+            # ── primary registration ──────────────────────────────────────
+            await registry.register_tool(
+                wrapper,
                 name=tool_name,
                 namespace=namespace,
-                metadata={
-                    "description": description,
-                    "is_async": True,
-                    "tags": {"mcp", "remote"},
-                    "argument_schema": tool_def.get("inputSchema", {})
-                }
+                metadata=meta,
             )
-            
-            # Also register the tool in the default namespace with the namespaced name
-            # This allows calling the tool as either "echo" or "stdio.echo" from parsers
-            namespaced_tool_name = f"{namespace}.{tool_name}"
-            registry.register_tool(
-                tool,
-                name=namespaced_tool_name,
+
+            # ── mirror into "default" namespace with dotted name ──────────
+            dotted_name = f"{namespace}.{tool_name}"
+            await registry.register_tool(
+                wrapper,
+                name=dotted_name,
                 namespace="default",
-                metadata={
-                    "description": description,
-                    "is_async": True,
-                    "tags": {"mcp", "remote", "namespaced"},
-                    "argument_schema": tool_def.get("inputSchema", {})
-                }
+                metadata={**meta, "tags": meta["tags"] | {"namespaced"}},
             )
-            
-            registered_tools.append(tool_name)
-            logger.info(f"Registered MCP tool '{tool_name}' in namespace '{namespace}' (also as '{namespaced_tool_name}' in default)")
-            
-        except Exception as e:
-            logger.error(f"Error registering MCP tool '{tool_name}': {e}")
-    
-    return registered_tools
+
+            registered.append(tool_name)
+            logger.debug(
+                "MCP tool '%s' registered (as '%s' & '%s')",
+                tool_name,
+                f"{namespace}:{tool_name}",
+                f"default:{dotted_name}",
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Failed to register MCP tool '%s': %s", tool_name, exc)
+
+    logger.info("MCP registration complete – %d tool(s) available", len(registered))
+    return registered

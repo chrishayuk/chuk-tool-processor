@@ -1,91 +1,104 @@
 #!/usr/bin/env python
-#!/usr/bin/env python
 """
 mcp_stdio_example_calling_usage.py
-Demonstrates JSON / XML / function-call parsing, sequential & parallel execution,
-timeouts, and colourised results – but routing all calls to the MCP stdio echo server.
+──────────────────────────────────
+Showcases three parser plugins (JSON, XML, Function-call) invoking the
+remote **time** MCP server through stdio transport.
+
+It also fires a handful of parallel calls to demonstrate concurrency.
 """
+
+from __future__ import annotations
 
 import asyncio
 import json
 import os
 import sys
-from typing import Any, List
+from pathlib import Path
+from typing import Any, List, Tuple
 
-from colorama import init as colorama_init, Fore, Style
+from colorama import Fore, Style, init as colorama_init
+
 colorama_init(autoreset=True)
 
-# ----------------------------------------------------- #
-#  Project imports                                      #
-# ----------------------------------------------------- #
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# ─── local-package bootstrap ───────────────────────────────────────────────
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
 
-from chuk_tool_processor.logging import get_logger, log_context_span
-from chuk_tool_processor.mcp import setup_mcp_stdio
-from chuk_tool_processor.registry import ToolRegistryProvider
+from chuk_tool_processor.logging import get_logger                                  # noqa: E402
+from chuk_tool_processor.registry.provider import ToolRegistryProvider             # noqa: E402
+from chuk_tool_processor.mcp.setup_mcp_stdio import setup_mcp_stdio                # noqa: E402
 
-from chuk_tool_processor.plugins.parsers.json_tool import JsonToolPlugin
-from chuk_tool_processor.plugins.parsers.xml_tool import XmlToolPlugin
-from chuk_tool_processor.plugins.parsers.function_call_tool import FunctionCallPlugin
-from chuk_tool_processor.models.tool_call import ToolCall
-from chuk_tool_processor.models.tool_result import ToolResult
+# parsers
+from chuk_tool_processor.plugins.parsers.json_tool import JsonToolPlugin           # noqa: E402
+from chuk_tool_processor.plugins.parsers.xml_tool import XmlToolPlugin             # noqa: E402
+from chuk_tool_processor.plugins.parsers.function_call_tool import (               # noqa: E402
+    FunctionCallPlugin,
+)
 
-from chuk_tool_processor.execution.tool_executor import ToolExecutor
-from chuk_tool_processor.execution.strategies.inprocess_strategy import InProcessStrategy
+# executor
+from chuk_tool_processor.execution.tool_executor import ToolExecutor               # noqa: E402
+from chuk_tool_processor.execution.strategies.inprocess_strategy import (          # noqa: E402
+    InProcessStrategy,
+)
 
-logger = get_logger("mcp-demo")
+from chuk_tool_processor.models.tool_call import ToolCall                          # noqa: E402
+from chuk_tool_processor.models.tool_result import ToolResult                      # noqa: E402
 
-# ----------------------------------------------------- #
-#  MCP bootstrap                                        #
-# ----------------------------------------------------- #
-CONFIG_FILE = "server_config.json"
-ECHO_SERVER = "echo"
+logger = get_logger("mcp-time-demo")
+
+# ─── config / bootstrap ─────────────────────────────────────────────────────
+CONFIG_FILE = PROJECT_ROOT / "server_config.json"
+TIME_SERVER = "time"
+NAMESPACE = "stdio"          # where remote tools will be registered
+
 
 async def bootstrap_mcp() -> None:
-    """Ensure the stdio echo server is configured, started and its tools registered."""
-    if not os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, "w") as fh:
-            json.dump(
-                {
-                    "mcpServers": {
-                        ECHO_SERVER: {
-                            "command": "uv",
-                            "args": [
-                                "--directory",
-                                "/Users/you/path/to/chuk-mcp-echo-server",
-                                "run",
-                                "src/chuk_mcp_echo_server/main.py",
-                            ],
-                        }
-                    }
-                },
-                fh,
-            )
-        logger.info("Created %s", CONFIG_FILE)
+    """Ensure a *time* server entry exists & start the stdio transport."""
+    if not CONFIG_FILE.exists():
+        cfg = {
+            "mcpServers": {
+                TIME_SERVER: {
+                    "command": "uvx",
+                    "args": ["mcp-server-time", "--local-timezone=America/New_York"],
+                }
+            }
+        }
+        CONFIG_FILE.write_text(json.dumps(cfg, indent=2))
+        logger.info("Created demo config %s", CONFIG_FILE)
 
-    processor, sm = await setup_mcp_stdio(
-        config_file=CONFIG_FILE,
-        servers=[ECHO_SERVER],
-        server_names={0: ECHO_SERVER},
-        namespace="stdio",
+    _, sm = await setup_mcp_stdio(
+        config_file=str(CONFIG_FILE),
+        servers=[TIME_SERVER],
+        server_names={0: TIME_SERVER},
+        namespace=NAMESPACE,
     )
-    bootstrap_mcp.stream_manager = sm     # type: ignore[attr-defined]
 
-# ----------------------------------------------------- #
-#  Parsers / test payloads                              #
-# ----------------------------------------------------- #
-plugins = [
+    # keep for shutdown
+    bootstrap_mcp.stream_manager = sm  # type: ignore[attr-defined]
+
+
+# ─── payloads & parsers (all call get_current_time) ─────────────────────────
+PLUGINS: List[Tuple[str, Any, str]] = [
     (
         "JSON Plugin",
         JsonToolPlugin(),
         json.dumps(
-            {"tool_calls": [{"tool": "stdio.echo", "arguments": {"message": "Hello JSON"}}]}
+            {
+                "tool_calls": [
+                    {
+                        "tool": f"{NAMESPACE}.get_current_time",
+                        "arguments": {"timezone": "Europe/London"},
+                    }
+                ]
+            }
         ),
     ),
     (
         "XML Plugin",
         XmlToolPlugin(),
-        '<tool name="stdio.echo" args=\'{"message": "Hello XML"}\'/>',
+        f'<tool name="{NAMESPACE}.get_current_time" '
+        'args=\'{"timezone": "Asia/Tokyo"}\'/>',
     ),
     (
         "FunctionCall Plugin",
@@ -93,73 +106,82 @@ plugins = [
         json.dumps(
             {
                 "function_call": {
-                    "name": "stdio.echo",
-                    "arguments": {"message": "Hello FunctionCall"},
+                    "name": f"{NAMESPACE}.get_current_time",
+                    "arguments": {"timezone": "America/Los_Angeles"},
                 }
             }
         ),
     ),
 ]
 
-# ----------------------------------------------------- #
-#  Pretty-print helper                                  #
-# ----------------------------------------------------- #
-def print_results(title: str, calls: List[ToolCall], results: List[ToolResult]) -> None:
-    print(Fore.CYAN + f"\n=== {title} ===")
-    for call, r in zip(calls, results):
-        duration = (r.end_time - r.start_time).total_seconds()
-        hdr = (Fore.GREEN if not r.error else Fore.RED) + f"{r.tool} ({duration:.3f}s) [pid:{r.pid}]"
-        print(hdr + Style.RESET_ALL)
-        print(f"  {Fore.YELLOW}Args:{Style.RESET_ALL}    {call.arguments}")
-        if r.error:
-            print(f"  {Fore.RED}Error:{Style.RESET_ALL}   {r.error!r}")
+
+# ─── helpers ────────────────────────────────────────────────────────────────
+def banner(text: str, colour: str = Fore.CYAN) -> None:
+    print(colour + f"\n=== {text} ===" + Style.RESET_ALL)
+
+
+def show_results(title: str, calls: List[ToolCall], results: List[ToolResult]) -> None:
+    banner(title)
+    for call, res in zip(calls, results):
+        ok = res.error is None
+        head_colour = Fore.GREEN if ok else Fore.RED
+        duration = (res.end_time - res.start_time).total_seconds()
+        print(f"{head_colour}{res.tool}  ({duration:.3f}s){Style.RESET_ALL}")
+        print(Fore.YELLOW + "  args   :" + Style.RESET_ALL, call.arguments)
+        if ok:
+            print(Fore.MAGENTA + "  result :" + Style.RESET_ALL, res.result)
         else:
-            print(f"  {Fore.MAGENTA}Result:{Style.RESET_ALL}  {r.result!r}")
-        print(f"  Started: {r.start_time.isoformat()}")
-        print(f"  Finished:{r.end_time.isoformat()}")
-        print(f"  Host:    {r.machine}")
+            print(Fore.RED + "  error  :" + Style.RESET_ALL, res.error)
         print(Style.DIM + "-" * 60)
 
-# ----------------------------------------------------- #
-#  Demo runner                                          #
-# ----------------------------------------------------- #
+
+# ─── main demo ──────────────────────────────────────────────────────────────
 async def run_demo() -> None:
-    print(Fore.GREEN + "=== MCP Tool-Calling Demo ===")
+    print(Fore.GREEN + "=== MCP Time Tool-Calling Demo ===" + Style.RESET_ALL)
+
     await bootstrap_mcp()
 
-    registry = ToolRegistryProvider.get_registry()
+    registry = await ToolRegistryProvider.get_registry()
+
     executor = ToolExecutor(
         registry,
-        strategy=InProcessStrategy(registry, default_timeout=2.0, max_concurrency=4),
+        strategy=InProcessStrategy(
+            registry,
+            default_timeout=5.0,
+            max_concurrency=4,
+        ),
     )
 
-    # sequential tests
-    for title, plugin, raw in plugins:
-        calls = plugin.try_parse(raw)
+    # sequential examples --------------------------------------------------
+    for title, plugin, raw in PLUGINS:
+        # new parser API is async
+        calls = await plugin.try_parse(raw)
         results = await executor.execute(calls)
-        print_results(f"{title} (sequential)", calls, results)
+        show_results(f"{title} → sequential", calls, results)
 
-    # parallel echo spam
-    print(Fore.CYAN + "\n=== Parallel Echo Tasks ===")
+    # parallel demo --------------------------------------------------------
+    banner("Parallel current-time calls")
+
     parallel_calls = [
-        ToolCall(tool="stdio.echo", arguments={"message": f"parallel-{i}"}) for i in range(5)
+        ToolCall(
+            tool=f"{NAMESPACE}.get_current_time",
+            arguments={"timezone": tz},
+        )
+        for tz in ["UTC", "Europe/Paris", "Asia/Kolkata", "America/New_York"]
     ]
-    tasks = [asyncio.create_task(executor.execute([c]), name=f"echo-{i}") for i, c in enumerate(parallel_calls)]
-    for call, task in zip(parallel_calls, tasks):
-        try:
-            res = await asyncio.wait_for(task, timeout=3.0)
-            print_results("Parallel echo", [call], res)
-        except asyncio.TimeoutError:
-            print(Fore.RED + f"Task {task.get_name()} timed out")
 
-    await bootstrap_mcp.stream_manager.close()        # type: ignore[attr-defined]
+    parallel_results = await executor.execute(parallel_calls)
+    show_results("Parallel run", parallel_calls, parallel_results)
 
-# ----------------------------------------------------- #
-#  Entry-point                                          #
-# ----------------------------------------------------- #
+    # goodbye
+    await bootstrap_mcp.stream_manager.close()  # type: ignore[attr-defined]
+
+
 if __name__ == "__main__":
     import logging
+
     logging.getLogger("chuk_tool_processor").setLevel(
         getattr(logging, os.environ.get("LOGLEVEL", "INFO").upper())
     )
+
     asyncio.run(run_demo())

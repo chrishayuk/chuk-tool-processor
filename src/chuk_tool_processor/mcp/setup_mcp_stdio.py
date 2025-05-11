@@ -1,20 +1,33 @@
+#!/usr/bin/env python
 # chuk_tool_processor/mcp/setup_mcp_stdio.py
 """
-Setup function for stdio transport MCP integration.
+Bootstrap helper for MCP over **stdio** transport.
+
+It:
+
+1. spins up :class:`~chuk_tool_processor.mcp.stream_manager.StreamManager`
+   with the `"stdio"` transport,
+2. discovers & registers the remote MCP tools locally, and
+3. returns a ready-to-use :class:`~chuk_tool_processor.core.processor.ToolProcessor`.
 """
+
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from chuk_tool_processor.core.processor import ToolProcessor
-from chuk_tool_processor.mcp.stream_manager import StreamManager
-from chuk_tool_processor.mcp.register_mcp_tools import register_mcp_tools
 from chuk_tool_processor.logging import get_logger
+from chuk_tool_processor.mcp.register_mcp_tools import register_mcp_tools
+from chuk_tool_processor.mcp.stream_manager import StreamManager
 
 logger = get_logger("chuk_tool_processor.mcp.setup_stdio")
 
 
-async def setup_mcp_stdio(
+# --------------------------------------------------------------------------- #
+# public helper
+# --------------------------------------------------------------------------- #
+async def setup_mcp_stdio(  # noqa: C901 – long but just a config facade
+    *,
     config_file: str,
     servers: List[str],
     server_names: Optional[Dict[int, str]] = None,
@@ -27,41 +40,25 @@ async def setup_mcp_stdio(
     tool_rate_limits: Optional[Dict[str, tuple]] = None,
     enable_retries: bool = True,
     max_retries: int = 3,
-    namespace: str = "mcp"
-) -> tuple[ToolProcessor, StreamManager]:
+    namespace: str = "mcp",
+) -> Tuple[ToolProcessor, StreamManager]:
     """
-    Set up MCP with stdio transport and CHUK Tool Processor.
-    
-    Args:
-        config_file: Path to the config file
-        servers: List of server names to connect to
-        server_names: Optional mapping of server indices to names
-        default_timeout: Default timeout for tool execution
-        max_concurrency: Maximum concurrent executions
-        enable_caching: Whether to enable caching
-        cache_ttl: Cache TTL in seconds
-        enable_rate_limiting: Whether to enable rate limiting
-        global_rate_limit: Global rate limit (requests per minute)
-        tool_rate_limits: Per-tool rate limits
-        enable_retries: Whether to enable retries
-        max_retries: Maximum retry attempts
-        namespace: Namespace for MCP tools
-        
-    Returns:
-        Tuple of (processor, stream_manager)
+    Initialise stdio-transport MCP + a :class:`ToolProcessor`.
+
+    Call with ``await`` from your async context.
     """
-    # Create and initialize StreamManager with stdio transport
+    # 1️⃣  create & connect the stream-manager
     stream_manager = await StreamManager.create(
         config_file=config_file,
         servers=servers,
         server_names=server_names,
-        transport_type="stdio"
+        transport_type="stdio",
     )
-    
-    # Register MCP tools
-    registered_tools = register_mcp_tools(stream_manager, namespace)
-    
-    # Create processor
+
+    # 2️⃣  pull the remote tool list and register each one locally
+    registered = await register_mcp_tools(stream_manager, namespace=namespace)
+
+    # 3️⃣  build a processor instance configured to your taste
     processor = ToolProcessor(
         default_timeout=default_timeout,
         max_concurrency=max_concurrency,
@@ -71,8 +68,13 @@ async def setup_mcp_stdio(
         global_rate_limit=global_rate_limit,
         tool_rate_limits=tool_rate_limits,
         enable_retries=enable_retries,
-        max_retries=max_retries
+        max_retries=max_retries,
     )
-    
-    logger.info(f"Set up MCP (stdio) with {len(registered_tools)} tools")
+
+    logger.info(
+        "MCP (stdio) initialised – %s tool%s registered into namespace '%s'",
+        len(registered),
+        "" if len(registered) == 1 else "s",
+        namespace,
+    )
     return processor, stream_manager

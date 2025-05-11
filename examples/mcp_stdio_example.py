@@ -1,151 +1,115 @@
+#!/usr/bin/env python
 # examples/mcp_stdio_example.py
 """
-Example demonstrating flexible MCP integration with support for multiple transport types.
+Demo: wire a remote MCP “time” server into CHUK via **stdio** transport.
+
+Prerequisites
+-------------
+Nothing but `uv` installed – the time-server will be fetched on-the-fly
+(`uvx mcp-server-time …`).
+
+What it shows
+-------------
+1. create / reuse a minimal server-config JSON
+2. initialise the stdio StreamManager & register the remote tools
+3. list everything that landed in the registry
+4. look up the wrapper for `get_current_time` and call it directly
 """
+
+from __future__ import annotations
+
 import asyncio
+import json
 import os
 import sys
-import json
+from pathlib import Path
 from typing import Dict, List
 
-# Add project root to path if running as script
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# --------------------------------------------------------------------- #
+#  allow “poetry run python examples/…” style execution                 #
+# --------------------------------------------------------------------- #
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
 
-# CHUK Tool Processor imports
-from chuk_tool_processor.mcp import setup_mcp_stdio, setup_mcp_sse
-from chuk_tool_processor.registry import ToolRegistryProvider
+# --------------------------------------------------------------------- #
+#  CHUK imports                                                         #
+# --------------------------------------------------------------------- #
+from chuk_tool_processor.mcp.setup_mcp_stdio import setup_mcp_stdio
+from chuk_tool_processor.registry.provider import ToolRegistryProvider
 
-async def stdio_example():
-    """Example using stdio transport."""
-    print("\n=== MCP with Stdio Transport ===")
-    
-    # Server configuration
-    config_file = "server_config.json"
-    
-    # Create or update config file for the example
-    if not os.path.exists(config_file):
-        server_config = {
+
+# --------------------------------------------------------------------- #
+#  helper: pretty-print a namespace                                     #
+# --------------------------------------------------------------------- #
+async def dump_namespace(namespace: str) -> None:
+    registry = await ToolRegistryProvider.get_registry()
+
+    # ✅ list_tools() gives a plain list already
+    tools = [t for t in await registry.list_tools() if t[0] == namespace]
+
+    print(f"Tools in namespace {namespace!r} ({len(tools)}):")
+    for ns, name in tools:
+        meta = await registry.get_metadata(name, ns)
+        desc = meta.description if meta else "no description"
+        print(f"  • {ns}.{name:<20} — {desc}")
+
+# --------------------------------------------------------------------- #
+#  main demo                                                            #
+# --------------------------------------------------------------------- #
+async def main() -> None:
+    print("=== Flexible MCP integration demo ===\n")
+
+    # 1️⃣  write / reuse server-config
+    cfg_path = PROJECT_ROOT / "server_config.json"
+    if not cfg_path.exists():
+        cfg = {
             "mcpServers": {
-                "echo": {
-                    "command": "uv",
-                    "args": ["--directory", "/Users/christopherhay/chris-source/agent-x/mcp-servers/chuk-mcp-echo-server", "run", "src/chuk_mcp_echo_server/main.py"]
+                "time": {
+                    "command": "uvx",
+                    "args": [
+                        "mcp-server-time",
+                        "--local-timezone=America/New_York",
+                    ],
                 }
             }
         }
-        
-        with open(config_file, "w") as f:
-            json.dump(server_config, f)
-        print(f"Created config file: {config_file}")
+        cfg_path.write_text(json.dumps(cfg, indent=2))
+        print(f"Created demo config: {cfg_path}\n")
     else:
-        print(f"Using existing config file: {config_file}")
-    
-    servers = ["echo"]
-    server_names = {0: "echo"}
-    
-    try:
-        processor, stream_manager = await setup_mcp_stdio(
-            config_file=config_file,
-            servers=servers,
-            server_names=server_names,
-            namespace="stdio"
-        )
-        
-        registry = ToolRegistryProvider.get_registry()
-        tools = [t for t in registry.list_tools() if t[0] == "stdio"]
-        print(f"Registered stdio tools ({len(tools)}):")
-        for namespace, name in tools:
-            metadata = registry.get_metadata(name, namespace)
-            description = metadata.description if metadata else "No description"
-            print(f"  - {namespace}.{name}: {description}")
-        
-        # Example LLM text with tool calls - use fully-qualified default namespace name
-        llm_text = """
-        I'll echo your message using stdio transport.
-        
-        <tool name=\"stdio.echo\" args='{"message": "Hello from stdio transport!"}'/>
-        """
-        
-        print("\nProcessing LLM text...")
-        results = await processor.process_text(llm_text)
-        
-        if results:
-            print("\nResults:")
-            for result in results:
-                print(f"Tool: {result.tool}")
-                if result.error:
-                    print(f"  Error: {result.error}")
-                else:
-                    print(f"  Result: {json.dumps(result.result, indent=2) if isinstance(result.result, dict) else result.result}")
-                print(f"  Duration: {(result.end_time - result.start_time).total_seconds():.3f}s")
-        else:
-            print("\nNo tool calls found or executed.")
-            
-        await stream_manager.close()
-        
-    except Exception as e:
-        print(f"Error in stdio example: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"Using server config: {cfg_path}\n")
 
-async def sse_example():
-    """Example using SSE transport."""
-    print("\n=== MCP with SSE Transport ===")
-    
-    sse_servers = [
-        {
-            "name": "weather",
-            "url": "https://api.example.com/sse/weather",
-            "api_key": "your_api_key_here"
-        }
-    ]
-    server_names = {0: "weather"}
-    
-    try:
-        processor, stream_manager = await setup_mcp_sse(
-            servers=sse_servers,
-            server_names=server_names,
-            namespace="sse"
-        )
-        
-        registry = ToolRegistryProvider.get_registry()
-        tools = [t for t in registry.list_tools() if t[0] == "sse"]
-        print(f"Registered SSE tools ({len(tools)}):")
-        for namespace, name in tools:
-            metadata = registry.get_metadata(name, namespace)
-            description = metadata.description if metadata else "No description"
-            print(f"  - {namespace}.{name}: {description}")
-        
-        print("\nNote: SSE transport is currently a placeholder implementation.")
-        
-        await stream_manager.close()
-        
-    except Exception as e:
-        print(f"Error in SSE example: {e}")
-        import traceback
-        traceback.print_exc()
+    # 2️⃣  setup stdio transport + registry
+    processor, stream_manager = await setup_mcp_stdio(
+        config_file=str(cfg_path),
+        servers=["time"],
+        server_names={0: "time"},
+        namespace="stdio",
+    )
 
-async def main():
-    """Run the examples."""
-    print("\n=== Flexible MCP Integration Example ===")
-    await stdio_example()
-    #await sse_example()
-    
-    registry = ToolRegistryProvider.get_registry()
-    all_tools = registry.list_tools()
-    
-    print("\n=== All Registered Tools ===")
-    print(f"Total tools: {len(all_tools)}")
-    
-    by_namespace = {}
-    for namespace, name in all_tools:
-        by_namespace.setdefault(namespace, []).append(name)
-        
-    for namespace, tools in by_namespace.items():
-        print(f"\nNamespace: {namespace} ({len(tools)} tools)")
-        for name in tools:
-            metadata = registry.get_metadata(name, namespace)
-            description = metadata.description if metadata else "No description"
-            print(f"  - {name}: {description}")
+    await dump_namespace("stdio")
+
+    # 3️⃣  look up the wrapper & call it directly
+    print("\nExecuting stdio.get_current_time …")
+    registry = await ToolRegistryProvider.get_registry()
+    wrapper_cls = await registry.get_tool("get_current_time", "stdio")
+
+    if wrapper_cls is None:
+        print("❌ tool not found in registry")
+    else:
+        wrapper = wrapper_cls() if callable(wrapper_cls) else wrapper_cls
+        try:
+            res = await wrapper.execute(timezone="America/New_York")
+            print("\nResult:")
+            if isinstance(res, (dict, list)):
+                print(json.dumps(res, indent=2))
+            else:
+                print(res)
+        except Exception as exc:
+            print("❌ execution failed:", exc)
+
+    # 4️⃣  tidy-up
+    await stream_manager.close()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

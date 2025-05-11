@@ -245,7 +245,25 @@ class SubprocessStrategy(ExecutionStrategy):
                 self._process_pool = None
                 logger.error(f"Failed to initialize process pool: {e}")
                 raise RuntimeError(f"Failed to initialize process pool: {e}") from e
+    
+    # ------------------------------------------------------------------ #
+    #  🔌 legacy façade for older wrappers                                #
+    # ------------------------------------------------------------------ #
+    async def execute(
+        self,
+        calls: List[ToolCall],
+        *,
+        timeout: Optional[float] = None,
+    ) -> List[ToolResult]:
+        """
+        Back-compat shim.
 
+        Old wrappers (`retry`, `rate_limit`, `cache`, …) still expect an
+        ``execute()`` coroutine on an execution-strategy object.
+        The real implementation lives in :meth:`run`, so we just forward.
+        """
+        return await self.run(calls, timeout)
+    
     async def run(
         self,
         calls: List[ToolCall],

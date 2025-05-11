@@ -1,18 +1,19 @@
 #!/usr/bin/env python
 """
 mcp_stdio_resources_demo.py
-Demonstrates pinging an MCP server and listing resources / prompts
-via the new StreamManager helper-methods.
+
+Ping an MCP server started via **stdio** and show its `resources/list`
+and `prompts/list` catalogues.
 
 Prerequisites
 -------------
-* The MCP SQLite server must be defined in `server_config.json`
-  under the name  "sqlite".
-* All MCP / CHUK-TP packages are importable (run inside the repo venv).
+* `server_config.json` must contain a server entry called "sqlite"
+  that can be started with `uvx` or any other command.
+* Run inside the project’s virtual-env.
 
-Run it
-------
-$ uv run python mcp_stdio_resources_demo.py
+Usage
+-----
+$ uv run python examples/mcp_stdio_resources_demo.py
 """
 from __future__ import annotations
 
@@ -20,45 +21,53 @@ import asyncio
 import json
 import os
 import sys
+from pathlib import Path
 from typing import Any, Dict, List
 
 from colorama import Fore, Style, init as colorama_init
 
+# --------------------------------------------------------------------------- #
+#  Colour output setup                                                        #
+# --------------------------------------------------------------------------- #
 colorama_init(autoreset=True)
 
-# ------------------------------------------------------------------ #
-#  Local project imports                                             #
-# ------------------------------------------------------------------ #
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+def c(text: str, colour: str) -> str:
+    return f"{colour}{text}{Style.RESET_ALL}"
 
-from chuk_tool_processor.logging import get_logger  # noqa: E402
-from chuk_tool_processor.mcp import setup_mcp_stdio  # noqa: E402
+
+# --------------------------------------------------------------------------- #
+#  Local imports (allow running file directly)                                #
+# --------------------------------------------------------------------------- #
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from chuk_tool_processor.logging import get_logger            # noqa: E402
+from chuk_tool_processor.mcp.setup_mcp_stdio import setup_mcp_stdio   # noqa: E402
+from chuk_tool_processor.mcp.stream_manager import StreamManager      # noqa: E402
 
 logger = get_logger("mcp-resources-demo")
 
-# ------------------------------------------------------------------ #
-#  Config                                                            #
-# ------------------------------------------------------------------ #
-CONFIG_FILE = "server_config.json"
+# --------------------------------------------------------------------------- #
+#  Config                                                                     #
+# --------------------------------------------------------------------------- #
+CONFIG_FILE = PROJECT_ROOT / "server_config.json"
 SQLITE_SERVER = "sqlite"
 
 
-# ------------------------------------------------------------------ #
-#  Bootstrap helper                                                  #
-# ------------------------------------------------------------------ #
-async def bootstrap_mcp() -> "StreamManager":  # type: ignore[name-defined]
+# --------------------------------------------------------------------------- #
+#  Bootstrap                                                                  #
+# --------------------------------------------------------------------------- #
+async def bootstrap() -> StreamManager:
     """
-    Ensure *sqlite* is present in `server_config.json` and start/attach
-    the stdio transport, returning the `StreamManager` instance.
+    Fire up the *sqlite* MCP server defined in ``server_config.json``
+    and return the ready `StreamManager`.
     """
-    if not os.path.exists(CONFIG_FILE):
-        logger.error(
-            "No %s found.   Add a 'sqlite' server definition first.", CONFIG_FILE
-        )
+    if not CONFIG_FILE.exists():
+        logger.error("Missing %s – add a 'sqlite' server definition first.", CONFIG_FILE)
         raise SystemExit(1)
 
-    tp, sm = await setup_mcp_stdio(
-        config_file=CONFIG_FILE,
+    _, sm = await setup_mcp_stdio(
+        config_file=str(CONFIG_FILE),
         servers=[SQLITE_SERVER],
         server_names={0: SQLITE_SERVER},
         namespace="stdio",
@@ -66,67 +75,87 @@ async def bootstrap_mcp() -> "StreamManager":  # type: ignore[name-defined]
     return sm
 
 
-# ------------------------------------------------------------------ #
-#  Pretty-printers                                                   #
-# ------------------------------------------------------------------ #
-def print_header(title: str) -> None:
-    print(Fore.CYAN + f"\n=== {title} ===" + Style.RESET_ALL)
+# --------------------------------------------------------------------------- #
+#  Pretty-printers                                                           #
+# --------------------------------------------------------------------------- #
+def hdr(title: str) -> None:
+    print(c(f"\n=== {title} ===", Fore.CYAN))
 
 
-def print_ping(ok: bool) -> None:
+def show_ping(ok: bool) -> None:
     colour = Fore.GREEN if ok else Fore.RED
-    print(colour + ("✓ ping ok" if ok else "✗ ping failed") + Style.RESET_ALL)
+    symbol = "✓" if ok else "✗"
+    print(c(f"{symbol} ping {'ok' if ok else 'failed'}", colour))
 
 
 # -------------------------------------------------- #
-#  Pretty-printers  (FIXED)                          #
+#  Pretty-printers                                   #
 # -------------------------------------------------- #
-def print_resources(res: List[dict[str, Any]]) -> None:        # ★ changed
-    print(f"Received {len(res)} resources")
-    for r in res:
+def show_resources(payload: Any) -> None:
+    """
+    Accept the raw reply from `resources/list` and print it.
+
+    The server may return either a plain list *or* a dict
+    like {"resources":[...], ...}.  Handle both.
+    """
+    resources = (
+        payload.get("resources", [])            # dict shape
+        if isinstance(payload, dict)
+        else payload                            # plain list
+    )
+    print(f"Received {len(resources)} resources")
+    for r in resources:
         print(f"  • {r.get('uri', '<unknown>')}")
 
 
-def print_prompts(res: List[dict[str, Any]]) -> None:          # ★ changed
-    print(f"Received {len(res)} prompts")
-    for p in res:
+def show_prompts(payload: Any) -> None:
+    """Pretty-print the reply from `prompts/list`."""
+    prompts = (
+        payload.get("prompts", [])              # dict shape
+        if isinstance(payload, dict)
+        else payload                            # plain list
+    )
+    print(f"Received {len(prompts)} prompts")
+    for p in prompts:
         line = f"  • {p.get('name', '<unnamed>')}"
         if desc := p.get("description"):
             line += f" – {desc}"
         print(line)
 
-# ------------------------------------------------------------------ #
-#  Demo                                                              #
-# ------------------------------------------------------------------ #
+
+# --------------------------------------------------------------------------- #
+#  Demo logic                                                                 #
+# --------------------------------------------------------------------------- #
 async def run_demo() -> None:
-    print_header("Connecting to MCP (sqlite)")
-    sm = await bootstrap_mcp()
+    hdr("Connecting to MCP (sqlite)")
+    sm = await bootstrap()
 
-    # -- ping -------------------------------------------------------
-    print_header("Ping")
-    ok = await sm.transports[SQLITE_SERVER].send_ping()  # type: ignore[attr-defined]
-    print_ping(ok)
+    # ── ping ───────────────────────────────────────────────────────────────
+    hdr("Ping")
+    ping_ok = await sm.transports[SQLITE_SERVER].send_ping()  # type: ignore[attr-defined]
+    show_ping(ping_ok)
 
-    # -- resources --------------------------------------------------
-    print_header("resources/list")
-    resources = await sm.list_resources()  # type: ignore[attr-defined]
-    print_resources(resources)
+    # ── resources/list ────────────────────────────────────────────────────
+    hdr("resources/list")
+    resources_payload = await sm.list_resources()             # type: ignore[attr-defined]
+    show_resources(resources_payload)
 
-    # -- prompts ----------------------------------------------------
-    print_header("prompts/list")
-    prompts = await sm.list_prompts()  # type: ignore[attr-defined]
-    print_prompts(prompts)
+    # ── prompts/list ──────────────────────────────────────────────────────
+    hdr("prompts/list")
+    prompts_payload = await sm.list_prompts()                 # type: ignore[attr-defined]
+    show_prompts(prompts_payload)
 
-    # -- tidy up ----------------------------------------------------
+    # ── tidy up ───────────────────────────────────────────────────────────
     await sm.close()
 
 
-# ------------------------------------------------------------------ #
-#  Main                                                              #
-# ------------------------------------------------------------------ #
+# --------------------------------------------------------------------------- #
+#  Entrypoint                                                                 #
+# --------------------------------------------------------------------------- #
 if __name__ == "__main__":
     import logging
 
+    # honour LOGLEVEL env-var for quick debugging
     logging.getLogger("chuk_tool_processor").setLevel(
         getattr(logging, os.environ.get("LOGLEVEL", "INFO").upper())
     )

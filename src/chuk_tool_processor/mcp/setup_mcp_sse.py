@@ -1,20 +1,34 @@
+#!/usr/bin/env python
 # chuk_tool_processor/mcp/setup_mcp_sse.py
 """
-Setup function for SSE transport MCP integration.
+Utility that wires up:
+
+1. A :class:`~chuk_tool_processor.mcp.stream_manager.StreamManager`
+   using the SSE transport.
+2. The remote MCP tools exposed by that manager (via
+   :pyfunc:`~chuk_tool_processor.mcp.register_mcp_tools.register_mcp_tools`).
+3. A fully-featured :class:`~chuk_tool_processor.core.processor.ToolProcessor`
+   instance that can execute those tools – with optional caching,
+   rate-limiting, retries, etc.
 """
+
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from chuk_tool_processor.core.processor import ToolProcessor
-from chuk_tool_processor.mcp.stream_manager import StreamManager
-from chuk_tool_processor.mcp.register_mcp_tools import register_mcp_tools
 from chuk_tool_processor.logging import get_logger
+from chuk_tool_processor.mcp.register_mcp_tools import register_mcp_tools
+from chuk_tool_processor.mcp.stream_manager import StreamManager
 
 logger = get_logger("chuk_tool_processor.mcp.setup_sse")
 
 
-async def setup_mcp_sse(
+# --------------------------------------------------------------------------- #
+# public helper
+# --------------------------------------------------------------------------- #
+async def setup_mcp_sse(  # noqa: C901 – long, but just a config wrapper
+    *,
     servers: List[Dict[str, str]],
     server_names: Optional[Dict[int, str]] = None,
     default_timeout: float = 10.0,
@@ -26,38 +40,24 @@ async def setup_mcp_sse(
     tool_rate_limits: Optional[Dict[str, tuple]] = None,
     enable_retries: bool = True,
     max_retries: int = 3,
-    namespace: str = "mcp"
-) -> tuple[ToolProcessor, StreamManager]:
+    namespace: str = "mcp",
+) -> Tuple[ToolProcessor, StreamManager]:
     """
-    Set up MCP with SSE transport and CHUK Tool Processor.
-    
-    Args:
-        servers: List of server configurations with "name" and "url" keys
-        server_names: Optional mapping of server indices to names
-        default_timeout: Default timeout for tool execution
-        max_concurrency: Maximum concurrent executions
-        enable_caching: Whether to enable caching
-        cache_ttl: Cache TTL in seconds
-        enable_rate_limiting: Whether to enable rate limiting
-        global_rate_limit: Global rate limit (requests per minute)
-        tool_rate_limits: Per-tool rate limits
-        enable_retries: Whether to enable retries
-        max_retries: Maximum retry attempts
-        namespace: Namespace for MCP tools
-        
-    Returns:
-        Tuple of (processor, stream_manager)
+    Spin up an SSE-backed *StreamManager*, register all its remote tools,
+    and return a ready-to-go :class:`ToolProcessor`.
+
+    Everything is **async-native** – call with ``await``.
     """
-    # Create and initialize StreamManager with SSE transport
+    # 1️⃣  connect to the remote MCP servers
     stream_manager = await StreamManager.create_with_sse(
         servers=servers,
-        server_names=server_names
+        server_names=server_names,
     )
-    
-    # Register MCP tools
-    registered_tools = register_mcp_tools(stream_manager, namespace)
-    
-    # Create processor
+
+    # 2️⃣  introspect & register their tools in the local registry
+    registered = await register_mcp_tools(stream_manager, namespace=namespace)
+
+    # 3️⃣  build a processor configured to your liking
     processor = ToolProcessor(
         default_timeout=default_timeout,
         max_concurrency=max_concurrency,
@@ -67,8 +67,13 @@ async def setup_mcp_sse(
         global_rate_limit=global_rate_limit,
         tool_rate_limits=tool_rate_limits,
         enable_retries=enable_retries,
-        max_retries=max_retries
+        max_retries=max_retries,
     )
-    
-    logger.info(f"Set up MCP (SSE) with {len(registered_tools)} tools")
+
+    logger.info(
+        "MCP (SSE) initialised – %s tool%s registered into namespace '%s'",
+        len(registered),
+        "" if len(registered) == 1 else "s",
+        namespace,
+    )
     return processor, stream_manager

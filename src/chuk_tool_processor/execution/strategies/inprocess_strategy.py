@@ -81,6 +81,24 @@ class InProcessStrategy(ExecutionStrategy):
         self._direct_streaming_calls.clear()
         
     # ------------------------------------------------------------------ #
+    #  🔌 legacy façade for older wrappers                                #
+    # ------------------------------------------------------------------ #
+    async def execute(
+        self,
+        calls: List[ToolCall],
+        *,
+        timeout: Optional[float] = None,
+    ) -> List[ToolResult]:
+        """
+        Back-compat shim.
+
+        Old wrappers (`retry`, `rate_limit`, `cache`, …) still expect an
+        ``execute()`` coroutine on an execution-strategy object.
+        The real implementation lives in :meth:`run`, so we just forward.
+        """
+        return await self.run(calls, timeout)
+
+    # ------------------------------------------------------------------ #
     async def run(
         self,
         calls: List[ToolCall],
@@ -111,76 +129,43 @@ class InProcessStrategy(ExecutionStrategy):
         async with log_context_span("inprocess_execution", {"num_calls": len(calls)}):
             return await asyncio.gather(*tasks)
 
+    # ------------------------------------------------------------------ #
     async def stream_run(
         self,
         calls: List[ToolCall],
         timeout: Optional[float] = None,
     ) -> AsyncIterator[ToolResult]:
         """
-        Execute tool calls and yield results as they become available.
-        
-        This has special handling for streaming tools - instead of collecting all
-        results into a list, it accesses their stream_execute method directly to
-        yield each result as it becomes available.
-        
-        It also respects the _direct_streaming_calls set to avoid duplicating results
-        that are being handled directly by the executor.
-        
-        Args:
-            calls: List of tool calls to execute
-            timeout: Optional timeout for each call
-            
-        Yields:
-            Tool results as they complete (in completion order, not call order)
+        Execute tool calls concurrently and *yield* results as soon as they are
+        produced, preserving completion order.
         """
         if not calls:
             return
-            
-        # Filter out calls that are being handled directly by the executor
-        filtered_calls = [call for call in calls if call.id not in self._direct_streaming_calls]
-        
-        if not filtered_calls:
-            # All calls are being handled directly, nothing to do
-            return
-            
-        # Create queue for results
-        queue = asyncio.Queue()
-        
-        # Create tasks for streaming tools
-        pending = set()
-        for call in filtered_calls:
-            task = asyncio.create_task(self._stream_tool_call(
-                call, queue, timeout or self.default_timeout
-            ))
-            self._active_tasks.add(task)
-            task.add_done_callback(self._active_tasks.discard)
-            pending.add(task)
-        
-        # Yield results as they become available
-        while pending:
-            # Don't use queue.get() directly to avoid waiting indefinitely
-            # if all tasks complete with errors that don't put anything in the queue
+
+        queue: asyncio.Queue[ToolResult] = asyncio.Queue()
+        tasks = {
+            asyncio.create_task(
+                self._stream_tool_call(call, queue, timeout or self.default_timeout)
+            )
+            for call in calls
+            if call.id not in self._direct_streaming_calls
+        }
+
+        # 🔑 keep consuming until every worker‐task finished *and*
+        #    the queue is empty
+        while tasks or not queue.empty():
             try:
-                # Wait 0.1 seconds for a result, then check task status
-                result = await asyncio.wait_for(queue.get(), 0.1)
+                result = await queue.get()
                 yield result
-            except asyncio.TimeoutError:
-                # Check if tasks have completed
-                done, pending = await asyncio.wait(
-                    pending, timeout=0, return_when=asyncio.FIRST_COMPLETED
-                )
-                
-                if done and not pending and queue.empty():
-                    # All tasks done and no more results in queue
-                    break
-                
-                # Handle any exceptions in completed tasks
-                for task in done:
-                    try:
-                        await task
-                    except Exception as e:
-                        logger.exception(f"Error in streaming task: {e}")
-    
+            except asyncio.CancelledError:
+                break
+
+            # clear finished tasks (frees exceptions as well)
+            done, tasks = await asyncio.wait(tasks, timeout=0)
+            for t in done:
+                t.result()  # re-raise if a task crashed
+
+
     async def _stream_tool_call(
         self,
         call: ToolCall,
