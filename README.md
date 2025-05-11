@@ -1,32 +1,10 @@
 # CHUK Tool Processor
 
-A robust framework for detecting, executing, and managing tool calls in LLM responses.
+An async-native framework for registering, discovering, and executing tools referenced in LLM responses.
 
-## Overview
+## Quick Start
 
-The CHUK Tool Processor is a Python library designed to handle the execution of tools referenced in the output of Large Language Models (LLMs). It provides a flexible and extensible architecture for:
-
-1. **Parsing tool calls** from different formats (JSON, XML, function calls)
-2. **Executing tools** with proper isolation and error handling
-3. **Managing tool executions** with retry logic, caching, and rate limiting
-4. **Monitoring tool usage** with comprehensive logging
-5. **MCP (Model Context Protocol) Integration** for remote tool execution
-
-## Features
-
-- **Multiple Parser Support**: Extract tool calls from JSON, XML, or OpenAI-style function call formats
-- **Flexible Execution Strategies**: Choose between in-process or subprocess execution for different isolation needs
-- **Namespace Support**: Organize tools in logical namespaces
-- **Concurrency Control**: Set limits on parallel tool executions
-- **Validation**: Type validation for tool arguments and results
-- **Caching**: Cache tool results to improve performance for repeated calls
-- **Rate Limiting**: Prevent overloading external services with configurable rate limits
-- **Retry Logic**: Automatically retry transient failures with exponential backoff
-- **Structured Logging**: Comprehensive logging system for debugging and monitoring
-- **Plugin Discovery**: Dynamically discover and load plugins from packages
-- **MCP Integration**: Connect to and execute remote tools via Model Context Protocol
-
-## Installation
+### Installation
 
 ```bash
 # Clone the repository
@@ -35,414 +13,375 @@ cd chuk-tool-processor
 
 # Install with pip
 pip install -e .
-
-# Or with uv
-uv pip install -e .
 ```
 
-## Quick Start
-
-### Registering Tools
+### Basic Usage
 
 ```python
-from chuk_tool_processor.registry import register_tool
+import asyncio
+from chuk_tool_processor.registry import register_tool, initialize
+from chuk_tool_processor.models.tool_call import ToolCall
+from chuk_tool_processor.execution.strategies.inprocess_strategy import InProcessStrategy
+from chuk_tool_processor.execution.tool_executor import ToolExecutor
 
-@register_tool(name="calculator", namespace="math")
+# Register a simple tool
+@register_tool(name="calculator", description="Perform basic calculations")
 class CalculatorTool:
-    def execute(self, operation: str, a: float, b: float):
+    async def execute(self, operation: str, x: float, y: float) -> dict:
         if operation == "add":
-            return a + b
+            result = x + y
         elif operation == "multiply":
-            return a * b
-        # ... other operations
-```
-
-### Processing Tool Calls
-
-```python
-import asyncio
-from chuk_tool_processor.core.processor import ToolProcessor
-
-async def main():
-    # Create a processor with default settings
-    processor = ToolProcessor()
-    
-    # Process text with potential tool calls
-    llm_response = """
-    To calculate that, I'll use the calculator tool.
-    
-    {
-      "function_call": {
-        "name": "calculator",
-        "arguments": {"operation": "multiply", "a": 123.45, "b": 67.89}
-      }
-    }
-    """
-    
-    results = await processor.process_text(llm_response)
-    
-    # Handle results
-    for result in results:
-        print(f"Tool: {result.tool}")
-        print(f"Result: {result.result}")
-        print(f"Error: {result.error}")
-        print(f"Duration: {(result.end_time - result.start_time).total_seconds()}s")
-
-if __name__ == "__main__":
-    asyncio.run(main())
-```
-
-## MCP Integration
-
-The CHUK Tool Processor supports Model Context Protocol (MCP) for connecting to remote tool servers. This enables distributed tool execution and integration with third-party services.
-
-### MCP with Stdio Transport
-
-```python
-import asyncio
-from chuk_tool_processor.mcp import setup_mcp_stdio
-
-async def main():
-    # Configure MCP server
-    config_file = "server_config.json"
-    servers = ["echo", "calculator", "search"]
-    server_names = {0: "echo", 1: "calculator", 2: "search"}
-    
-    # Setup MCP with stdio transport
-    processor, stream_manager = await setup_mcp_stdio(
-        config_file=config_file,
-        servers=servers,
-        server_names=server_names,
-        namespace="mcp",  # All tools will be registered under this namespace
-        enable_caching=True,
-        enable_retries=True
-    )
-    
-    # Process text with MCP tool calls
-    llm_text = """
-    Let me echo your message using the MCP server.
-    
-    <tool name="mcp.echo" args='{"message": "Hello from MCP!"}'/>
-    """
-    
-    results = await processor.process_text(llm_text)
-    
-    for result in results:
-        print(f"Tool: {result.tool}")
-        print(f"Result: {result.result}")
-    
-    # Clean up
-    await stream_manager.close()
-
-if __name__ == "__main__":
-    asyncio.run(main())
-```
-
-### MCP Server Configuration
-
-Create a server configuration file (`server_config.json`):
-
-```json
-{
-  "mcpServers": {
-    "echo": {
-      "command": "uv",
-      "args": ["--directory", "/path/to/echo-server", "run", "src/echo_server/main.py"]
-    },
-    "calculator": {
-      "command": "node",
-      "args": ["/path/to/calculator-server/index.js"]
-    },
-    "search": {
-      "command": "python",
-      "args": ["/path/to/search-server/main.py"]
-    }
-  }
-}
-```
-
-### Namespaced Tool Access
-
-MCP tools are automatically registered in both their namespace and the default namespace:
-
-```python
-# These are equivalent:
-<tool name="echo" args='{"message": "Hello"}'/>
-<tool name="mcp.echo" args='{"message": "Hello"}'/>
-```
-
-### MCP with SSE Transport
-
-```python
-import asyncio
-from chuk_tool_processor.mcp import setup_mcp_sse
-
-async def main():
-    # Configure SSE servers
-    sse_servers = [
-        {
-            "name": "weather",
-            "url": "https://api.example.com/sse/weather",
-            "api_key": "your_api_key"
-        },
-        {
-            "name": "geocoding",
-            "url": "https://api.example.com/sse/geocoding"
-        }
-    ]
-    
-    # Setup MCP with SSE transport
-    processor, stream_manager = await setup_mcp_sse(
-        servers=sse_servers,
-        server_names={0: "weather", 1: "geocoding"},
-        namespace="remote",
-        enable_caching=True
-    )
-    
-    # Process tool calls
-    llm_text = """
-    Get the weather for New York.
-    
-    <tool name="remote.weather" args='{"location": "New York", "units": "imperial"}'/>
-    """
-    
-    results = await processor.process_text(llm_text)
-    
-    await stream_manager.close()
-```
-
-### MCP Stream Manager
-
-The `StreamManager` class handles all MCP communication:
-
-```python
-from chuk_tool_processor.mcp.stream_manager import StreamManager
-
-# Create and initialize
-stream_manager = await StreamManager.create(
-    config_file="config.json",
-    servers=["echo", "search"],
-    transport_type="stdio"
-)
-
-# Get available tools
-tools = stream_manager.get_all_tools()
-for tool in tools:
-    print(f"Tool: {tool['name']}")
-
-# Get server information
-server_info = stream_manager.get_server_info()
-for server in server_info:
-    print(f"Server: {server['name']}, Status: {server['status']}")
-
-# Call a tool directly
-result = await stream_manager.call_tool(
-    tool_name="echo",
-    arguments={"message": "Hello"}
-)
-
-# Clean up
-await stream_manager.close()
-```
-
-## Advanced Usage
-
-### Using Decorators for Tool Configuration
-
-```python
-from chuk_tool_processor.registry import register_tool
-from chuk_tool_processor.utils.validation import with_validation
-from chuk_tool_processor.execution.wrappers.retry import retryable
-from chuk_tool_processor.execution.wrappers.caching import cacheable
-from chuk_tool_processor.execution.wrappers.rate_limiting import rate_limited
-from typing import Dict, Any, Optional
-
-@register_tool(name="weather", namespace="data")
-@retryable(max_retries=3)
-@cacheable(ttl=3600)  # Cache for 1 hour
-@rate_limited(limit=100, period=60.0)  # 100 requests per minute
-@with_validation
-class WeatherTool:
-    def execute(self, location: str, units: str = "metric") -> Dict[str, Any]:
-        # Implementation that calls a weather API
+            result = x * y
+        else:
+            raise ValueError(f"Unknown operation: {operation}")
+            
         return {
-            "temperature": 22.5,
-            "conditions": "Partly Cloudy",
-            "humidity": 65
+            "operation": operation,
+            "x": x,
+            "y": y,
+            "result": result
         }
+
+# Setup and execute tools
+async def main():
+    # Initialize registry
+    await initialize()
+    
+    # Get the default registry
+    from chuk_tool_processor.registry import get_default_registry
+    registry = await get_default_registry()
+    
+    # Create execution strategy and executor
+    strategy = InProcessStrategy(registry)
+    executor = ToolExecutor(registry=registry, strategy=strategy)
+    
+    # Create a tool call
+    call = ToolCall(
+        tool="calculator",
+        arguments={
+            "operation": "multiply",
+            "x": 5,
+            "y": 7
+        }
+    )
+    
+    # Execute tool
+    results = await executor.execute([call])
+    
+    # Display result
+    result = results[0]
+    if not result.error:
+        print(f"Result: {result.result}")
+    else:
+        print(f"Error: {result.error}")
+
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
-### Using Validated Tool Base Class
+## Core Features
+
+### Async-Native Architecture
+
+The entire framework is built with native `async/await` support, allowing for:
+- Non-blocking execution of tools
+- True concurrency with controlled parallelism
+- Task-local context tracking across async boundaries
+
+### Tool Registry
+
+Tools are registered in a central registry with optional namespaces:
 
 ```python
-from chuk_tool_processor.utils.validation import ValidatedTool
-from chuk_tool_processor.registry import register_tool
-from pydantic import BaseModel
-from typing import Optional
+# Register with default parameters
+@register_tool()
+class SimpleGreeter:
+    async def execute(self, name: str) -> str:
+        return f"Hello, {name}!"
 
-@register_tool(namespace="data")
-class WeatherTool(ValidatedTool):
+# Register with custom name and namespace
+@register_tool(name="weather", namespace="api", description="Get weather info")
+class WeatherTool:
+    async def execute(self, location: str, units: str = "metric") -> dict:
+        # Implementation...
+        return {"temperature": 23.5, "conditions": "Sunny"}
+```
+
+Initialize and access the registry:
+
+```python
+# Initialize registry (required at startup)
+await initialize()
+
+# Get registry
+registry = await get_default_registry()
+
+# Look up a tool
+tool = await registry.get_tool("weather", namespace="api")
+
+# List registered tools
+tools = await registry.list_tools()
+
+# Get tool metadata
+metadata = await registry.get_metadata("weather", namespace="api")
+```
+
+### Execution Strategies
+
+Two execution strategies are provided:
+
+#### 1. InProcessStrategy
+
+Executes tools in the same process with optional concurrency control:
+
+```python
+from chuk_tool_processor.execution.strategies.inprocess_strategy import InProcessStrategy
+
+strategy = InProcessStrategy(
+    registry,
+    default_timeout=10.0,     # Timeout for tool execution
+    max_concurrency=5         # Maximum concurrent executions
+)
+```
+
+#### 2. SubprocessStrategy
+
+Executes tools in separate processes for true isolation:
+
+```python
+from chuk_tool_processor.execution.strategies.subprocess_strategy import SubprocessStrategy
+
+strategy = SubprocessStrategy(
+    registry,
+    max_workers=4,            # Maximum worker processes
+    default_timeout=30.0      # Timeout for tool execution
+)
+```
+
+### Execution Wrappers
+
+Enhance tool execution with optional wrappers:
+
+#### Retry Logic
+
+```python
+from chuk_tool_processor.execution.wrappers.retry import RetryConfig, RetryableToolExecutor
+
+# Use as a wrapper
+retry_executor = RetryableToolExecutor(
+    executor=base_executor,
+    default_config=RetryConfig(
+        max_retries=3,
+        base_delay=0.5,
+        jitter=True
+    )
+)
+
+# Or as a decorator
+from chuk_tool_processor.execution.wrappers.retry import retryable
+
+@retryable(max_retries=3, base_delay=0.5)
+@register_tool(name="flaky_api")
+class FlakyApiTool:
+    async def execute(self, query: str) -> dict:
+        # Implementation with potential failures
+        pass
+```
+
+#### Caching
+
+```python
+from chuk_tool_processor.execution.wrappers.caching import InMemoryCache, CachingToolExecutor
+
+# Use as a wrapper
+cache = InMemoryCache(default_ttl=60)  # 60 second TTL
+cache_executor = CachingToolExecutor(
+    executor=base_executor,
+    cache=cache
+)
+
+# Or as a decorator
+from chuk_tool_processor.execution.wrappers.caching import cacheable
+
+@cacheable(ttl=300)  # Cache for 5 minutes
+@register_tool(name="expensive_operation")
+class ExpensiveOperationTool:
+    async def execute(self, input_value: int) -> dict:
+        # Expensive computation
+        pass
+```
+
+#### Rate Limiting
+
+```python
+from chuk_tool_processor.execution.wrappers.rate_limiting import RateLimiter, RateLimitedToolExecutor
+
+# Use as a wrapper
+limiter = RateLimiter(global_limit=100, global_period=60.0)  # 100 requests per minute
+rate_limited_executor = RateLimitedToolExecutor(
+    executor=base_executor,
+    limiter=limiter
+)
+
+# Or as a decorator
+from chuk_tool_processor.execution.wrappers.rate_limiting import rate_limited
+
+@rate_limited(limit=5, period=60.0)  # 5 requests per minute
+@register_tool(name="external_api")
+class ExternalApiTool:
+    async def execute(self, query: str) -> dict:
+        # Call to rate-limited external API
+        pass
+```
+
+### Streaming Tool Support
+
+Tools can stream results incrementally:
+
+```python
+from chuk_tool_processor.models.streaming_tool import StreamingTool
+from pydantic import BaseModel, Field
+from typing import AsyncIterator
+
+@register_tool(name="counter")
+class CounterTool(StreamingTool):
+    """Stream incremental counts."""
+    
     class Arguments(BaseModel):
-        location: str
-        units: str = "metric"  # Default to metric
+        start: int = Field(1, description="Starting value")
+        end: int = Field(10, description="Ending value")
+        delay: float = Field(0.5, description="Delay between items")
     
     class Result(BaseModel):
-        temperature: float
-        conditions: str
-        humidity: Optional[int] = None
+        value: int
+        timestamp: str
     
-    def _execute(self, location: str, units: str = "metric"):
-        # Implementation
-        return {
-            "temperature": 22.5,
-            "conditions": "Sunny",
-            "humidity": 65
-        }
+    async def _stream_execute(self, start: int, end: int, delay: float) -> AsyncIterator[Result]:
+        """Stream each count with a delay."""
+        from datetime import datetime
+        
+        for i in range(start, end + 1):
+            await asyncio.sleep(delay)
+            yield self.Result(
+                value=i,
+                timestamp=datetime.now().isoformat()
+            )
+
+# Stream results
+async for result in executor.stream_execute([tool_call]):
+    print(f"Received: {result.result.value}")
 ```
 
-### Custom Execution Strategy
+### Comprehensive Error Handling
+
+Errors are captured in the result objects rather than raising exceptions:
 
 ```python
-from chuk_tool_processor.registry.providers.memory import InMemoryToolRegistry
-from chuk_tool_processor.execution.tool_executor import ToolExecutor
-from chuk_tool_processor.execution.inprocess_strategy import InProcessStrategy
-
-# Create registry and register tools
-registry = InMemoryToolRegistry()
-registry.register_tool(MyTool(), name="my_tool")
-
-# Create executor with custom strategy
-executor = ToolExecutor(
-    registry,
-    strategy=InProcessStrategy(
-        registry,
-        default_timeout=5.0,
-        max_concurrency=10
-    )
-)
-
 # Execute tool calls
-results = await executor.execute([call1, call2])
+results = await executor.execute([call1, call2, call3])
+
+for result in results:
+    if result.error:
+        print(f"Tool {result.tool} failed: {result.error}")
+        print(f"Duration: {(result.end_time - result.start_time).total_seconds()}s")
+    else:
+        print(f"Tool {result.tool} succeeded: {result.result}")
 ```
 
-### Custom Parser Plugins
+### Validation
+
+Validate tool arguments and results:
 
 ```python
-from chuk_tool_processor.models.tool_call import ToolCall
-from chuk_tool_processor.plugins.discovery import plugin_registry
-import re
-from typing import List
+from pydantic import BaseModel
+from chuk_tool_processor.models.validated_tool import ValidatedTool
 
-# Create a custom parser for a bracket syntax
-class BracketToolParser:
-    """Parser for [tool:name arg1=val1 arg2="val2"] syntax"""
+@register_tool(name="validate_data", namespace="utils")
+class ValidatedDataTool(ValidatedTool):
+    class Arguments(BaseModel):
+        username: str
+        age: int
+        email: str
     
-    def try_parse(self, raw: str) -> List[ToolCall]:
-        calls = []
-        # Regex to match [tool:name arg1=val1 arg2="val2"]
-        pattern = r"\[tool:([^\s\]]+)([^\]]*)\]"
-        matches = re.finditer(pattern, raw)
+    class Result(BaseModel):
+        is_valid: bool
+        errors: list[str] = []
+    
+    async def _execute(self, username: str, age: int, email: str) -> Result:
+        errors = []
         
-        for match in matches:
-            tool_name = match.group(1)
-            args_str = match.group(2).strip()
-            
-            # Parse arguments
-            args = {}
-            if args_str:
-                # Match key=value pairs, handling quoted values
-                args_pattern = r'([^\s=]+)=(?:([^\s"]+)|"([^"]*)")'
-                for arg_match in re.finditer(args_pattern, args_str):
-                    key = arg_match.group(1)
-                    # Either group 2 (unquoted) or group 3 (quoted)
-                    value = arg_match.group(2) if arg_match.group(2) else arg_match.group(3)
-                    args[key] = value
-            
-            calls.append(ToolCall(tool=tool_name, arguments=args))
+        if len(username) < 3:
+            errors.append("Username too short")
         
-        return calls
-
-# Register plugin manually
-plugin_registry.register_plugin("parser", "BracketToolParser", BracketToolParser())
+        if age < 18:
+            errors.append("Must be 18 or older")
+            
+        if "@" not in email:
+            errors.append("Invalid email")
+            
+        return self.Result(
+            is_valid=len(errors) == 0,
+            errors=errors
+        )
 ```
 
-### Structured Logging
+## Processing LLM Responses
+
+The `ToolProcessor` helps extract and execute tool calls from LLM responses:
 
 ```python
-from chuk_tool_processor.logging import get_logger, log_context_span
+from chuk_tool_processor.core.processor import ToolProcessor
 
-logger = get_logger("my_module")
+# Create processor
+processor = ToolProcessor()
+await processor.initialize()
 
-# Create a context span for timing operations
-with log_context_span("operation_name", {"extra": "context"}):
-    logger.info("Starting operation")
-    # Do something
-    logger.info("Operation completed")
+# Process text with tool calls
+llm_output = """
+I'll help calculate that for you.
+
+<tool name="calculator" args='{"operation": "multiply", "x": 5, "y": 7}'/>
+
+The result should be 35.
+"""
+
+# Extract and execute tool calls
+results = await processor.process_text(llm_output)
+
+# Process results
+for result in results:
+    print(f"Tool: {result.tool}")
+    print(f"Result: {result.result}")
+    print(f"Error: {result.error}")
 ```
 
-## Architecture
+The processor supports various formats:
 
-The tool processor has several key components organized into a modular structure:
+```python
+# XML format
+<tool name="calculator" args='{"operation": "add", "x": 5, "y": 3}'/>
 
-1. **Registry**: Stores tool implementations and metadata
-   - `registry/interface.py`: Defines the registry interface
-   - `registry/providers/memory.py`: In-memory implementation
-   - `registry/providers/redis.py`: Redis-backed implementation
+# OpenAI function call format
+{
+  "function_call": {
+    "name": "calculator",
+    "arguments": "{\"operation\": \"add\", \"x\": 5, \"y\": 3}"
+  }
+}
 
-2. **Models**: Core data structures
-   - `models/tool_call.py`: Represents a tool call from an LLM
-   - `models/tool_result.py`: Represents the result of a tool execution
-
-3. **Execution**: Tool execution strategies and wrappers
-   - `execution/tool_executor.py`: Main executor interface
-   - `execution/inprocess_strategy.py`: Same-process execution
-   - `execution/subprocess_strategy.py`: Isolated process execution
-   - `execution/wrappers/`: Enhanced executors (caching, retries, etc.)
-
-4. **Plugins**: Extensible plugin system
-   - `plugins/discovery.py`: Plugin discovery mechanism
-   - `plugins/parsers/`: Parser plugins for different formats
-
-5. **MCP Integration**: Model Context Protocol support
-   - `mcp/stream_manager.py`: Manages MCP server connections
-   - `mcp/transport/`: Transport implementations (stdio, SSE)
-   - `mcp/setup_mcp_*.py`: Easy setup functions for MCP integration
-
-6. **Utils**: Shared utilities
-   - `utils/logging.py`: Structured logging system
-   - `utils/validation.py`: Argument and result validation
-
-7. **Core**: Central components
-   - `core/processor.py`: Main processor for handling tool calls
-   - `core/exceptions.py`: Exception hierarchy
-
-## Examples
-
-The repository includes several example scripts:
-
-- `examples/tool_registry_example.py`: Demonstrates tool registration and usage
-- `examples/plugin_example.py`: Shows how to create and use custom plugins
-- `examples/tool_calling_example_usage.py`: Basic example demonstrating tool execution
-- `examples/mcp_stdio_example.py`: MCP stdio transport demonstration
-- `examples/mcp_stdio_example_calling_usage.py`: Complete MCP integration example
-
-Run examples with:
-
-```bash
-# Registry example
-uv run examples/tool_registry_example.py
-
-# Plugin example
-uv run examples/plugin_example.py
-
-# Tool execution example
-uv run examples/tool_calling_example_usage.py
-
-# MCP example
-uv run examples/mcp_stdio_example.py
-
-# Enable debug logging
-LOGLEVEL=DEBUG uv run examples/tool_calling_example_usage.py
+# JSON format
+{
+  "tool_calls": [
+    {
+      "id": "call_123",
+      "type": "function",
+      "function": {
+        "name": "calculator",
+        "arguments": "{\"operation\": \"add\", \"x\": 5, \"y\": 3}"
+      }
+    }
+  ]
+}
 ```
 
 ## License
