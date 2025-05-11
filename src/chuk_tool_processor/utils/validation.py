@@ -1,5 +1,4 @@
 # chuk_tool_processor/utils/validation.py
-# chuk_tool_processor/utils/validation.py
 """
 Async runtime helpers for validating tool inputs / outputs with Pydantic.
 

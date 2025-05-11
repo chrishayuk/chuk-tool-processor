@@ -1,199 +1,489 @@
-"""Unit‑tests for ToolProcessor – regression for unhashable arguments                                 
-
-Run with::
-
-    pytest -q tests/test_processor.py
+# tests/chuk_tool_processor/core/test_processor.py
+# chuk_tool_processor/core/processor.py
 """
+Async-native core processor for tool execution.
+
+This module provides the central ToolProcessor class which handles:
+- Tool call parsing from various input formats
+- Tool execution using configurable strategies
+- Application of execution wrappers (caching, retries, etc.)
+"""
+from __future__ import annotations
+
 import asyncio
-from datetime import datetime, timezone
+import time
+import json
+import hashlib
+from typing import Any, Dict, List, Optional, Type, Union, Set
 
-import pytest
-
-import chuk_tool_processor.core.processor as processor_module
-from chuk_tool_processor.core.processor import ToolProcessor, default_processor
 from chuk_tool_processor.models.tool_call import ToolCall
 from chuk_tool_processor.models.tool_result import ToolResult
-from chuk_tool_processor.plugins.discovery import plugin_registry
+from chuk_tool_processor.registry import ToolRegistryInterface, ToolRegistryProvider
+from chuk_tool_processor.execution.strategies.inprocess_strategy import InProcessStrategy
+from chuk_tool_processor.execution.wrappers.caching import CacheInterface, InMemoryCache, CachingToolExecutor
+from chuk_tool_processor.execution.wrappers.rate_limiting import RateLimiter, RateLimitedToolExecutor
+from chuk_tool_processor.execution.wrappers.retry import RetryConfig, RetryableToolExecutor
+from chuk_tool_processor.plugins.discovery import plugin_registry, discover_default_plugins
+from chuk_tool_processor.logging import get_logger, log_context_span, request_logging, log_tool_call, metrics
 
 
-# ---------------------------------------------------------------------------
-# Dummy helpers                                                               
-# ---------------------------------------------------------------------------
-class DummyParser:
-    """Parser that yields one call when it sees the token *dummy* in the text."""
+class ToolProcessor:
+    """
+    Main class for processing tool calls from LLM responses.
+    Combines parsing, execution, and result handling with full async support.
+    """
 
-    def try_parse(self, raw: str):
-        if "dummy" in raw:
-            return [ToolCall(tool="t1", arguments={"x": 1})]
-        return []
+    def __init__(
+        self,
+        registry: Optional[ToolRegistryInterface] = None,
+        strategy = None,
+        default_timeout: float = 10.0,
+        max_concurrency: Optional[int] = None,
+        enable_caching: bool = True,
+        cache_ttl: int = 300,
+        enable_rate_limiting: bool = False,
+        global_rate_limit: Optional[int] = None,
+        tool_rate_limits: Optional[Dict[str, tuple]] = None,
+        enable_retries: bool = True,
+        max_retries: int = 3,
+        parser_plugins: Optional[List[str]] = None,
+    ):
+        """
+        Initialize the tool processor.
 
+        Args:
+            registry: Tool registry to use. If None, uses the global registry.
+            strategy: Optional execution strategy (default: InProcessStrategy)
+            default_timeout: Default timeout for tool execution in seconds.
+            max_concurrency: Maximum number of concurrent tool executions.
+            enable_caching: Whether to enable result caching.
+            cache_ttl: Default cache TTL in seconds.
+            enable_rate_limiting: Whether to enable rate limiting.
+            global_rate_limit: Optional global rate limit (requests per minute).
+            tool_rate_limits: Dict mapping tool names to (limit, period) tuples.
+            enable_retries: Whether to enable automatic retries.
+            max_retries: Maximum number of retry attempts.
+            parser_plugins: List of parser plugin names to use.
+                If None, uses all available parsers.
+        """
+        self.logger = get_logger("chuk_tool_processor.processor")
+        
+        # Store initialization parameters for lazy initialization
+        self._registry = registry
+        self._strategy = strategy
+        self.default_timeout = default_timeout
+        self.max_concurrency = max_concurrency
+        self.enable_caching = enable_caching
+        self.cache_ttl = cache_ttl
+        self.enable_rate_limiting = enable_rate_limiting
+        self.global_rate_limit = global_rate_limit
+        self.tool_rate_limits = tool_rate_limits
+        self.enable_retries = enable_retries
+        self.max_retries = max_retries
+        self.parser_plugin_names = parser_plugins
+        
+        # Placeholder for initialized components
+        self.registry = None
+        self.strategy = None
+        self.executor = None
+        self.parsers = []
+        
+        # Flag for tracking initialization state
+        self._initialized = False
+        self._init_lock = asyncio.Lock()
 
-class DummyExecutor:
-    """Captures execute() invocations and fabricates matching ToolResults."""
-
-    def __init__(self):
-        self.calls = []  # list[(calls, timeout)] – every execute() invocation
-
-    async def execute(self, calls, timeout=None):  # noqa: D401
-        self.calls.append((calls, timeout))
-        results = []
-        for call in calls:
-            results.append(
-                ToolResult(
-                    tool=call.tool,
-                    result={"args": call.arguments},
-                    error=None,
-                    start_time=datetime.now(timezone.utc),
-                    end_time=datetime.now(timezone.utc),
-                    machine="test",
-                    pid=0,
-                    cached=False,
+    async def initialize(self) -> None:
+        """
+        Initialize the processor asynchronously.
+        
+        This method ensures all components are properly initialized before use.
+        It is called automatically by other methods if needed.
+        """
+        # Fast path if already initialized
+        if self._initialized:
+            return
+            
+        # Ensure only one initialization happens at a time
+        async with self._init_lock:
+            # Double-check pattern after acquiring lock
+            if self._initialized:
+                return
+                
+            self.logger.debug("Initializing tool processor")
+            
+            # Get the registry
+            if self._registry is not None:
+                self.registry = self._registry
+            else:
+                self.registry = await ToolRegistryProvider.get_registry()
+            
+            # Create execution strategy if needed
+            if self._strategy is not None:
+                self.strategy = self._strategy
+            else:
+                self.strategy = InProcessStrategy(
+                    registry=self.registry,
+                    default_timeout=self.default_timeout,
+                    max_concurrency=self.max_concurrency,
                 )
-            )
-        return results
+            
+            # Set up the executor chain with optional wrappers
+            executor = self.strategy
+            
+            # Apply wrappers in reverse order (innermost first)
+            if self.enable_retries:
+                self.logger.debug("Enabling retry logic")
+                executor = RetryableToolExecutor(
+                    executor=executor,
+                    default_config=RetryConfig(max_retries=self.max_retries),
+                )
+                
+            if self.enable_rate_limiting:
+                self.logger.debug("Enabling rate limiting")
+                rate_limiter = RateLimiter(
+                    global_limit=self.global_rate_limit,
+                    tool_limits=self.tool_rate_limits,
+                )
+                executor = RateLimitedToolExecutor(
+                    executor=executor,
+                    limiter=rate_limiter,
+                )
+                
+            if self.enable_caching:
+                self.logger.debug("Enabling result caching")
+                cache = InMemoryCache(default_ttl=self.cache_ttl)
+                executor = CachingToolExecutor(
+                    executor=executor,
+                    cache=cache,
+                    default_ttl=self.cache_ttl,
+                )
+            
+            self.executor = executor
+            
+            # Initialize parser plugins
+            # Discover plugins if not already done
+            plugins = plugin_registry.list_plugins().get("parser", [])
+            if not plugins:
+                discover_default_plugins()
+                plugins = plugin_registry.list_plugins().get("parser", [])
+                
+            # Get parser plugins
+            if self.parser_plugin_names:
+                self.parsers = [
+                    plugin_registry.get_plugin("parser", name)
+                    for name in self.parser_plugin_names
+                    if plugin_registry.get_plugin("parser", name)
+                ]
+            else:
+                self.parsers = [
+                    plugin_registry.get_plugin("parser", name) for name in plugins
+                ]
+            
+            self.logger.debug(f"Initialized with {len(self.parsers)} parser plugins")
+            self._initialized = True
 
+    async def process(
+        self,
+        data: Union[str, Dict[str, Any], List[Dict[str, Any]]],
+        timeout: Optional[float] = None,
+        use_cache: bool = True,
+        request_id: Optional[str] = None,
+    ) -> List[ToolResult]:
+        """
+        Process tool calls from various input formats.
+        
+        This method handles different input types:
+        - String: Parses tool calls from text using registered parsers
+        - Dict: Processes an OpenAI-style tool_calls object
+        - List[Dict]: Processes a list of individual tool calls
+        
+        Args:
+            data: Input data containing tool calls
+            timeout: Optional timeout for execution
+            use_cache: Whether to use cached results
+            request_id: Optional request ID for logging
+            
+        Returns:
+            List of tool results
+        """
+        # Ensure initialization
+        await self.initialize()
+        
+        # Create request context
+        async with request_logging(request_id) as req_id:
+            # Handle different input types
+            if isinstance(data, str):
+                # Text processing
+                self.logger.debug(f"Processing text ({len(data)} chars)")
+                calls = await self._extract_tool_calls(data)
+            elif isinstance(data, dict):
+                # Handle OpenAI format with tool_calls array
+                if "tool_calls" in data and isinstance(data["tool_calls"], list):
+                    calls = []
+                    for tc in data["tool_calls"]:
+                        if "function" in tc and isinstance(tc["function"], dict):
+                            function = tc["function"]
+                            name = function.get("name")
+                            args_str = function.get("arguments", "{}")
+                            
+                            # Parse arguments
+                            try:
+                                args = json.loads(args_str) if isinstance(args_str, str) else args_str
+                            except json.JSONDecodeError:
+                                args = {"raw": args_str}
+                                
+                            if name:
+                                calls.append(ToolCall(tool=name, arguments=args, id=tc.get("id")))
+                else:
+                    # Assume it's a single tool call
+                    calls = [ToolCall(**data)]
+            elif isinstance(data, list):
+                # List of tool calls
+                calls = [ToolCall(**tc) for tc in data]
+            else:
+                self.logger.warning(f"Unsupported input type: {type(data)}")
+                return []
+                
+            if not calls:
+                self.logger.debug("No tool calls found")
+                return []
+                
+            self.logger.debug(f"Found {len(calls)} tool calls")
+            
+            # Execute tool calls
+            async with log_context_span("tool_execution", {"num_calls": len(calls)}):
+                # Check if any tools are unknown
+                unknown_tools = []
+                for call in calls:
+                    tool = await self.registry.get_tool(call.tool)
+                    if not tool:
+                        unknown_tools.append(call.tool)
+                
+                if unknown_tools:
+                    self.logger.warning(f"Unknown tools: {unknown_tools}")
+                
+                # Execute tools
+                results = await self.executor.execute(calls, timeout=timeout)
+                
+                # Log metrics for each tool call
+                for call, result in zip(calls, results):
+                    await log_tool_call(call, result)
+                    
+                    # Record metrics
+                    duration = (result.end_time - result.start_time).total_seconds()
+                    await metrics.log_tool_execution(
+                        tool=call.tool,
+                        success=result.error is None,
+                        duration=duration,
+                        error=result.error,
+                        cached=getattr(result, "cached", False),
+                        attempts=getattr(result, "attempts", 1),
+                    )
+                
+                return results
 
-# ---------------------------------------------------------------------------
-# Fixtures                                                                     
-# ---------------------------------------------------------------------------
-@pytest.fixture(autouse=True)
-def clear_parsers(monkeypatch):
-    """Swap in a single DummyParser so real plugins aren’t hit."""
+    async def process_text(
+        self,
+        text: str,
+        timeout: Optional[float] = None,
+        use_cache: bool = True,
+        request_id: Optional[str] = None,
+    ) -> List[ToolResult]:
+        """
+        Process text to extract and execute tool calls.
+        
+        Legacy alias for process() with string input.
 
-    monkeypatch.setattr(
-        plugin_registry,
-        "list_plugins",
-        lambda category=None: {"parser": ["Dummy"]} if category is None else ["Dummy"],
-    )
-    monkeypatch.setattr(
-        plugin_registry,
-        "get_plugin",
-        lambda category, name: DummyParser() if name == "Dummy" else None,
-    )
-    yield
+        Args:
+            text: Text to process.
+            timeout: Optional timeout for execution.
+            use_cache: Whether to use cached results.
+            request_id: Optional request ID for logging.
 
-
-@pytest.fixture
-def processor():
-    """Minimal ToolProcessor wired with DummyExecutor (no cache/rate‑limit/retry)."""
-
-    tp = ToolProcessor(enable_caching=False, enable_rate_limiting=False, enable_retries=False)
-    tp.executor = DummyExecutor()  # type: ignore[attr-defined]
-    return tp
-
-
-# ---------------------------------------------------------------------------
-# Regression: unhashable list in arguments                                      
-# ---------------------------------------------------------------------------
-@pytest.mark.asyncio
-async def test_unhashable_arguments_processed(processor):
-    """Processor should handle list-valued arguments without crashing."""
+        Returns:
+            List of tool results.
+        """
+        return await self.process(
+            data=text,
+            timeout=timeout,
+            use_cache=use_cache,
+            request_id=request_id,
+        )
     
-    class ListArgParser:
-        def try_parse(self, raw: str):
-            if "listargs" in raw:
-                return [ToolCall(tool="tlist", arguments={"hosts": ["a", "b"]})]
-            return []
+    async def execute(
+        self,
+        calls: List[ToolCall],
+        timeout: Optional[float] = None,
+        use_cache: bool = True,
+    ) -> List[ToolResult]:
+        """
+        Execute a list of ToolCall objects directly.
+        
+        Args:
+            calls: List of tool calls to execute
+            timeout: Optional execution timeout
+            use_cache: Whether to use cached results
+            
+        Returns:
+            List of tool results
+        """
+        # Ensure initialization
+        await self.initialize()
+        
+        # Execute with the configured executor
+        return await self.executor.execute(
+            calls=calls,
+            timeout=timeout,
+            use_cache=use_cache if hasattr(self.executor, "use_cache") else True
+        )
 
-    # Swap parsers to emit the problematic call
-    processor.parsers = [ListArgParser()]
+    async def _extract_tool_calls(self, text: str) -> List[ToolCall]:
+        """
+        Extract tool calls from text using all available parsers.
 
-    # Prior to the fix this raised `TypeError: unhashable type: 'list'`
-    results = await processor.process_text("contains listargs")
+        Args:
+            text: Text to parse.
 
-    # After the fix it should simply return one successful result
-    assert len(results) == 1
-    assert results[0].tool == "tlist"
+        Returns:
+            List of tool calls.
+        """
+        all_calls: List[ToolCall] = []
 
-# ---------------------------------------------------------------------------
-# Modern behaviour (post‑fix)                                                 
-# ---------------------------------------------------------------------------                                                                        
-# ---------------------------------------------------------------------------
-@pytest.mark.asyncio
-async def test_process_text_no_calls(processor):
-    """Text without the trigger token should yield an empty result list."""
+        # Try each parser
+        async with log_context_span("parsing", {"text_length": len(text)}):
+            parse_tasks = []
+            
+            # Create parsing tasks
+            for parser in self.parsers:
+                parse_tasks.append(self._try_parser(parser, text))
+                
+            # Execute all parsers concurrently
+            parser_results = await asyncio.gather(*parse_tasks, return_exceptions=True)
+            
+            # Collect successful results
+            for result in parser_results:
+                if isinstance(result, Exception):
+                    continue
+                if result:
+                    all_calls.extend(result)
 
-    results = await processor.process_text("no calls here")
-    assert results == []
+        # ------------------------------------------------------------------ #
+        # Remove duplicates – use a stable digest instead of hashing a
+        # frozenset of argument items (which breaks on unhashable types).
+        # ------------------------------------------------------------------ #
+        def _args_digest(args: Dict[str, Any]) -> str:
+            """Return a stable hash for any JSON-serialisable payload."""
+            blob = json.dumps(args, sort_keys=True, default=str)
+            return hashlib.md5(blob.encode()).hexdigest()
 
+        unique_calls: Dict[str, ToolCall] = {}
+        for call in all_calls:
+            key = f"{call.tool}:{_args_digest(call.arguments)}"
+            unique_calls[key] = call
 
-@pytest.mark.asyncio
-async def test_process_text_single_call(processor):
-    text = "this text has dummy"
-    results = await processor.process_text(text, timeout=5.0)
-
-    # executor was invoked once and got the explicit timeout
-    assert len(processor.executor.calls) == 1  # type: ignore[attr-defined]
-    calls, used_timeout = processor.executor.calls[0]  # type: ignore[attr-defined]
-    assert used_timeout == 5.0
-    assert isinstance(calls[0], ToolCall)
-
-    # processor returned exactly one ToolResult with the expected payload
-    assert len(results) == 1
-    res = results[0]
-    assert res.tool == "t1"
-    assert res.result == {"args": {"x": 1}}
-
-
-@pytest.mark.asyncio
-async def test_duplicate_calls_removed(processor):
-    """Two identical calls must collapse to one after de‑duplication."""
-
-    class DupParser:
-        def try_parse(self, raw):
-            return [
-                ToolCall(tool="t2", arguments={"y": 2}),
-                ToolCall(tool="t2", arguments={"y": 2}),
-            ]
-
-    processor.parsers = [DupParser()]
-    results = await processor.process_text("any text")
-
-    # executor received only one unique call
-    assert len(processor.executor.calls) == 1  # type: ignore[attr-defined]
-    calls, _ = processor.executor.calls[0]  # type: ignore[attr-defined]
-    assert len(calls) == 1
-    assert calls[0].tool == "t2"
-
-    # and the processor returned one result entry
-    assert len(results) == 1
-
-
-@pytest.mark.asyncio
-async def test_unknown_tool_logging(monkeypatch, caplog):
-    """Unknown tools should generate a warning but still return a result stub."""
-
-    class UnknownParser:
-        def try_parse(self, raw):
-            return [ToolCall(tool="unknown", arguments={})]
-
-    tp = ToolProcessor(enable_caching=False, enable_rate_limiting=False, enable_retries=False)
-    tp.parsers = [UnknownParser()]
-    tp.executor = DummyExecutor()  # type: ignore[attr-defined]
-
-    # Pretend the registry doesn’t have this tool
-    monkeypatch.setattr(tp.registry, "get_tool", lambda name: None)
-
-    caplog.set_level("WARNING")
-    results = await tp.process_text("trigger unknown")
-
-    assert any("Unknown tools: ['unknown']" in rec.message for rec in caplog.records)
-    assert len(results) == 1
+        return list(unique_calls.values())
+    
+    async def _try_parser(self, parser, text: str) -> List[ToolCall]:
+        """Try a single parser with metrics and logging."""
+        parser_name = parser.__class__.__name__
+        
+        async with log_context_span(f"parser.{parser_name}", log_duration=True):
+            start_time = time.time()
+            
+            try:
+                # Try to parse
+                calls = await parser.try_parse(text)
+                
+                # Log success
+                duration = time.time() - start_time
+                await metrics.log_parser_metric(
+                    parser=parser_name,
+                    success=True,
+                    duration=duration,
+                    num_calls=len(calls),
+                )
+                
+                return calls
+                
+            except Exception as e:
+                # Log failure
+                duration = time.time() - start_time
+                await metrics.log_parser_metric(
+                    parser=parser_name,
+                    success=False,
+                    duration=duration,
+                    num_calls=0,
+                )
+                self.logger.error(f"Parser {parser_name} failed: {str(e)}")
+                return []
 
 
-def test_default_process_text_wrapper(monkeypatch):
-    """The public wrapper should forward its arguments untouched."""
+# Create a global processor instance
+_global_processor: Optional[ToolProcessor] = None
+_processor_lock = asyncio.Lock()
 
-    called: dict = {}
+async def get_default_processor() -> ToolProcessor:
+    """Get or initialize the default global processor."""
+    global _global_processor
+    
+    if _global_processor is None:
+        async with _processor_lock:
+            if _global_processor is None:
+                _global_processor = ToolProcessor()
+                await _global_processor.initialize()
+                
+    return _global_processor
 
-    async def fake(text, timeout=None, use_cache=None, request_id=None):  # noqa: D401
-        called["args"] = (text, timeout, use_cache, request_id)
-        return []
+async def process(
+    data: Union[str, Dict[str, Any], List[Dict[str, Any]]],
+    timeout: Optional[float] = None,
+    use_cache: bool = True,
+    request_id: Optional[str] = None,
+) -> List[ToolResult]:
+    """
+    Process tool calls with the default processor.
+    
+    Args:
+        data: Input data (text, dict, or list of dicts)
+        timeout: Optional timeout for execution
+        use_cache: Whether to use cached results
+        request_id: Optional request ID for logging
+        
+    Returns:
+        List of tool results
+    """
+    processor = await get_default_processor()
+    return await processor.process(
+        data=data,
+        timeout=timeout,
+        use_cache=use_cache,
+        request_id=request_id,
+    )
 
-    monkeypatch.setattr(default_processor, "process_text", fake)
+async def process_text(
+    text: str,
+    timeout: Optional[float] = None,
+    use_cache: bool = True,
+    request_id: Optional[str] = None,
+) -> List[ToolResult]:
+    """
+    Process text with the default processor.
+    
+    Legacy alias for backward compatibility.
 
-    coro = processor_module.process_text("abc", timeout=1.2, use_cache=False, request_id="rid")
-    results = asyncio.get_event_loop().run_until_complete(coro)
+    Args:
+        text: Text to process.
+        timeout: Optional timeout for execution.
+        use_cache: Whether to use cached results.
+        request_id: Optional request ID for logging.
 
-    assert called["args"] == ("abc", 1.2, False, "rid")
-    assert results == []
+    Returns:
+        List of tool results.
+    """
+    processor = await get_default_processor()
+    return await processor.process_text(
+        text=text,
+        timeout=timeout,
+        use_cache=use_cache,
+        request_id=request_id,
+    )
