@@ -1,18 +1,23 @@
 # chuk_tool_processor/parsers/base.py
+"""Async-native parser-plugin base interface."""
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from typing import List
+
 from chuk_tool_processor.models.tool_call import ToolCall
 
 
 class ParserPlugin(ABC):
     """
-    Minimal interface every parser plug-in must implement.
+    Every parser plugin **must** implement the async ``try_parse`` coroutine.
 
-    The processor will feed the *raw text* (or dict) it receives from upstream
-    into `try_parse`.  If the plugin recognises the format it should return a
-    list of ToolCall objects; otherwise return an empty list.
+    The processor will await it and expects a *list* of :class:`ToolCall`
+    objects.  If the plugin doesn’t recognise the input it should return an
+    empty list.
     """
 
     @abstractmethod
-    def try_parse(self, raw: str) -> List[ToolCall]:
+    async def try_parse(self, raw: str | object) -> List[ToolCall]:  # noqa: D401
         ...
+

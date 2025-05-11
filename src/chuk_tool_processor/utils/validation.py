@@ -1,6 +1,7 @@
 # chuk_tool_processor/utils/validation.py
+# chuk_tool_processor/utils/validation.py
 """
-Runtime helpers for validating tool inputs / outputs with Pydantic.
+Async runtime helpers for validating tool inputs / outputs with Pydantic.
 
 Public API
 ----------
@@ -10,11 +11,12 @@ validate_result(tool_name, fn, result)  -> Any
 """
 from __future__ import annotations
 import inspect
+import asyncio
 from functools import lru_cache, wraps
-from typing import Any, Callable, Dict, get_type_hints
+from typing import Any, Callable, Dict, get_type_hints, Awaitable
 from pydantic import BaseModel, ValidationError, create_model, Extra
 
-# excpetion
+# exception
 from chuk_tool_processor.core.exceptions import ToolValidationError
 
 __all__ = [
@@ -66,19 +68,21 @@ def _result_model(tool_name: str, fn: Callable) -> type[BaseModel] | None:
 
 
 # --------------------------------------------------------------------------- #
-# public validation helpers
+# public validation helpers - synced with async patterns
 # --------------------------------------------------------------------------- #
 
 
 def validate_arguments(tool_name: str, fn: Callable, args: Dict[str, Any]) -> Dict[str, Any]:
+    """Validate function arguments against type hints."""
     try:
         model = _arg_model(tool_name, fn)
-        return model(**args).dict()
+        return model(**args).model_dump()
     except ValidationError as exc:
         raise ToolValidationError(tool_name, exc.errors()) from exc
 
 
 def validate_result(tool_name: str, fn: Callable, result: Any) -> Any:
+    """Validate function return value against return type hint."""
     model = _result_model(tool_name, fn)
     if model is None:  # no annotation ⇒ no validation
         return result
@@ -89,32 +93,34 @@ def validate_result(tool_name: str, fn: Callable, result: Any) -> Any:
 
 
 # --------------------------------------------------------------------------- #
-# decorator for classic “imperative” tools
+# decorator for classic "imperative" tools - now requires async
 # --------------------------------------------------------------------------- #
 
 
 def with_validation(cls):
     """
-    Wrap *execute* / *_execute* so that their arguments & return values
-    are type-checked each call.
+    Wrap an async *execute* method with argument & result validation.
 
     ```
     @with_validation
     class MyTool:
-        def execute(self, x: int, y: int) -> int:
+        async def execute(self, x: int, y: int) -> int:
             return x + y
     ```
     """
-
     # Which method did the user provide?
     fn_name = "_execute" if hasattr(cls, "_execute") else "execute"
     original = getattr(cls, fn_name)
+    
+    # Ensure the method is async
+    if not inspect.iscoroutinefunction(original):
+        raise TypeError(f"Tool {cls.__name__} must have an async {fn_name} method")
 
     @wraps(original)
-    def _validated(self, **kwargs):
+    async def _validated(self, **kwargs):
         name = cls.__name__
         kwargs = validate_arguments(name, original, kwargs)
-        res = original(self, **kwargs)
+        res = await original(self, **kwargs)
         return validate_result(name, original, res)
 
     setattr(cls, fn_name, _validated)

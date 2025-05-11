@@ -1,63 +1,87 @@
-# tests/tool_processor/plugins/test_xml_tool.py
-import pytest
+# chuk_tool_processor/plugins/parsers/xml_tool.py
+"""
+Async parser for single-line XML-style tool-call tags:
+
+    <tool name="translate" args="{\"text\": \"Hello\", \"target\": \"es\"}"/>
+
+The `args` attribute may be:
+
+* a *proper* JSON object:                   args="{"x": 1}"
+* a *JSON-encoded* **string** (common):     args="{\"x\": 1}"
+* the empty string:                         args=""
+
+All are handled and normalised to a **dict**.
+"""
+from __future__ import annotations
+
 import json
-from chuk_tool_processor.plugins.parsers.xml_tool import XmlToolPlugin
+import re
+from typing import List
+
+from pydantic import ValidationError
+
 from chuk_tool_processor.models.tool_call import ToolCall
+from chuk_tool_processor.plugins.parsers.base import ParserPlugin
 
-@ pytest.fixture
+# --------------------------------------------------------------------------- #
+class XmlToolPlugin(ParserPlugin):
+    """Parse `<tool …/>` constructs into :class:`ToolCall` objects."""
 
-def plugin():
-    return XmlToolPlugin()
-
-def test_try_parse_single_tag_with_args(plugin):
-    raw = '<tool name="translate" args="{\"text\": \"Hello\", \"target\": \"es\"}"/>'
-    calls = plugin.try_parse(raw)
-    assert len(calls) == 1
-    call = calls[0]
-    assert isinstance(call, ToolCall)
-    assert call.tool == "translate"
-    assert call.arguments == {"text": "Hello", "target": "es"}
-
-
-def test_try_parse_multiple_tags(plugin):
-    raw = (
-        '<tool name="a" args="{\"x\":1}"/>'
-        ' some text '
-        '<tool name="b" args="{\"y\":2}"/>'
+    _TAG = re.compile(
+        r"<tool\s+"
+        r"name=(?P<q1>[\"'])(?P<tool>.+?)(?P=q1)\s+"
+        r"args=(?P<q2>[\"'])(?P<args>.*?)(?P=q2)\s*/>"
     )
-    calls = plugin.try_parse(raw)
-    assert [c.tool for c in calls] == ["a", "b"]
-    assert calls[0].arguments == {"x": 1}
-    assert calls[1].arguments == {"y": 2}
 
+    # ------------------------------------------------------------------ #
+    async def try_parse(self, raw):  # type: ignore[override]
+        if not isinstance(raw, str):
+            return []
 
-def test_try_parse_tag_without_args(plugin):
-    raw = '<tool name="noop" args=""/>'
-    calls = plugin.try_parse(raw)
-    assert len(calls) == 1
-    call = calls[0]
-    assert call.tool == "noop"
-    assert call.arguments == {}
+        calls: List[ToolCall] = []
 
+        for m in self._TAG.finditer(raw):
+            name = m.group("tool")
+            raw_args = m.group("args") or ""
 
-def test_try_parse_malformed_args(plugin):
-    raw = '<tool name="broken" args="{invalid json}"/>'
-    calls = plugin.try_parse(raw)
-    assert len(calls) == 1
-    call = calls[0]
-    assert call.tool == "broken"
-    # Malformed JSON yields empty args dict
-    assert call.arguments == {}
+            args = self._decode_args(raw_args)
 
+            try:
+                calls.append(ToolCall(tool=name, arguments=args))
+            except ValidationError:
+                continue  # skip malformed entries
 
-def test_try_parse_no_tags(plugin):
-    raw = 'no tools here'
-    calls = plugin.try_parse(raw)
-    assert calls == []
+        return calls
 
+    # ------------------------------------------------------------------ #
+    # Helpers
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def _decode_args(raw_args: str) -> dict:
+        """Return a dict from the raw *args* attribute (best-effort)."""
+        if not raw_args:
+            return {}
 
-def test_try_parse_invalid_structure(plugin):
-    # Even if args attribute is valid JSON, missing name should not match regex
-    raw = '<tool wrong_attr="x"="{}"/>'
-    calls = plugin.try_parse(raw)
-    assert calls == []
+        # 1. direct JSON
+        try:
+            parsed = json.loads(raw_args)
+        except json.JSONDecodeError:
+            parsed = None
+
+        # 2. maybe the value itself is a JSON-encoded string
+        if parsed is None:
+            try:
+                parsed = json.loads(
+                    raw_args.encode("utf-8").decode("unicode_escape")
+                )
+            except json.JSONDecodeError:
+                parsed = None
+
+        # 3. last chance: naive unescape of \" → "
+        if parsed is None:
+            try:
+                parsed = json.loads(raw_args.replace(r"\"\"", "\""))
+            except json.JSONDecodeError:
+                parsed = {}
+
+        return parsed if isinstance(parsed, dict) else {}

@@ -1,23 +1,20 @@
 # chuk_tool_processor/parsers/json_tool.py
-"""JSON *tool_calls* parser plugin (drop-in).
-
-Accepts raw‐string or dict input where the top-level object includes a
-``tool_calls`` array – an early OpenAI Chat Completions schema.
-"""
+"""Async JSON `tool_calls` parser plugin."""
 from __future__ import annotations
 
 import json
 from typing import Any, List
+
 from pydantic import ValidationError
 
-# imports
-from .base import ParserPlugin
 from chuk_tool_processor.models.tool_call import ToolCall
+from .base import ParserPlugin
+
 
 class JsonToolPlugin(ParserPlugin):
-    """Extracts ``tool_calls`` array from a JSON response."""
+    """Extract `tool_calls` arrays from generic JSON responses."""
 
-    def try_parse(self, raw: str | Any) -> List[ToolCall]:
+    async def try_parse(self, raw: str | Any) -> List[ToolCall]:
         try:
             data = json.loads(raw) if isinstance(raw, str) else raw
         except json.JSONDecodeError:
@@ -26,13 +23,11 @@ class JsonToolPlugin(ParserPlugin):
         if not isinstance(data, dict):
             return []
 
-        calls = data.get("tool_calls", [])
         out: List[ToolCall] = []
-
-        for c in calls:
+        for c in data.get("tool_calls", []):
             try:
                 out.append(ToolCall(**c))
             except ValidationError:
                 continue
-        return out
 
+        return out

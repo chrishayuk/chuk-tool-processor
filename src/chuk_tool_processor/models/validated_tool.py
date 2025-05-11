@@ -1,6 +1,6 @@
 # chuk_tool_processor/models/validated_tool.py
 """
-Self-contained base-class for *declarative* tools.
+Self-contained base-class for *declarative* async-native tools.
 
 Subclass it like so:
 
@@ -12,7 +12,7 @@ Subclass it like so:
         class Result(BaseModel):
             sum: int
 
-        def _execute(self, *, x: int, y: int) -> Result:
+        async def _execute(self, *, x: int, y: int) -> Result:
             return self.Result(sum=x + y)
 """
 from __future__ import annotations
@@ -93,7 +93,7 @@ class _ExportMixin:
 # The public validated base-class
 # --------------------------------------------------------------------------- #
 class ValidatedTool(_ExportMixin, BaseModel):
-    """Pydantic-validated base for new tools."""
+    """Pydantic-validated base for new async-native tools."""
 
     # ------------------------------------------------------------------ #
     # Inner models – override in subclasses
@@ -107,11 +107,11 @@ class ValidatedTool(_ExportMixin, BaseModel):
     # ------------------------------------------------------------------ #
     # Public entry-point called by the processor
     # ------------------------------------------------------------------ #
-    def execute(self: T_Validated, **kwargs: Any) -> BaseModel:
+    async def execute(self: T_Validated, **kwargs: Any) -> BaseModel:
         """Validate *kwargs*, run `_execute`, validate the result."""
         try:
             args = self.Arguments(**kwargs)  # type: ignore[arg-type]
-            res = self._execute(**args.model_dump())  # type: ignore[arg-type]
+            res = await self._execute(**args.model_dump())  # type: ignore[arg-type]
 
             return (
                 res
@@ -124,16 +124,16 @@ class ValidatedTool(_ExportMixin, BaseModel):
     # ------------------------------------------------------------------ #
     # Sub-classes must implement this
     # ------------------------------------------------------------------ #
-    def _execute(self, **_kwargs: Any):  # noqa: D401 – expected override
-        raise NotImplementedError("Tool must implement _execute()")
+    async def _execute(self, **_kwargs: Any):  # noqa: D401 – expected override
+        raise NotImplementedError("Tool must implement async _execute()")
 
 
 # --------------------------------------------------------------------------- #
-# Decorator to retrofit validation onto classic “imperative” tools
+# Decorator to retrofit validation onto classic "imperative" tools
 # --------------------------------------------------------------------------- #
 def with_validation(cls):  # noqa: D401 – factory
     """
-    Decorator that wraps an existing ``execute`` method with:
+    Decorator that wraps an existing async ``execute`` method with:
 
     * argument validation (based on type hints)
     * result validation (based on return annotation)
@@ -143,13 +143,15 @@ def with_validation(cls):  # noqa: D401 – factory
         validate_result,
     )
 
-    original: Callable[..., Any] = cls.execute  # type: ignore[attr-defined]
+    original = cls.execute  # type: ignore[attr-defined]
+    if not inspect.iscoroutinefunction(original):
+        raise TypeError(f"Tool {cls.__name__} must have an async execute method")
 
-    def _wrapper(self, **kwargs):  # type: ignore[override]
+    async def _async_wrapper(self, **kwargs):  # type: ignore[override]
         tool_name = cls.__name__
         validated = validate_arguments(tool_name, original, kwargs)
-        result = original(self, **validated)
+        result = await original(self, **validated)
         return validate_result(tool_name, original, result)
 
-    cls.execute = _wrapper  # type: ignore[assignment]
+    cls.execute = _async_wrapper  # type: ignore[assignment]
     return cls

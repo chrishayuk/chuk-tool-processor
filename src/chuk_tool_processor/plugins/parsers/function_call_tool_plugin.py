@@ -1,33 +1,32 @@
 # chuk_tool_processor/plugins/function_call_tool_plugin.py
-"""Function-call parser plugin.
-* Accepts dict **or** string input.
-* Coerces non-dict `arguments` to `{}` instead of rejecting.
-* Inherits from ``ParserPlugin`` so discovery categorises it as a *parser*.
-"""
+"""Async parser for OpenAI-style single `function_call` objects."""
 from __future__ import annotations
 
 import json
 import re
 from typing import Any, Dict, List
+
 from pydantic import ValidationError
 
-# imports
-from .base import ParserPlugin
-from chuk_tool_processor.models.tool_call import ToolCall
 from chuk_tool_processor.logging import get_logger
+from chuk_tool_processor.models.tool_call import ToolCall
+from .base import ParserPlugin
 
-# logger
-logger = get_logger("chuk_tool_processor.plugins.function_call_tool")
+logger = get_logger(__name__)
 
-# balanced‐brace JSON object regex – one level only (good enough for payloads)
+# One-level balanced JSON object (good enough for embedded argument blocks)
 _JSON_OBJECT = re.compile(r"\{(?:[^{}]|(?:\{[^{}]*\}))*\}")
 
 
 class FunctionCallPlugin(ParserPlugin):
-    """Parse OpenAI-style **single** ``function_call`` objects."""
+    """Parse messages containing a *single* `function_call` entry."""
 
-    def try_parse(self, raw: str | Dict[str, Any]) -> List[ToolCall]:
+    async def try_parse(self, raw: str | Dict[str, Any]) -> List[ToolCall]:
         payload: Dict[str, Any] | None
+
+        # ------------------------------------------------------------------
+        # 1. Primary: whole payload is JSON
+        # ------------------------------------------------------------------
         if isinstance(raw, dict):
             payload = raw
         else:
@@ -38,11 +37,12 @@ class FunctionCallPlugin(ParserPlugin):
 
         calls: List[ToolCall] = []
 
-        # primary path -----------------------------------------------------
         if isinstance(payload, dict):
             calls.extend(self._extract_from_payload(payload))
 
-        # fallback – scan raw text for nested JSON blocks ------------------
+        # ------------------------------------------------------------------
+        # 2. Fallback: scan string for nested JSON objects
+        # ------------------------------------------------------------------
         if not calls and isinstance(raw, str):
             for m in _JSON_OBJECT.finditer(raw):
                 try:
@@ -53,7 +53,9 @@ class FunctionCallPlugin(ParserPlugin):
 
         return calls
 
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------ #
+    # Helpers
+    # ------------------------------------------------------------------ #
     def _extract_from_payload(self, payload: Dict[str, Any]) -> List[ToolCall]:
         fc = payload.get("function_call")
         if not isinstance(fc, dict):
@@ -62,7 +64,6 @@ class FunctionCallPlugin(ParserPlugin):
         name = fc.get("name")
         args = fc.get("arguments", {})
 
-        # arguments may be JSON‑encoded string or anything else
         if isinstance(args, str):
             try:
                 args = json.loads(args)
