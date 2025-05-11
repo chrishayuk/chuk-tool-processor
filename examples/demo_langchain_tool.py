@@ -1,53 +1,83 @@
+#!/usr/bin/env python
 # examples/demo_langchain_tool.py
 """
-Demo: register a LangChain `BaseTool` with chuk-tool-processor and invoke it.
+Demo: expose a LangChain `BaseTool` as an async-native chuk-tool.
 """
 
 from __future__ import annotations
 import asyncio
-from typing import ClassVar, Any
+from typing import Any, ClassVar
 
 from langchain.tools.base import BaseTool
-from chuk_tool_processor.registry.auto_register import register_langchain_tool
-from chuk_tool_processor.core.processor import ToolProcessor
+
+from chuk_tool_processor.registry import initialize, register_tool
+from chuk_tool_processor.execution.tool_executor import ToolExecutor
 from chuk_tool_processor.models.tool_call import ToolCall
 
 
-# ── LangChain tool definition ───────────────────────────────────────────────
+# ----------------------------------------------------------------------
+# 1.  A regular LangChain tool (sync + async implementations)
+# ----------------------------------------------------------------------
 class PalindromeTool(BaseTool):
-    # pydantic requires concrete type annotations here
     name: ClassVar[str] = "palindrome_tool"
-    description: ClassVar[str] = (
-        "Return whether the given text is a palindrome."
-    )
+    description: ClassVar[str] = "Return whether the given text is a palindrome."
 
-    # synchronous implementation (BaseTool will call this from .run/.arun)
+    # sync entry-point used by BaseTool.run()
     def _run(self, tool_input: str, *args: Any, **kwargs: Any) -> dict:
         is_pal = tool_input.lower() == tool_input[::-1].lower()
         return {"text": tool_input, "palindrome": is_pal}
 
-    # asynchronous implementation (optional but nice to have)
-    async def _arun(
-        self, tool_input: str, run_manager: Any | None = None, **kwargs: Any
-    ) -> dict:  # noqa: D401
-        # Just delegate to the sync version for this demo
+    # async entry-point used by BaseTool.arun()
+    async def _arun(  # noqa: D401
+        self,
+        tool_input: str,
+        run_manager: Any | None = None,
+        **kwargs: Any,
+    ) -> dict:
         return self._run(tool_input)
 
 
-# ── register with the global registry ───────────────────────────────────────
-register_langchain_tool(PalindromeTool())
+# ----------------------------------------------------------------------
+# 2.  Minimal async wrapper exposing `.execute()` for the executor
+# ----------------------------------------------------------------------
+@register_tool(name="palindrome_tool")
+class PalindromeAdapter:
+    """
+    Thin adapter that forwards the call to the LangChain tool’s
+    async API and simply returns its result.
+    """
+
+    def __init__(self) -> None:
+        # One tool instance is enough; LangChain tools are thread-safe.
+        self._tool = PalindromeTool()
+
+    async def execute(self, tool_input: str) -> dict:  # chuk-tool signature
+        return await self._tool.arun(tool_input=tool_input)
 
 
-# ── quick test run ──────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------
+# 3.  Demo run
+# ----------------------------------------------------------------------
 async def main() -> None:
-    proc = ToolProcessor(enable_caching=False)
+    # Initialise the default registry *and* make sure our adapter is loaded
+    registry = await initialize()  # returns the same singleton each call
 
-    # Pretend the LLM called the tool with {"tool_input": "Madam"}
+    # Create an executor bound to that registry
+    executor = ToolExecutor(registry=registry)
+
+    # Simulate an LLM-produced tool-call
     call = ToolCall(tool="palindrome_tool", arguments={"tool_input": "Madam"})
-    [result] = await proc.executor.execute([call])
 
-    print("Tool results:")
-    print("·", result.tool, result.result)
+    # Execute
+    (result,) = await executor.execute([call])
+
+    # Show the outcome
+    print("\n=== LangChain Tool Demo ===")
+    if result.error:
+        print("ERROR:", result.error)
+    else:
+        print("Tool :", result.tool)
+        print("Data :", result.result)
 
 
 if __name__ == "__main__":

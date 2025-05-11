@@ -1,3 +1,15 @@
+# tests/tool_processor/plugins/test_discover.py
+"""
+Tests for the generic plugin-discovery utility.
+
+These tests exercise:
+* the in-memory `PluginRegistry`
+* the public `@plugin` decorator
+* direct `_maybe_register()` calls
+* the full recursive discovery path with mocked import machinery
+"""
+from __future__ import annotations
+
 import importlib
 from typing import Any, Dict, List
 from unittest import mock
@@ -14,18 +26,20 @@ from chuk_tool_processor.plugins.discovery import (
 )
 
 # ---------------------------------------------------------------------------
-# Maybe‑present bases from runtime package
+# Maybe-present bases from runtime package
 # ---------------------------------------------------------------------------
 try:
-    from chuk_tool_processor.parsers.base import ParserPlugin
+    from chuk_tool_processor.plugins.parsers.base import ParserPlugin
 except ModuleNotFoundError:
-    ParserPlugin = None  # pragma: no cover – optional feature
+    ParserPlugin = None        # pragma: no cover – optional feature
 
 from chuk_tool_processor.models.execution_strategy import ExecutionStrategy
 
 # ---------------------------------------------------------------------------
 # Registry basics
 # ---------------------------------------------------------------------------
+
+
 class TestPluginRegistry:
     def test_round_trip(self):
         reg = PluginRegistry()
@@ -39,6 +53,8 @@ class TestPluginRegistry:
 # ---------------------------------------------------------------------------
 # @plugin decorator
 # ---------------------------------------------------------------------------
+
+
 class TestPluginDecorator:
     def test_custom_and_default_name(self):
         @plugin("cat", "custom")
@@ -56,16 +72,20 @@ class TestPluginDecorator:
 # ---------------------------------------------------------------------------
 # Dummy classes to feed discovery
 # ---------------------------------------------------------------------------
+
 if ParserPlugin:
 
     class DummyParser(ParserPlugin):
-        def try_parse(self, raw: str):
+        """A minimal *async* implementation that satisfies the ABC."""
+
+        async def try_parse(self, raw: str | object):  # type: ignore[override]
             return []
 
 else:
 
-    class DummyParser:  # pragma: no cover – fallback when ParserPlugin absent
-        def try_parse(self, raw: str):
+    # Fallback when the parser subsystem isn’t available (very unlikely in tests)
+    class DummyParser:  # pragma: no cover
+        async def try_parse(self, raw: str | object):  # noqa: D401
             return []
 
 
@@ -82,11 +102,13 @@ class DummyCustom:
 # ---------------------------------------------------------------------------
 # Discovery unit tests (use public API only)
 # ---------------------------------------------------------------------------
+
+
 class TestPluginDiscovery:
     def _single_discovery(self, cls):
         reg = PluginRegistry()
         disc = PluginDiscovery(reg)
-        disc._maybe_register(cls)  # internal but still present; safer than old name
+        disc._maybe_register(cls)          # internal helper, still public
         return reg
 
     def test_register_parser(self):
@@ -106,17 +128,19 @@ class TestPluginDiscovery:
             pass
 
         reg = self._single_discovery(Bogus)
-        assert not reg.list_plugins()
+        assert not reg.list_plugins()      # nothing registered
 
 
 # ---------------------------------------------------------------------------
 # Integration tests – mock import machinery
 # ---------------------------------------------------------------------------
+
+
 class TestDiscoveryIntegration:
     @mock.patch("importlib.import_module")
     @mock.patch("pkgutil.iter_modules")
     def test_discover_single_module(self, itermods, impmod):
-        # Package stub
+        # --- stub package ---
         fake_pkg = mock.MagicMock()
         fake_pkg.__path__ = ["/fake"]
         fake_pkg.__name__ = "package"
@@ -124,7 +148,7 @@ class TestDiscoveryIntegration:
 
         itermods.return_value = [(None, "package.mod", False)]
 
-        # Module containing one parser plugin
+        # --- stub module with a parser plugin ---
         class Plug(DummyParser):
             pass
 
@@ -136,6 +160,8 @@ class TestDiscoveryIntegration:
         reg = PluginRegistry()
         PluginDiscovery(reg).discover_plugins(["package"])
         assert isinstance(reg.get_plugin("parser", "Plug"), Plug)
+
+    # -----------------------------------------------------------
 
     @mock.patch("importlib.import_module")
     def test_default_discovery_wrapper(self, impmod):
@@ -155,6 +181,7 @@ class TestDiscoveryIntegration:
 # ---------------------------------------------------------------------------
 # Global registry smoke test
 # ---------------------------------------------------------------------------
+
 
 def test_global_registry_singleton():
     assert isinstance(plugin_registry, PluginRegistry)

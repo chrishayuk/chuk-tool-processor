@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# examples/async_registry_example.py
+# examples/registry_example.py
 """
 Demonstration of the async-native registry capabilities.
 

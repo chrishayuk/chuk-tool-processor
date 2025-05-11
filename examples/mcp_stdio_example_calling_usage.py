@@ -24,9 +24,9 @@ from chuk_tool_processor.logging import get_logger, log_context_span
 from chuk_tool_processor.mcp import setup_mcp_stdio
 from chuk_tool_processor.registry import ToolRegistryProvider
 
-from chuk_tool_processor.plugins.parsers.json_tool_plugin import JsonToolPlugin
+from chuk_tool_processor.plugins.parsers.json_tool import JsonToolPlugin
 from chuk_tool_processor.plugins.parsers.xml_tool import XmlToolPlugin
-from chuk_tool_processor.plugins.parsers.function_call_tool_plugin import FunctionCallPlugin
+from chuk_tool_processor.plugins.parsers.function_call_tool import FunctionCallPlugin
 from chuk_tool_processor.models.tool_call import ToolCall
 from chuk_tool_processor.models.tool_result import ToolResult
 
