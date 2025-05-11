@@ -275,40 +275,44 @@ async def compare_strategies_isolation(registry) -> None:
 async def timeout_test(registry) -> None:
     """Test timeout behavior of different strategies."""
     print("\n=== Timeout Handling Test ===")
-    
-    # Define tools that will timeout
+
+    # Define a tool that will exceed our timeout
     tools = [
         {"name": "slow_tool", "arguments": {"delay": 3.0}},
     ]
-    
-    # Test with InProcess strategy
+
+    # Strategy itself has a 1-second default timeout
     strategy = InProcessStrategy(registry, default_timeout=1.0)
+
+    # Give the executor a strategy and call-level timeout of 1 s
     executor = ToolExecutor(registry=registry, strategy=strategy)
-    
-    # Convert to tool calls
-    calls = []
-    for tool_info in tools:
-        call = ToolCall(
-            tool=tool_info["name"],
-            namespace=tool_info.get("namespace", "demo"),
-            arguments=tool_info.get("arguments", {})
+
+    # Build ToolCall list
+    calls = [
+        ToolCall(
+            tool=tool["name"],
+            namespace="demo",
+            arguments=tool["arguments"],
         )
-        calls.append(call)
-        
-    # Run with timeout
+        for tool in tools
+    ]
+
     print("\nTest with 1 second timeout for a tool that takes 3 seconds:")
-    results = await executor.execute(calls)
-    
-    # Check results
-    for i, (call, result) in enumerate(zip(calls, results)):
+    # ⬇️ forward the timeout explicitly
+    results = await executor.execute(calls, timeout=1.0)
+
+    # Check the outcome
+    for call, result in zip(calls, results):
         if result.error and "timeout" in result.error.lower():
             print(f"  ✓ Timeout detected properly: {result.error}")
         else:
-            print(f"  ✗ Expected timeout, got: {result.error if result.error else 'success'}")
-            
+            print(
+                f"  ✗ Expected timeout, got: "
+                f"{result.error if result.error else 'success'}"
+            )
+
     # Clean up
     await executor.strategy.shutdown()
-
 
 async def error_handling_test(registry) -> None:
     """Test error handling in different strategies."""
