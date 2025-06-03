@@ -31,7 +31,7 @@ async def debug_timeout_handling():
             servers=[
                 {
                     "name": "mock_server",
-                    "url": "http://localhost:8000",
+                    "url": "http://localhost:8020",
                 }
             ],
             server_names={0: "mock_server"},
@@ -49,6 +49,7 @@ async def debug_timeout_handling():
         {"timeout": 1.0, "description": "1 second timeout"},
         {"timeout": 2.0, "description": "2 second timeout"},
         {"timeout": 3.0, "description": "3 second timeout"},
+        {"timeout": 15.0, "description": "15 second timeout"},
     ]
     
     for config in timeout_configs:
@@ -60,8 +61,7 @@ async def debug_timeout_handling():
         # Create strategy with specific timeout
         strategy = InProcessStrategy(
             registry,
-            default_timeout=timeout,
-            max_concurrency=1,  # Single call to isolate issue
+            default_timeout=timeout
         )
         
         executor = ToolExecutor(registry=registry, strategy=strategy)
@@ -102,8 +102,7 @@ async def debug_timeout_handling():
     
     strategy = InProcessStrategy(
         registry,
-        default_timeout=2.0,  # 2 second timeout
-        max_concurrency=3,
+        default_timeout=2.0  # 2 second timeout
     )
     
     executor = ToolExecutor(registry=registry, strategy=strategy)
@@ -119,7 +118,6 @@ async def debug_timeout_handling():
     ]
     
     print(f"   Strategy timeout: {strategy.default_timeout}")
-    print(f"   Max concurrency: {strategy.max_concurrency}")
     print(f"   Executing {len(parallel_calls)} parallel calls...")
     
     try:

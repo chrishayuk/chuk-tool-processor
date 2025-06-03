@@ -52,7 +52,7 @@ from chuk_tool_processor.models.tool_result import ToolResult                   
 logger = get_logger("mcp-mock-sse-demo")
 
 # ─── config / bootstrap ─────────────────────────────────────────────────────
-SSE_SERVER_URL = "http://localhost:8000"
+SSE_SERVER_URL = "http://localhost:8020"
 SERVER_NAME = "mock_perplexity_server"
 NAMESPACE = "sse"          # where remote tools will be registered
 

@@ -265,7 +265,20 @@ class StreamManager:
         tool_name: str,
         arguments: Dict[str, Any],
         server_name: Optional[str] = None,
+        timeout: Optional[float] = None,  # Add timeout parameter
     ) -> Dict[str, Any]:
+        """
+        Call a tool on the appropriate server with timeout support.
+        
+        Args:
+            tool_name: Name of the tool to call
+            arguments: Arguments to pass to the tool
+            server_name: Optional server name (auto-detected if not provided)
+            timeout: Optional timeout for the call
+            
+        Returns:
+            Dictionary containing the tool result or error
+        """
         server_name = server_name or self.get_server_for_tool(tool_name)
         if not server_name or server_name not in self.transports:
             # wording kept exactly for unit-test expectation
@@ -273,8 +286,27 @@ class StreamManager:
                 "isError": True,
                 "error": f"No server found for tool: {tool_name}",
             }
-        return await self.transports[server_name].call_tool(tool_name, arguments)
-
+        
+        transport = self.transports[server_name]
+        
+        # Apply timeout if specified
+        if timeout is not None:
+            logger.debug("Calling tool '%s' with %ss timeout", tool_name, timeout)
+            try:
+                return await asyncio.wait_for(
+                    transport.call_tool(tool_name, arguments),
+                    timeout=timeout
+                )
+            except asyncio.TimeoutError:
+                logger.warning("Tool '%s' timed out after %ss", tool_name, timeout)
+                return {
+                    "isError": True,
+                    "error": f"Tool call timed out after {timeout}s",
+                }
+        else:
+            # No timeout specified, call directly
+            return await transport.call_tool(tool_name, arguments)
+        
     # ------------------------------------------------------------------ #
     #  shutdown                                                          #
     # ------------------------------------------------------------------ #

@@ -340,7 +340,7 @@ async def process_message(session_id: str, method: str, msg_id: str, message: di
 def main():
     """Run the reliable test server."""
     print("🚀 Starting Reliable Test MCP SSE Server...")
-    print("📡 Server will be available at: http://localhost:8000")
+    print("📡 Server will be available at: http://localhost:8020")
     print("🔧 Available tools:")
     for tool in TOOLS:
         print(f"   - {tool['name']}: {tool['description']}")
@@ -352,7 +352,7 @@ def main():
         uvicorn.run(
             app,
             host="0.0.0.0",
-            port=8000,
+            port=8020,
             log_level="warning",  # Reduce uvicorn noise
             access_log=False
         )
