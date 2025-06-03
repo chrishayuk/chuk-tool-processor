@@ -1,11 +1,13 @@
 #!/usr/bin/env python
 # chuk_tool_processor/execution/strategies/inprocess_strategy.py
 """
-In-process execution strategy for tools with true streaming support.
+In-process execution strategy for tools with proper timeout handling.
 
 This strategy executes tools concurrently in the same process using asyncio.
 It has special support for streaming tools, accessing their stream_execute method
 directly to enable true item-by-item streaming.
+
+FIXED: Ensures consistent timeout handling across all execution paths.
 """
 from __future__ import annotations
 
@@ -36,7 +38,7 @@ async def _noop_cm():
 
 # --------------------------------------------------------------------------- #
 class InProcessStrategy(ExecutionStrategy):
-    """Execute tools in the local event-loop with optional concurrency cap."""
+    """Execute tools in the local event-loop with optional concurrency cap and consistent timeout handling."""
 
     def __init__(
         self,
@@ -53,7 +55,7 @@ class InProcessStrategy(ExecutionStrategy):
             max_concurrency: Maximum number of concurrent executions
         """
         self.registry = registry
-        self.default_timeout = default_timeout
+        self.default_timeout = default_timeout or 30.0  # Always have a default
         self._sem = asyncio.Semaphore(max_concurrency) if max_concurrency else None
         
         # Task tracking for cleanup
@@ -64,6 +66,9 @@ class InProcessStrategy(ExecutionStrategy):
         # Tracking for which calls are being handled directly by the executor
         # to prevent duplicate streaming results
         self._direct_streaming_calls = set()
+        
+        logger.debug("InProcessStrategy initialized with timeout: %ss, max_concurrency: %s", 
+                    self.default_timeout, max_concurrency)
 
     # ------------------------------------------------------------------ #
     def mark_direct_streaming(self, call_ids: Set[str]) -> None:
@@ -116,11 +121,15 @@ class InProcessStrategy(ExecutionStrategy):
         """
         if not calls:
             return []
+        
+        # Use default_timeout if no timeout specified
+        effective_timeout = timeout if timeout is not None else self.default_timeout
+        logger.debug("Executing %d calls with %ss timeout each", len(calls), effective_timeout)
             
         tasks = []
         for call in calls:
             task = asyncio.create_task(
-                self._execute_single_call(call, timeout or self.default_timeout)
+                self._execute_single_call(call, effective_timeout)  # Always pass timeout
             )
             self._active_tasks.add(task)
             task.add_done_callback(self._active_tasks.discard)
@@ -142,10 +151,13 @@ class InProcessStrategy(ExecutionStrategy):
         if not calls:
             return
 
+        # Use default_timeout if no timeout specified
+        effective_timeout = timeout if timeout is not None else self.default_timeout
+
         queue: asyncio.Queue[ToolResult] = asyncio.Queue()
         tasks = {
             asyncio.create_task(
-                self._stream_tool_call(call, queue, timeout or self.default_timeout)
+                self._stream_tool_call(call, queue, effective_timeout)  # Always pass timeout
             )
             for call in calls
             if call.id not in self._direct_streaming_calls
@@ -170,7 +182,7 @@ class InProcessStrategy(ExecutionStrategy):
         self,
         call: ToolCall,
         queue: asyncio.Queue,
-        timeout: Optional[float],
+        timeout: float,  # Make timeout required
     ) -> None:
         """
         Execute a tool call with streaming support.
@@ -181,7 +193,7 @@ class InProcessStrategy(ExecutionStrategy):
         Args:
             call: The tool call to execute
             queue: Queue to put results into
-            timeout: Optional timeout in seconds
+            timeout: Timeout in seconds (required)
         """
         # Skip if call is being handled directly by the executor
         if call.id in self._direct_streaming_calls:
@@ -269,7 +281,7 @@ class InProcessStrategy(ExecutionStrategy):
         tool: Any, 
         call: ToolCall, 
         queue: asyncio.Queue, 
-        timeout: Optional[float]
+        timeout: float,  # Make timeout required
     ) -> None:
         """
         Stream results from a streaming tool with timeout support.
@@ -281,11 +293,13 @@ class InProcessStrategy(ExecutionStrategy):
             tool: The tool instance
             call: Tool call data
             queue: Queue to put results into
-            timeout: Optional timeout in seconds
+            timeout: Timeout in seconds (required)
         """
         start_time = datetime.now(timezone.utc)
         machine = os.uname().nodename
         pid = os.getpid()
+        
+        logger.debug("Streaming %s with %ss timeout", call.tool, timeout)
         
         # Define the streaming task
         async def streamer():
@@ -318,15 +332,17 @@ class InProcessStrategy(ExecutionStrategy):
                 await queue.put(error_result)
         
         try:
-            # Execute with timeout if specified
-            if timeout:
-                await asyncio.wait_for(streamer(), timeout)
-            else:
-                await streamer()
+            # Always execute with timeout
+            await asyncio.wait_for(streamer(), timeout)
+            logger.debug("%s streaming completed within %ss", call.tool, timeout)
                 
         except asyncio.TimeoutError:
             # Handle timeout
             now = datetime.now(timezone.utc)
+            actual_duration = (now - start_time).total_seconds()
+            logger.debug("%s streaming timed out after %.3fs (limit: %ss)", 
+                        call.tool, actual_duration, timeout)
+            
             timeout_result = ToolResult(
                 tool=call.tool,
                 result=None,
@@ -341,6 +357,8 @@ class InProcessStrategy(ExecutionStrategy):
         except Exception as e:
             # Handle other errors
             now = datetime.now(timezone.utc)
+            logger.debug("%s streaming failed: %s", call.tool, e)
+            
             error_result = ToolResult(
                 tool=call.tool,
                 result=None,
@@ -356,7 +374,7 @@ class InProcessStrategy(ExecutionStrategy):
         self,
         call: ToolCall,
         queue: asyncio.Queue,
-        timeout: Optional[float],
+        timeout: float,  # Make timeout required
     ) -> None:
         """Execute a single call and put the result in the queue."""
         # Skip if call is being handled directly by the executor
@@ -370,17 +388,17 @@ class InProcessStrategy(ExecutionStrategy):
     async def _execute_single_call(
         self,
         call: ToolCall,
-        timeout: Optional[float],
+        timeout: float,  # Make timeout required, not optional
     ) -> ToolResult:
         """
-        Execute a single tool call.
+        Execute a single tool call with guaranteed timeout.
 
         The entire invocation – including argument validation – is wrapped
         by the semaphore to honour *max_concurrency*.
         
         Args:
             call: Tool call to execute
-            timeout: Optional timeout in seconds
+            timeout: Timeout in seconds (required)
             
         Returns:
             Tool execution result
@@ -388,6 +406,8 @@ class InProcessStrategy(ExecutionStrategy):
         pid = os.getpid()
         machine = os.uname().nodename
         start = datetime.now(timezone.utc)
+        
+        logger.debug("Executing %s with %ss timeout", call.tool, timeout)
         
         # Early exit if shutting down
         if self._shutting_down:
@@ -464,19 +484,18 @@ class InProcessStrategy(ExecutionStrategy):
         self,
         tool: Any,
         call: ToolCall,
-        timeout: float | None,
+        timeout: float,  # Make timeout required, not optional
         start: datetime,
         machine: str,
         pid: int,
     ) -> ToolResult:
         """
-        Resolve the correct async entry-point and invoke it with an optional
-        timeout.
+        Resolve the correct async entry-point and invoke it with a guaranteed timeout.
         
         Args:
             tool: Tool instance
             call: Tool call data
-            timeout: Optional timeout in seconds
+            timeout: Timeout in seconds (required)
             start: Start time for the execution
             machine: Machine name
             pid: Process ID
@@ -507,62 +526,46 @@ class InProcessStrategy(ExecutionStrategy):
             )
 
         try:
-            if timeout:
-                # Use a task with explicit cancellation
-                task = asyncio.create_task(fn(**call.arguments))
+            # Always apply timeout
+            logger.debug("Applying %ss timeout to %s", timeout, call.tool)
+            
+            try:
+                result_val = await asyncio.wait_for(fn(**call.arguments), timeout=timeout)
                 
-                try:
-                    # Wait for the task with timeout
-                    result_val = await asyncio.wait_for(task, timeout)
-                    
-                    return ToolResult(
-                        tool=call.tool,
-                        result=result_val,
-                        error=None,
-                        start_time=start,
-                        end_time=datetime.now(timezone.utc),
-                        machine=machine,
-                        pid=pid,
-                    )
-                except asyncio.TimeoutError:
-                    # Cancel the task if it times out
-                    if not task.done():
-                        task.cancel()
-                        
-                        # Wait for cancellation to complete
-                        try:
-                            await task
-                        except asyncio.CancelledError:
-                            # Expected - we just cancelled it
-                            pass
-                        except Exception:
-                            # Ignore any other exceptions during cancellation
-                            pass
-                    
-                    # Return a timeout error
-                    return ToolResult(
-                        tool=call.tool,
-                        result=None,
-                        error=f"Timeout after {timeout}s",
-                        start_time=start,
-                        end_time=datetime.now(timezone.utc),
-                        machine=machine,
-                        pid=pid,
-                    )
-            else:
-                # No timeout
-                result_val = await fn(**call.arguments)
+                end_time = datetime.now(timezone.utc)
+                actual_duration = (end_time - start).total_seconds()
+                logger.debug("%s completed in %.3fs (limit: %ss)", 
+                           call.tool, actual_duration, timeout)
+                
                 return ToolResult(
                     tool=call.tool,
                     result=result_val,
                     error=None,
                     start_time=start,
-                    end_time=datetime.now(timezone.utc),
+                    end_time=end_time,
                     machine=machine,
                     pid=pid,
                 )
+            except asyncio.TimeoutError:
+                # Handle timeout
+                end_time = datetime.now(timezone.utc)
+                actual_duration = (end_time - start).total_seconds()
+                logger.debug("%s timed out after %.3fs (limit: %ss)", 
+                           call.tool, actual_duration, timeout)
+                
+                return ToolResult(
+                    tool=call.tool,
+                    result=None,
+                    error=f"Timeout after {timeout}s",
+                    start_time=start,
+                    end_time=end_time,
+                    machine=machine,
+                    pid=pid,
+                )
+                
         except asyncio.CancelledError:
             # Handle cancellation explicitly
+            logger.debug("%s was cancelled", call.tool)
             return ToolResult(
                 tool=call.tool,
                 result=None,
@@ -574,12 +577,16 @@ class InProcessStrategy(ExecutionStrategy):
             )
         except Exception as exc:
             logger.exception("Error executing %s: %s", call.tool, exc)
+            end_time = datetime.now(timezone.utc)
+            actual_duration = (end_time - start).total_seconds()
+            logger.debug("%s failed after %.3fs: %s", call.tool, actual_duration, exc)
+            
             return ToolResult(
                 tool=call.tool,
                 result=None,
                 error=str(exc),
                 start_time=start,
-                end_time=datetime.now(timezone.utc),
+                end_time=end_time,
                 machine=machine,
                 pid=pid,
             )

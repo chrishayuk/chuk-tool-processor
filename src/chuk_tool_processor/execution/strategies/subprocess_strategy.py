@@ -4,6 +4,8 @@ Subprocess execution strategy - truly runs tools in separate OS processes.
 
 This strategy executes tools in separate Python processes using a process pool,
 providing isolation and potentially better parallelism on multi-core systems.
+
+FIXED: Ensures consistent timeout handling across all execution paths.
 """
 from __future__ import annotations
 
@@ -133,7 +135,7 @@ def _process_worker(
         
         try:
             # Execute the tool with timeout
-            if timeout:
+            if timeout is not None and timeout > 0:
                 result_value = loop.run_until_complete(
                     asyncio.wait_for(execute_fn(**arguments), timeout)
                 )
@@ -192,7 +194,7 @@ class SubprocessStrategy(ExecutionStrategy):
         """
         self.registry = registry
         self.max_workers = max_workers
-        self.default_timeout = default_timeout
+        self.default_timeout = default_timeout or 30.0  # Always have a default
         self.worker_init_timeout = worker_init_timeout
         
         # Process pool (initialized lazily)
@@ -203,6 +205,9 @@ class SubprocessStrategy(ExecutionStrategy):
         self._active_tasks: Set[asyncio.Task] = set()
         self._shutdown_event = asyncio.Event()
         self._shutting_down = False
+        
+        logger.debug("SubprocessStrategy initialized with timeout: %ss, max_workers: %d", 
+                    self.default_timeout, max_workers)
         
         # Register shutdown handler if in main thread
         try:
@@ -238,12 +243,12 @@ class SubprocessStrategy(ExecutionStrategy):
                     loop.run_in_executor(self._process_pool, _pool_test_func),
                     timeout=self.worker_init_timeout
                 )
-                logger.info(f"Process pool initialized with {self.max_workers} workers")
+                logger.info("Process pool initialized with %d workers", self.max_workers)
             except Exception as e:
                 # Clean up on initialization error
                 self._process_pool.shutdown(wait=False)
                 self._process_pool = None
-                logger.error(f"Failed to initialize process pool: {e}")
+                logger.error("Failed to initialize process pool: %s", e)
                 raise RuntimeError(f"Failed to initialize process pool: {e}") from e
     
     # ------------------------------------------------------------------ #
@@ -296,12 +301,16 @@ class SubprocessStrategy(ExecutionStrategy):
                 )
                 for call in calls
             ]
+        
+        # Use default_timeout if no timeout specified
+        effective_timeout = timeout if timeout is not None else self.default_timeout
+        logger.debug("Executing %d calls in subprocesses with %ss timeout each", len(calls), effective_timeout)
             
         # Create tasks for each call
         tasks = []
         for call in calls:
             task = asyncio.create_task(self._execute_single_call(
-                call, timeout or self.default_timeout
+                call, effective_timeout  # Always pass concrete timeout
             ))
             self._active_tasks.add(task)
             task.add_done_callback(self._active_tasks.discard)
@@ -342,6 +351,9 @@ class SubprocessStrategy(ExecutionStrategy):
                     pid=os.getpid(),
                 )
             return
+        
+        # Use default_timeout if no timeout specified
+        effective_timeout = timeout if timeout is not None else self.default_timeout
             
         # Create a queue for results
         queue = asyncio.Queue()
@@ -350,7 +362,7 @@ class SubprocessStrategy(ExecutionStrategy):
         pending = set()
         for call in calls:
             task = asyncio.create_task(self._execute_to_queue(
-                call, queue, timeout or self.default_timeout
+                call, queue, effective_timeout  # Always pass concrete timeout
             ))
             self._active_tasks.add(task)
             task.add_done_callback(self._active_tasks.discard)
@@ -372,13 +384,13 @@ class SubprocessStrategy(ExecutionStrategy):
                 try:
                     await task
                 except Exception as e:
-                    logger.exception(f"Error in task: {e}")
+                    logger.exception("Error in task: %s", e)
 
     async def _execute_to_queue(
         self,
         call: ToolCall,
         queue: asyncio.Queue,
-        timeout: Optional[float],
+        timeout: float,  # Make timeout required
     ) -> None:
         """Execute a single call and put the result in the queue."""
         result = await self._execute_single_call(call, timeout)
@@ -387,19 +399,21 @@ class SubprocessStrategy(ExecutionStrategy):
     async def _execute_single_call(
         self,
         call: ToolCall,
-        timeout: Optional[float],
+        timeout: float,  # Make timeout required
     ) -> ToolResult:
         """
         Execute a single tool call in a separate process.
         
         Args:
             call: Tool call to execute
-            timeout: Optional timeout in seconds
+            timeout: Timeout in seconds (required)
             
         Returns:
             Tool execution result
         """
         start_time = datetime.now(timezone.utc)
+        
+        logger.debug("Executing %s in subprocess with %ss timeout", call.tool, timeout)
         
         try:
             # Ensure pool is initialized
@@ -429,8 +443,8 @@ class SubprocessStrategy(ExecutionStrategy):
             # Execute in subprocess
             loop = asyncio.get_running_loop()
             
-            # We need to add safety timeout here to handle process crashes
-            safety_timeout = (timeout or self.default_timeout or 60.0) + 5.0
+            # Add safety timeout to handle process crashes (tool timeout + buffer)
+            safety_timeout = timeout + 5.0
             
             try:
                 result_data = await asyncio.wait_for(
@@ -443,7 +457,7 @@ class SubprocessStrategy(ExecutionStrategy):
                             module_name, 
                             class_name, 
                             call.arguments, 
-                            timeout
+                            timeout  # Pass the actual timeout to worker
                         )
                     ),
                     timeout=safety_timeout
@@ -458,25 +472,40 @@ class SubprocessStrategy(ExecutionStrategy):
                     end_time_str = result_data["end_time"]
                     result_data["end_time"] = datetime.fromisoformat(end_time_str)
                 
+                end_time = datetime.now(timezone.utc)
+                actual_duration = (end_time - start_time).total_seconds()
+                
+                if result_data.get("error"):
+                    logger.debug("%s subprocess failed after %.3fs: %s", 
+                               call.tool, actual_duration, result_data["error"])
+                else:
+                    logger.debug("%s subprocess completed in %.3fs (limit: %ss)", 
+                               call.tool, actual_duration, timeout)
+                
                 # Create ToolResult from worker data
                 return ToolResult(
                     tool=result_data.get("tool", call.tool),
                     result=result_data.get("result"),
                     error=result_data.get("error"),
                     start_time=result_data.get("start_time", start_time),
-                    end_time=result_data.get("end_time", datetime.now(timezone.utc)),
+                    end_time=result_data.get("end_time", end_time),
                     machine=result_data.get("machine", os.uname().nodename),
                     pid=result_data.get("pid", os.getpid()),
                 )
                 
             except asyncio.TimeoutError:
                 # This happens if the worker process itself hangs
+                end_time = datetime.now(timezone.utc)
+                actual_duration = (end_time - start_time).total_seconds()
+                logger.debug("%s subprocess timed out after %.3fs (safety limit: %ss)", 
+                           call.tool, actual_duration, safety_timeout)
+                
                 return ToolResult(
                     tool=call.tool,
                     result=None,
                     error=f"Worker process timed out after {safety_timeout}s",
                     start_time=start_time,
-                    end_time=datetime.now(timezone.utc),
+                    end_time=end_time,
                     machine=os.uname().nodename,
                     pid=os.getpid(),
                 )
@@ -500,6 +529,7 @@ class SubprocessStrategy(ExecutionStrategy):
                 
         except asyncio.CancelledError:
             # Handle cancellation
+            logger.debug("%s subprocess was cancelled", call.tool)
             return ToolResult(
                 tool=call.tool,
                 result=None,
@@ -512,13 +542,18 @@ class SubprocessStrategy(ExecutionStrategy):
             
         except Exception as e:
             # Handle any other errors
-            logger.exception(f"Error executing {call.tool} in subprocess: {e}")
+            logger.exception("Error executing %s in subprocess: %s", call.tool, e)
+            end_time = datetime.now(timezone.utc)
+            actual_duration = (end_time - start_time).total_seconds()
+            logger.debug("%s subprocess setup failed after %.3fs: %s", 
+                       call.tool, actual_duration, e)
+            
             return ToolResult(
                 tool=call.tool,
                 result=None,
                 error=f"Error: {str(e)}",
                 start_time=start_time,
-                end_time=datetime.now(timezone.utc),
+                end_time=end_time,
                 machine=os.uname().nodename,
                 pid=os.getpid(),
             )
@@ -531,7 +566,7 @@ class SubprocessStrategy(ExecutionStrategy):
     async def _signal_handler(self, sig: int) -> None:
         """Handle termination signals."""
         signame = signal.Signals(sig).name
-        logger.info(f"Received {signame}, shutting down process pool")
+        logger.info("Received %s, shutting down process pool", signame)
         await self.shutdown()
         
     async def shutdown(self) -> None:
@@ -549,7 +584,7 @@ class SubprocessStrategy(ExecutionStrategy):
         # Cancel all active tasks
         active_tasks = list(self._active_tasks)
         if active_tasks:
-            logger.info(f"Cancelling {len(active_tasks)} active tool executions")
+            logger.info("Cancelling %d active tool executions", len(active_tasks))
             for task in active_tasks:
                 task.cancel()
                 
