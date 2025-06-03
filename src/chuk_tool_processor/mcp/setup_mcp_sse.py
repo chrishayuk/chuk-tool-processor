@@ -14,6 +14,7 @@ Utility that wires up:
 
 from __future__ import annotations
 
+import os
 from typing import Dict, List, Optional, Tuple
 
 from chuk_tool_processor.core.processor import ToolProcessor
@@ -47,7 +48,26 @@ async def setup_mcp_sse(  # noqa: C901 – long, but just a config wrapper
     and return a ready-to-go :class:`ToolProcessor`.
 
     Everything is **async-native** – call with ``await``.
+    
+    NEW: Automatically detects and adds bearer token from MCP_BEARER_TOKEN
+    environment variable if not explicitly provided in server config.
     """
+    
+    # NEW: Auto-detect and add bearer token to servers if available
+    bearer_token = os.getenv("MCP_BEARER_TOKEN")
+    if bearer_token:
+        logger.info("Found MCP_BEARER_TOKEN environment variable, adding to server configs")
+        
+        # Add api_key to servers that don't already have it
+        enhanced_servers = []
+        for server in servers:
+            enhanced_server = dict(server)  # Make a copy
+            if "api_key" not in enhanced_server and bearer_token:
+                enhanced_server["api_key"] = bearer_token
+                logger.info("Added bearer token to server: %s", enhanced_server.get("name", "unnamed"))
+            enhanced_servers.append(enhanced_server)
+        servers = enhanced_servers
+    
     # 1️⃣  connect to the remote MCP servers
     stream_manager = await StreamManager.create_with_sse(
         servers=servers,

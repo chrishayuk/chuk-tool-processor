@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import os
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -49,6 +50,13 @@ class SSETransport(MCPBaseTransport):
     def __init__(self, url: str, api_key: Optional[str] = None) -> None:
         self.base_url = url.rstrip("/")
         self.api_key = api_key
+        
+        # NEW: Auto-detect bearer token from environment if not provided
+        if not self.api_key:
+            bearer_token = os.getenv("MCP_BEARER_TOKEN")
+            if bearer_token:
+                self.api_key = bearer_token
+                print(f"🔑 Using bearer token from MCP_BEARER_TOKEN environment variable")
 
         # httpx client (None until initialise)
         self._client: httpx.AsyncClient | None = None
@@ -75,7 +83,12 @@ class SSETransport(MCPBaseTransport):
 
         headers = {}
         if self.api_key:
-            headers["authorization"] = self.api_key
+            # NEW: Handle both "Bearer token" and just "token" formats
+            if self.api_key.startswith("Bearer "):
+                headers["Authorization"] = self.api_key
+            else:
+                headers["Authorization"] = f"Bearer {self.api_key}"
+            print(f"🔑 Added Authorization header to httpx client")
 
         self._client = httpx.AsyncClient(
             headers=headers,
@@ -223,6 +236,11 @@ class SSETransport(MCPBaseTransport):
                         
                         if event_type == "endpoint":
                             # Got the endpoint URL for messages - construct full URL
+                            # NEW: Handle URLs that need trailing slash fix
+                            if "/messages?" in data and "/messages/?" not in data:
+                                data = data.replace("/messages?", "/messages/?", 1)
+                                print(f"🔧 Fixed URL redirect: added trailing slash")
+                            
                             self._message_url = f"{self.base_url}{data}"
                             
                             # Extract session_id if present
