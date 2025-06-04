@@ -1,10 +1,12 @@
 #!/usr/bin/env python
 # chuk_tool_processor/execution/tool_executor.py
 """
-Modified ToolExecutor with true streaming support and duplicate prevention.
+Modified ToolExecutor with true streaming support and proper timeout handling.
 
 This version accesses streaming tools' stream_execute method directly
 to enable true item-by-item streaming behavior, while preventing duplicates.
+
+FIXED: Proper timeout precedence - respects strategy's default_timeout when available.
 """
 import asyncio
 from datetime import datetime, timezone
@@ -25,12 +27,14 @@ class ToolExecutor:
     
     This class provides a unified interface for executing tools using different
     execution strategies, with special support for streaming tools.
+    
+    FIXED: Proper timeout handling that respects strategy's default_timeout.
     """
 
     def __init__(
         self,
         registry: Optional[ToolRegistryInterface] = None,
-        default_timeout: float = 10.0,
+        default_timeout: Optional[float] = None,  # Made optional to allow strategy precedence
         strategy: Optional[ExecutionStrategy] = None,
         strategy_kwargs: Optional[Dict[str, Any]] = None,
     ) -> None:
@@ -39,12 +43,12 @@ class ToolExecutor:
         
         Args:
             registry: Tool registry to use for tool lookups
-            default_timeout: Default timeout for tool execution
+            default_timeout: Default timeout for tool execution (optional)
+                           If None, will use strategy's default_timeout if available
             strategy: Optional execution strategy (default: InProcessStrategy)
             strategy_kwargs: Additional arguments for the strategy constructor
         """
         self.registry = registry
-        self.default_timeout = default_timeout
         
         # Create strategy if not provided
         if strategy is None:
@@ -55,13 +59,31 @@ class ToolExecutor:
                 raise ValueError("Registry must be provided if strategy is not")
                 
             strategy_kwargs = strategy_kwargs or {}
+            
+            # If no default_timeout specified, use a reasonable default for the strategy
+            strategy_timeout = default_timeout if default_timeout is not None else 30.0
+            
             strategy = _inprocess_mod.InProcessStrategy(
                 registry,
-                default_timeout=default_timeout,
+                default_timeout=strategy_timeout,
                 **strategy_kwargs,
             )
             
         self.strategy = strategy
+        
+        # Set default timeout with proper precedence:
+        # 1. Explicit default_timeout parameter
+        # 2. Strategy's default_timeout (if available and not None)
+        # 3. Fallback to 30.0 seconds
+        if default_timeout is not None:
+            self.default_timeout = default_timeout
+            logger.debug(f"Using explicit default_timeout: {self.default_timeout}s")
+        elif hasattr(strategy, 'default_timeout') and strategy.default_timeout is not None:
+            self.default_timeout = strategy.default_timeout
+            logger.debug(f"Using strategy's default_timeout: {self.default_timeout}s")
+        else:
+            self.default_timeout = 30.0  # Conservative fallback
+            logger.debug(f"Using fallback default_timeout: {self.default_timeout}s")
 
     @property
     def supports_streaming(self) -> bool:
@@ -79,7 +101,7 @@ class ToolExecutor:
         
         Args:
             calls: List of tool calls to execute
-            timeout: Optional timeout for execution (overrides default_timeout)
+            timeout: Optional timeout for execution (overrides all defaults)
             use_cache: Whether to use cached results (for caching wrappers)
             
         Returns:
@@ -88,10 +110,13 @@ class ToolExecutor:
         if not calls:
             return []
             
-        # Use the provided timeout or fall back to default
+        # Timeout precedence:
+        # 1. Explicit timeout parameter (highest priority)
+        # 2. Executor's default_timeout (which already considers strategy's timeout)
         effective_timeout = timeout if timeout is not None else self.default_timeout
         
-        logger.debug(f"Executing {len(calls)} tool calls with timeout {effective_timeout}s")
+        logger.debug(f"Executing {len(calls)} tool calls with timeout {effective_timeout}s "
+                    f"(explicit: {timeout is not None})")
         
         # Delegate to the strategy
         return await self.strategy.run(calls, timeout=effective_timeout)
@@ -118,8 +143,11 @@ class ToolExecutor:
         if not calls:
             return
             
-        # Use the provided timeout or fall back to default
+        # Use the same timeout precedence as execute()
         effective_timeout = timeout if timeout is not None else self.default_timeout
+        
+        logger.debug(f"Stream executing {len(calls)} tool calls with timeout {effective_timeout}s "
+                    f"(explicit: {timeout is not None})")
         
         # There are two possible ways to handle streaming:
         # 1. Use the strategy's stream_run if available
@@ -232,6 +260,8 @@ class ToolExecutor:
         machine = "direct-stream"
         pid = 0
         
+        logger.debug(f"Direct streaming {call.tool} with timeout {timeout}s")
+        
         # Create streaming task with timeout
         async def stream_with_timeout():
             try:
@@ -265,11 +295,16 @@ class ToolExecutor:
         try:
             if timeout:
                 await asyncio.wait_for(stream_with_timeout(), timeout)
+                logger.debug(f"Direct streaming {call.tool} completed within {timeout}s")
             else:
                 await stream_with_timeout()
+                logger.debug(f"Direct streaming {call.tool} completed (no timeout)")
         except asyncio.TimeoutError:
             # Handle timeout
             end_time = datetime.now(timezone.utc)
+            actual_duration = (end_time - start_time).total_seconds()
+            logger.debug(f"Direct streaming {call.tool} timed out after {actual_duration:.3f}s (limit: {timeout}s)")
+            
             timeout_result = ToolResult(
                 tool=call.tool,
                 result=None,
@@ -283,6 +318,8 @@ class ToolExecutor:
         except Exception as e:
             # Handle other errors
             end_time = datetime.now(timezone.utc)
+            logger.exception(f"Error in direct streaming {call.tool}: {e}")
+            
             error_result = ToolResult(
                 tool=call.tool,
                 result=None,
@@ -300,5 +337,6 @@ class ToolExecutor:
         
         This should be called during application shutdown to ensure proper cleanup.
         """
+        logger.debug("Shutting down ToolExecutor")
         if hasattr(self.strategy, "shutdown") and callable(self.strategy.shutdown):
             await self.strategy.shutdown()

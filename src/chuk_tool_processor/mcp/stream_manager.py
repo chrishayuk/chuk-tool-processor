@@ -47,9 +47,16 @@ class StreamManager:
         servers: List[str],
         server_names: Optional[Dict[int, str]] = None,
         transport_type: str = "stdio",
+        default_timeout: float = 30.0,  # ADD: For consistency
     ) -> "StreamManager":
         inst = cls()
-        await inst.initialize(config_file, servers, server_names, transport_type)
+        await inst.initialize(
+            config_file, 
+            servers, 
+            server_names, 
+            transport_type,
+            default_timeout=default_timeout  # PASS THROUGH
+        )
         return inst
 
     @classmethod
@@ -57,9 +64,16 @@ class StreamManager:
         cls,
         servers: List[Dict[str, str]],
         server_names: Optional[Dict[int, str]] = None,
+        connection_timeout: float = 10.0,  # ADD: For SSE connection setup
+        default_timeout: float = 30.0,     # ADD: For tool execution
     ) -> "StreamManager":
         inst = cls()
-        await inst.initialize_with_sse(servers, server_names)
+        await inst.initialize_with_sse(
+            servers, 
+            server_names,
+            connection_timeout=connection_timeout,  # PASS THROUGH
+            default_timeout=default_timeout         # PASS THROUGH
+        )
         return inst
 
     # ------------------------------------------------------------------ #
@@ -71,6 +85,7 @@ class StreamManager:
         servers: List[str],
         server_names: Optional[Dict[int, str]] = None,
         transport_type: str = "stdio",
+        default_timeout: float = 30.0,  # ADD: For consistency
     ) -> None:
         async with self._lock:
             self.server_names = server_names or {}
@@ -81,7 +96,24 @@ class StreamManager:
                         params = await load_config(config_file, server_name)
                         transport: MCPBaseTransport = StdioTransport(params)
                     elif transport_type == "sse":
-                        transport = SSETransport("http://localhost:8000")
+                        # WARNING: For SSE transport, prefer using create_with_sse() instead
+                        # This is a fallback for backward compatibility
+                        logger.warning("Using SSE transport in initialize() - consider using initialize_with_sse() instead")
+                        
+                        # Try to extract URL from params or use localhost as fallback
+                        if isinstance(params, dict) and 'url' in params:
+                            sse_url = params['url']
+                            api_key = params.get('api_key')
+                        else:
+                            sse_url = "http://localhost:8000"
+                            api_key = None
+                            logger.warning(f"No URL configured for SSE transport, using default: {sse_url}")
+                        
+                        transport = SSETransport(
+                            sse_url,
+                            api_key,
+                            default_timeout=default_timeout
+                        )
                     else:
                         logger.error("Unsupported transport type: %s", transport_type)
                         continue
@@ -125,6 +157,8 @@ class StreamManager:
         self,
         servers: List[Dict[str, str]],
         server_names: Optional[Dict[int, str]] = None,
+        connection_timeout: float = 10.0,  # ADD: For SSE connection setup
+        default_timeout: float = 30.0,     # ADD: For tool execution
     ) -> None:
         async with self._lock:
             self.server_names = server_names or {}
@@ -135,7 +169,14 @@ class StreamManager:
                     logger.error("Bad server config: %s", cfg)
                     continue
                 try:
-                    transport = SSETransport(url, cfg.get("api_key"))
+                    # FIXED: Pass timeout parameters to SSETransport
+                    transport = SSETransport(
+                        url, 
+                        cfg.get("api_key"),
+                        connection_timeout=connection_timeout,  # ADD THIS
+                        default_timeout=default_timeout         # ADD THIS
+                    )
+                    
                     if not await transport.initialize():
                         logger.error("Failed to init SSE %s", name)
                         continue
@@ -265,7 +306,7 @@ class StreamManager:
         tool_name: str,
         arguments: Dict[str, Any],
         server_name: Optional[str] = None,
-        timeout: Optional[float] = None,  # Add timeout parameter
+        timeout: Optional[float] = None,  # Timeout parameter already exists
     ) -> Dict[str, Any]:
         """
         Call a tool on the appropriate server with timeout support.
@@ -293,10 +334,25 @@ class StreamManager:
         if timeout is not None:
             logger.debug("Calling tool '%s' with %ss timeout", tool_name, timeout)
             try:
-                return await asyncio.wait_for(
-                    transport.call_tool(tool_name, arguments),
-                    timeout=timeout
-                )
+                # ENHANCED: Pass timeout to transport.call_tool if it supports it
+                if hasattr(transport, 'call_tool'):
+                    import inspect
+                    sig = inspect.signature(transport.call_tool)
+                    if 'timeout' in sig.parameters:
+                        # Transport supports timeout parameter - pass it through
+                        return await transport.call_tool(tool_name, arguments, timeout=timeout)
+                    else:
+                        # Transport doesn't support timeout - use asyncio.wait_for wrapper
+                        return await asyncio.wait_for(
+                            transport.call_tool(tool_name, arguments),
+                            timeout=timeout
+                        )
+                else:
+                    # Fallback to asyncio.wait_for
+                    return await asyncio.wait_for(
+                        transport.call_tool(tool_name, arguments),
+                        timeout=timeout
+                    )
             except asyncio.TimeoutError:
                 logger.warning("Tool '%s' timed out after %ss", tool_name, timeout)
                 return {

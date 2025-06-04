@@ -8,6 +8,8 @@ This transport:
 3. Sends MCP initialize handshake FIRST
 4. Only then proceeds with tools/list and tool calls
 5. Handles async responses via SSE message events
+
+FIXED: All hardcoded timeouts are now configurable parameters.
 """
 from __future__ import annotations
 
@@ -24,7 +26,8 @@ from .base_transport import MCPBaseTransport
 # --------------------------------------------------------------------------- #
 # Helpers                                                                     #
 # --------------------------------------------------------------------------- #
-DEFAULT_TIMEOUT = 30.0  # Longer timeout for real servers
+DEFAULT_TIMEOUT = 30.0  # Default timeout for tool calls
+DEFAULT_CONNECTION_TIMEOUT = 10.0  # Default timeout for connection setup
 HEADERS_JSON: Dict[str, str] = {"accept": "application/json"}
 
 
@@ -47,9 +50,26 @@ class SSETransport(MCPBaseTransport):
     5. Waits for async responses via SSE message events
     """
 
-    def __init__(self, url: str, api_key: Optional[str] = None) -> None:
+    def __init__(
+        self, 
+        url: str, 
+        api_key: Optional[str] = None,
+        connection_timeout: float = DEFAULT_CONNECTION_TIMEOUT,
+        default_timeout: float = DEFAULT_TIMEOUT
+    ) -> None:
+        """
+        Initialize SSE Transport with configurable timeouts.
+        
+        Args:
+            url: Base URL for the MCP server
+            api_key: Optional API key for authentication
+            connection_timeout: Timeout for connection setup (default: 10.0s)
+            default_timeout: Default timeout for tool calls (default: 30.0s)
+        """
         self.base_url = url.rstrip("/")
         self.api_key = api_key
+        self.connection_timeout = connection_timeout
+        self.default_timeout = default_timeout
         
         # NEW: Auto-detect bearer token from environment if not provided
         if not self.api_key:
@@ -92,7 +112,7 @@ class SSETransport(MCPBaseTransport):
 
         self._client = httpx.AsyncClient(
             headers=headers,
-            timeout=DEFAULT_TIMEOUT,
+            timeout=self.default_timeout,  # Use configurable timeout
         )
         self.session = self._client
 
@@ -100,8 +120,8 @@ class SSETransport(MCPBaseTransport):
         self._sse_task = asyncio.create_task(self._handle_sse_connection())
         
         try:
-            # Wait for endpoint event (up to 10 seconds)
-            await asyncio.wait_for(self._connected.wait(), timeout=10.0)
+            # FIXED: Use configurable connection timeout instead of hardcoded 10.0
+            await asyncio.wait_for(self._connected.wait(), timeout=self.connection_timeout)
             
             # NEW: Send MCP initialize handshake
             if await self._initialize_mcp_session():
@@ -285,7 +305,8 @@ class SSETransport(MCPBaseTransport):
         if not self._initialized.is_set():
             print("⏳ Waiting for MCP initialization...")
             try:
-                await asyncio.wait_for(self._initialized.wait(), timeout=10.0)
+                # FIXED: Use configurable connection timeout instead of hardcoded 10.0
+                await asyncio.wait_for(self._initialized.wait(), timeout=self.connection_timeout)
             except asyncio.TimeoutError:
                 print("❌ Timeout waiting for MCP initialization")
                 return []
@@ -311,8 +332,23 @@ class SSETransport(MCPBaseTransport):
             
         return []
 
-    async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute a tool call using the MCP protocol."""
+    async def call_tool(
+        self, 
+        tool_name: str, 
+        arguments: Dict[str, Any],
+        timeout: Optional[float] = None
+    ) -> Dict[str, Any]:
+        """
+        Execute a tool call using the MCP protocol.
+        
+        Args:
+            tool_name: Name of the tool to call
+            arguments: Arguments to pass to the tool
+            timeout: Optional timeout for this specific call
+            
+        Returns:
+            Dictionary containing the tool result or error
+        """
         # NEW: Ensure initialization before tool calls
         if not self._initialized.is_set():
             return {"isError": True, "error": "MCP session not initialized"}
@@ -331,7 +367,9 @@ class SSETransport(MCPBaseTransport):
                 }
             }
             
-            response = await self._send_message(message)
+            # Use provided timeout or fall back to default
+            effective_timeout = timeout if timeout is not None else self.default_timeout
+            response = await self._send_message(message, timeout=effective_timeout)
             
             # Process MCP response
             if "error" in response:
@@ -363,14 +401,30 @@ class SSETransport(MCPBaseTransport):
         except Exception as e:
             return {"isError": True, "error": str(e)}
 
-    async def _send_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
-        """Send a JSON-RPC message to the server and wait for async response."""
+    async def _send_message(
+        self, 
+        message: Dict[str, Any],
+        timeout: Optional[float] = None
+    ) -> Dict[str, Any]:
+        """
+        Send a JSON-RPC message to the server and wait for async response.
+        
+        Args:
+            message: JSON-RPC message to send
+            timeout: Optional timeout for this specific message
+            
+        Returns:
+            Response message from the server
+        """
         if not self._client or not self._message_url:
             raise RuntimeError("Transport not properly initialized")
 
         message_id = message.get("id")
         if not message_id:
             raise ValueError("Message must have an ID")
+
+        # Use provided timeout or fall back to default
+        effective_timeout = timeout if timeout is not None else self.default_timeout
 
         # Create a future for this request
         future = asyncio.Future()
@@ -391,7 +445,8 @@ class SSETransport(MCPBaseTransport):
             if response.status_code == 202:
                 # Server accepted - wait for async response via SSE
                 try:
-                    response_message = await asyncio.wait_for(future, timeout=30.0)
+                    # FIXED: Use effective_timeout instead of hardcoded 30.0
+                    response_message = await asyncio.wait_for(future, timeout=effective_timeout)
                     return response_message
                 except asyncio.TimeoutError:
                     raise RuntimeError(f"Timeout waiting for response to message {message_id}")
