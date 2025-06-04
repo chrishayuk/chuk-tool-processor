@@ -31,7 +31,7 @@ from chuk_tool_processor.plugins.discovery import (
 try:
     from chuk_tool_processor.plugins.parsers.base import ParserPlugin
 except ModuleNotFoundError:
-    ParserPlugin = None        # pragma: no cover – optional feature
+    ParserPlugin = None        # pragma: no cover - optional feature
 
 from chuk_tool_processor.models.execution_strategy import ExecutionStrategy
 
@@ -83,14 +83,14 @@ if ParserPlugin:
 
 else:
 
-    # Fallback when the parser subsystem isn’t available (very unlikely in tests)
+    # Fallback when the parser subsystem isn't available (very unlikely in tests)
     class DummyParser:  # pragma: no cover
         async def try_parse(self, raw: str | object):  # noqa: D401
             return []
 
 
 class DummyExec(ExecutionStrategy):
-    async def run(self, calls, timeout=None):  # pragma: no cover – not executed
+    async def run(self, calls, timeout=None):  # pragma: no cover - not executed
         return []
 
 
@@ -132,7 +132,7 @@ class TestPluginDiscovery:
 
 
 # ---------------------------------------------------------------------------
-# Integration tests – mock import machinery
+# Integration tests - mock import machinery
 # ---------------------------------------------------------------------------
 
 

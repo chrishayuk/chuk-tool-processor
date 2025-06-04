@@ -77,7 +77,7 @@ class StreamManager:
         return inst
 
     # ------------------------------------------------------------------ #
-    #  initialisation – stdio / sse                                      #
+    #  initialisation - stdio / sse                                      #
     # ------------------------------------------------------------------ #
     async def initialize(
         self,
@@ -143,12 +143,12 @@ class StreamManager:
                             "status": status,
                         }
                     )
-                    logger.info("Initialised %s – %d tool(s)", server_name, len(tools))
+                    logger.info("Initialised %s - %d tool(s)", server_name, len(tools))
                 except Exception as exc:  # noqa: BLE001
                     logger.error("Error initialising %s: %s", server_name, exc)
 
             logger.info(
-                "StreamManager ready – %d server(s), %d tool(s)",
+                "StreamManager ready - %d server(s), %d tool(s)",
                 len(self.transports),
                 len(self.all_tools),
             )
@@ -194,12 +194,12 @@ class StreamManager:
                     self.server_info.append(
                         {"id": idx, "name": name, "tools": len(tools), "status": status}
                     )
-                    logger.info("Initialised SSE %s – %d tool(s)", name, len(tools))
+                    logger.info("Initialised SSE %s - %d tool(s)", name, len(tools))
                 except Exception as exc:  # noqa: BLE001
                     logger.error("Error initialising SSE %s: %s", name, exc)
 
             logger.info(
-                "StreamManager ready – %d SSE server(s), %d tool(s)",
+                "StreamManager ready - %d SSE server(s), %d tool(s)",
                 len(self.transports),
                 len(self.all_tools),
             )
@@ -245,7 +245,7 @@ class StreamManager:
             return []
 
     # ------------------------------------------------------------------ #
-    #  EXTRA HELPERS – ping / resources / prompts                        #
+    #  EXTRA HELPERS - ping / resources / prompts                        #
     # ------------------------------------------------------------------ #
     async def ping_servers(self) -> List[Dict[str, Any]]:
         async def _ping_one(name: str, tr: MCPBaseTransport):

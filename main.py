@@ -34,7 +34,7 @@ async def ensure_openai_ok() -> AsyncOpenAI:
 
     client = AsyncOpenAI(api_key=key)
 
-    # Quick ping – will raise if the credentials are invalid
+    # Quick ping - will raise if the credentials are invalid
     await client.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=[{"role": "user", "content": "ping"}],

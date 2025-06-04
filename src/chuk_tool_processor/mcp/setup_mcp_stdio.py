@@ -26,7 +26,7 @@ logger = get_logger("chuk_tool_processor.mcp.setup_stdio")
 # --------------------------------------------------------------------------- #
 # public helper
 # --------------------------------------------------------------------------- #
-async def setup_mcp_stdio(  # noqa: C901 – long but just a config facade
+async def setup_mcp_stdio(  # noqa: C901 - long but just a config facade
     *,
     config_file: str,
     servers: List[str],
@@ -72,7 +72,7 @@ async def setup_mcp_stdio(  # noqa: C901 – long but just a config facade
     )
 
     logger.info(
-        "MCP (stdio) initialised – %s tool%s registered into namespace '%s'",
+        "MCP (stdio) initialised - %s tool%s registered into namespace '%s'",
         len(registered),
         "" if len(registered) == 1 else "s",
         namespace,

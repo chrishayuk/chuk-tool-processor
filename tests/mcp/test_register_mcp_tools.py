@@ -35,7 +35,7 @@ class TestRegisterMCPTools:
     # ------------------------------------------------------------------ #
     def _patch_registry(self, mock_registry):
         """
-        Convenience wrapper – returns a context-manager that replaces
+        Convenience wrapper - returns a context-manager that replaces
         ``ToolRegistryProvider.get_registry`` with an *async* mock.
         """
         return patch(

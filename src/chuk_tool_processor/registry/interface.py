@@ -104,8 +104,8 @@ class ToolRegistryInterface(Protocol):
 
         Args:
             namespace: Optional filter by namespace.
-                • None (default) – metadata from all namespaces
-                • "some_ns" – only that namespace
+                • None (default) - metadata from all namespaces
+                • "some_ns" - only that namespace
 
         Returns:
             List of ToolMetadata objects.

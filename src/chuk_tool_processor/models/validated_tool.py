@@ -35,7 +35,7 @@ T_Validated = TypeVar("T_Validated", bound="ValidatedTool")
 
 
 # --------------------------------------------------------------------------- #
-# Helper mix-in – serialise a *class* into assorted formats
+# Helper mix-in - serialise a *class* into assorted formats
 # --------------------------------------------------------------------------- #
 class _ExportMixin:
     """Static helpers that expose a tool class in other specs."""
@@ -79,7 +79,7 @@ class _ExportMixin:
         return cls.Arguments.model_json_schema()  # type: ignore[attr-defined]
 
     # ------------------------------------------------------------------ #
-    # Tiny XML tag – handy for unit-tests / demos
+    # Tiny XML tag - handy for unit-tests / demos
     # ------------------------------------------------------------------ #
     @classmethod
     def to_xml_tag(cls: type[T_Validated], **arguments: Any) -> str:
@@ -96,9 +96,9 @@ class ValidatedTool(_ExportMixin, BaseModel):
     """Pydantic-validated base for new async-native tools."""
 
     # ------------------------------------------------------------------ #
-    # Inner models – override in subclasses
+    # Inner models - override in subclasses
     # ------------------------------------------------------------------ #
-    class Arguments(BaseModel):  # noqa: D401 – acts as a namespace
+    class Arguments(BaseModel):  # noqa: D401 - acts as a namespace
         """Input model"""
 
     class Result(BaseModel):  # noqa: D401
@@ -124,14 +124,14 @@ class ValidatedTool(_ExportMixin, BaseModel):
     # ------------------------------------------------------------------ #
     # Sub-classes must implement this
     # ------------------------------------------------------------------ #
-    async def _execute(self, **_kwargs: Any):  # noqa: D401 – expected override
+    async def _execute(self, **_kwargs: Any):  # noqa: D401 - expected override
         raise NotImplementedError("Tool must implement async _execute()")
 
 
 # --------------------------------------------------------------------------- #
 # Decorator to retrofit validation onto classic "imperative" tools
 # --------------------------------------------------------------------------- #
-def with_validation(cls):  # noqa: D401 – factory
+def with_validation(cls):  # noqa: D401 - factory
     """
     Decorator that wraps an existing async ``execute`` method with:
 

@@ -23,7 +23,7 @@ from chuk_tool_processor.models.tool_result import ToolResult
 from chuk_tool_processor.plugins.discovery import (
     PluginDiscovery,
     plugin_registry,          # the global registry singleton
-    discover_default_plugins, # helper to load the library’s own plugins
+    discover_default_plugins, # helper to load the library's own plugins
 )
 from chuk_tool_processor.plugins.parsers.base import ParserPlugin
 
@@ -62,7 +62,7 @@ PluginDiscovery(plugin_registry).discover_plugins([__name__])
 
 
 # --------------------------------------------------------------------------- #
-# Helper – show registry state
+# Helper - show registry state
 # --------------------------------------------------------------------------- #
 def dump_registry() -> None:
     print("Registered plugins:")

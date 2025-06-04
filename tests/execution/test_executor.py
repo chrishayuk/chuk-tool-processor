@@ -120,7 +120,7 @@ async def test_executor_initialisation_explicit_strategy(registry, dummy_strateg
 async def test_executor_initialisation_creates_inprocess_strategy(registry):
     """
     If *strategy* is omitted, ``ToolExecutor`` should import and instantiate
-    ``InProcessStrategy`` – we monkey-patch that class at the real import path.
+    ``InProcessStrategy`` - we monkey-patch that class at the real import path.
     """
     patch_target = (
         "chuk_tool_processor.execution.strategies.inprocess_strategy.InProcessStrategy"

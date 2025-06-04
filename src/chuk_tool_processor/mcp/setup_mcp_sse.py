@@ -8,7 +8,7 @@ Utility that wires up:
 2. The remote MCP tools exposed by that manager (via
    :pyfunc:`~chuk_tool_processor.mcp.register_mcp_tools.register_mcp_tools`).
 3. A fully-featured :class:`~chuk_tool_processor.core.processor.ToolProcessor`
-   instance that can execute those tools – with optional caching,
+   instance that can execute those tools - with optional caching,
    rate-limiting, retries, etc.
 """
 
@@ -28,7 +28,7 @@ logger = get_logger("chuk_tool_processor.mcp.setup_sse")
 # --------------------------------------------------------------------------- #
 # public helper
 # --------------------------------------------------------------------------- #
-async def setup_mcp_sse(  # noqa: C901 – long, but just a config wrapper
+async def setup_mcp_sse(  # noqa: C901 - long, but just a config wrapper
     *,
     servers: List[Dict[str, str]],
     server_names: Optional[Dict[int, str]] = None,
@@ -47,7 +47,7 @@ async def setup_mcp_sse(  # noqa: C901 – long, but just a config wrapper
     Spin up an SSE-backed *StreamManager*, register all its remote tools,
     and return a ready-to-go :class:`ToolProcessor`.
 
-    Everything is **async-native** – call with ``await``.
+    Everything is **async-native** - call with ``await``.
     
     NEW: Automatically detects and adds bearer token from MCP_BEARER_TOKEN
     environment variable if not explicitly provided in server config.
@@ -91,7 +91,7 @@ async def setup_mcp_sse(  # noqa: C901 – long, but just a config wrapper
     )
 
     logger.info(
-        "MCP (SSE) initialised – %s tool%s registered into namespace '%s'",
+        "MCP (SSE) initialised - %s tool%s registered into namespace '%s'",
         len(registered),
         "" if len(registered) == 1 else "s",
         namespace,

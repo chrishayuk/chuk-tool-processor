@@ -22,7 +22,7 @@ from pydantic import BaseModel, create_model
 try:  # optional dependency
     from langchain.tools.base import BaseTool  # type: ignore
 except ModuleNotFoundError:  # pragma: no cover
-    BaseTool = None  # noqa: N816  – keep the name for isinstance() checks
+    BaseTool = None  # noqa: N816  - keep the name for isinstance() checks
 
 # registry
 from .decorators import register_tool
@@ -30,7 +30,7 @@ from .provider import ToolRegistryProvider
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# internals – build a Pydantic schema from an arbitrary callable
+# internals - build a Pydantic schema from an arbitrary callable
 # ────────────────────────────────────────────────────────────────────────────
 
 
@@ -39,7 +39,7 @@ def _auto_schema(func: Callable) -> Type[BaseModel]:
     Turn a function signature into a `pydantic.BaseModel` subclass.
 
     *Unknown* or *un-imported* annotations (common with third-party libs that
-    use forward-refs without importing the target – e.g. ``uuid.UUID`` in
+    use forward-refs without importing the target - e.g. ``uuid.UUID`` in
     LangChain's `CallbackManagerForToolRun`) default to ``str`` instead of
     crashing `get_type_hints()`.
     """
@@ -90,7 +90,7 @@ async def register_fn_tool(
     tool_description = (description or func.__doc__ or "").strip()
     
     # Create the tool wrapper class
-    class _Tool:  # noqa: D401, N801 – internal auto-wrapper
+    class _Tool:  # noqa: D401, N801 - internal auto-wrapper
         """Auto-generated tool wrapper for function."""
         
         async def execute(self, **kwargs: Any) -> Any:
@@ -154,7 +154,7 @@ async def register_langchain_tool(
 
     if not isinstance(tool, BaseTool):  # pragma: no cover
         raise TypeError(
-            "Expected a langchain.tools.base.BaseTool instance – got "
+            "Expected a langchain.tools.base.BaseTool instance - got "
             f"{type(tool).__name__}"
         )
 

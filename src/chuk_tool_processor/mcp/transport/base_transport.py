@@ -73,7 +73,7 @@ class MCPBaseTransport(ABC):
     @abstractmethod
     async def list_resources(self) -> Dict[str, Any]:
         """
-        Retrieve the server’s resources catalogue.
+        Retrieve the server's resources catalogue.
 
         Expected shape::
             { "resources": [ {...}, ... ], "nextCursor": "…", … }
@@ -83,7 +83,7 @@ class MCPBaseTransport(ABC):
     @abstractmethod
     async def list_prompts(self) -> Dict[str, Any]:
         """
-        Retrieve the server’s prompt catalogue.
+        Retrieve the server's prompt catalogue.
 
         Expected shape::
             { "prompts": [ {...}, ... ], "nextCursor": "…", … }

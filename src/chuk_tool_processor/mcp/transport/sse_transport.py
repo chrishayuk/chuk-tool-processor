@@ -351,7 +351,7 @@ class SSETransport(MCPBaseTransport):
         """
         # NEW: Ensure initialization before tool calls
         if not self._initialized.is_set():
-            return {"isError": True, "error": "MCP session not initialized"}
+            return {"isError": True, "error": "SSE transport not implemented"}
             
         if not self._message_url:
             return {"isError": True, "error": "No message endpoint available"}

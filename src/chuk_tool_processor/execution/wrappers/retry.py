@@ -2,36 +2,31 @@
 """
 Async-native retry wrapper for tool execution.
 
-This module provides a retry mechanism for tool calls that can automatically
-retry failed executions based on configurable criteria and backoff strategies.
+Adds exponential–back-off retry logic and *deadline-aware* timeout handling so a
+`timeout=` passed by callers is treated as the **total wall-clock budget** for
+all attempts of a single tool call.
 """
 from __future__ import annotations
 
 import asyncio
-import logging
 import random
+import time
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Type, Union
+from typing import Any, Dict, List, Optional, Type
 
+from chuk_tool_processor.logging import get_logger
 from chuk_tool_processor.models.tool_call import ToolCall
 from chuk_tool_processor.models.tool_result import ToolResult
-from chuk_tool_processor.logging import get_logger
 
 logger = get_logger("chuk_tool_processor.execution.wrappers.retry")
 
 
+# --------------------------------------------------------------------------- #
+# Retry configuration
+# --------------------------------------------------------------------------- #
 class RetryConfig:
-    """
-    Configuration for retry behavior.
-    
-    Attributes:
-        max_retries: Maximum number of retry attempts
-        base_delay: Base delay between retries in seconds
-        max_delay: Maximum delay between retries in seconds
-        jitter: Whether to add random jitter to delays
-        retry_on_exceptions: List of exception types to retry on
-        retry_on_error_substrings: List of error message substrings to retry on
-    """
+    """Configuration object that decides *whether* and *when* to retry."""
+
     def __init__(
         self,
         max_retries: int = 3,
@@ -39,248 +34,242 @@ class RetryConfig:
         max_delay: float = 60.0,
         jitter: bool = True,
         retry_on_exceptions: Optional[List[Type[Exception]]] = None,
-        retry_on_error_substrings: Optional[List[str]] = None
+        retry_on_error_substrings: Optional[List[str]] = None,
     ):
+        if max_retries < 0:
+            raise ValueError("max_retries cannot be negative")
         self.max_retries = max_retries
         self.base_delay = base_delay
         self.max_delay = max_delay
         self.jitter = jitter
         self.retry_on_exceptions = retry_on_exceptions or []
         self.retry_on_error_substrings = retry_on_error_substrings or []
-    
-    def should_retry(self, attempt: int, error: Optional[Exception] = None, error_str: Optional[str] = None) -> bool:
-        """
-        Determine if a retry should be attempted.
-        
-        Args:
-            attempt: Current attempt number (0-based)
-            error: Exception that caused the failure, if any
-            error_str: Error message string, if any
-            
-        Returns:
-            True if a retry should be attempted, False otherwise
-        """
+
+    # --------------------------------------------------------------------- #
+    # Decision helpers
+    # --------------------------------------------------------------------- #
+    def should_retry(  # noqa: D401  (imperative mood is fine)
+        self,
+        attempt: int,
+        *,
+        error: Optional[Exception] = None,
+        error_str: Optional[str] = None,
+    ) -> bool:
+        """Return *True* iff another retry is allowed for this attempt."""
         if attempt >= self.max_retries:
             return False
+
+        # Nothing specified → always retry until max_retries reached
         if not self.retry_on_exceptions and not self.retry_on_error_substrings:
             return True
+
         if error is not None and any(isinstance(error, exc) for exc in self.retry_on_exceptions):
             return True
+
         if error_str and any(substr in error_str for substr in self.retry_on_error_substrings):
             return True
+
         return False
-    
+
+    # --------------------------------------------------------------------- #
+    # Back-off
+    # --------------------------------------------------------------------- #
     def get_delay(self, attempt: int) -> float:
-        """
-        Calculate the delay for the current attempt with exponential backoff.
-        
-        Args:
-            attempt: Current attempt number (0-based)
-            
-        Returns:
-            Delay in seconds
-        """
+        """Exponential back-off delay for *attempt* (0-based)."""
         delay = min(self.base_delay * (2 ** attempt), self.max_delay)
         if self.jitter:
-            delay *= (0.5 + random.random())
+            delay *= 0.5 + random.random()  # jitter in [0.5, 1.5)
         return delay
 
 
+# --------------------------------------------------------------------------- #
+# Retryable executor
+# --------------------------------------------------------------------------- #
 class RetryableToolExecutor:
     """
-    Wrapper for a tool executor that applies retry logic.
-    
-    This executor wraps another executor and automatically retries failed
-    tool calls based on configured retry policies.
+    Wraps another executor and re-invokes it according to a :class:`RetryConfig`.
     """
+
     def __init__(
         self,
         executor: Any,
+        *,
         default_config: Optional[RetryConfig] = None,
-        tool_configs: Optional[Dict[str, RetryConfig]] = None
+        tool_configs: Optional[Dict[str, RetryConfig]] = None,
     ):
-        """
-        Initialize the retryable executor.
-        
-        Args:
-            executor: The underlying executor to wrap
-            default_config: Default retry configuration for all tools
-            tool_configs: Tool-specific retry configurations
-        """
         self.executor = executor
         self.default_config = default_config or RetryConfig()
         self.tool_configs = tool_configs or {}
-    
-    def _get_config(self, tool: str) -> RetryConfig:
-        """Get the retry configuration for a specific tool."""
+
+    # --------------------------------------------------------------------- #
+    # Public helpers
+    # --------------------------------------------------------------------- #
+    def _config_for(self, tool: str) -> RetryConfig:
         return self.tool_configs.get(tool, self.default_config)
-    
+
     async def execute(
         self,
         calls: List[ToolCall],
+        *,
         timeout: Optional[float] = None,
-        use_cache: bool = True
+        use_cache: bool = True,
     ) -> List[ToolResult]:
-        """
-        Execute tool calls with retry logic.
-        
-        Args:
-            calls: List of tool calls to execute
-            timeout: Optional timeout for each execution
-            use_cache: Whether to use cached results (passed to underlying executor)
-            
-        Returns:
-            List of tool results
-        """
-        # Handle empty calls list
         if not calls:
             return []
-            
-        # Execute each call with retries
-        results: List[ToolResult] = []
+
+        out: List[ToolResult] = []
         for call in calls:
-            config = self._get_config(call.tool)
-            result = await self._execute_with_retry(call, config, timeout, use_cache)
-            results.append(result)
-        return results
-    
-    async def _execute_with_retry(
+            cfg = self._config_for(call.tool)
+            out.append(await self._execute_single(call, cfg, timeout, use_cache))
+        return out
+
+    # --------------------------------------------------------------------- #
+    # Core retry loop (per call)
+    # --------------------------------------------------------------------- #
+    async def _execute_single(
         self,
         call: ToolCall,
-        config: RetryConfig,
+        cfg: RetryConfig,
         timeout: Optional[float],
-        use_cache: bool
+        use_cache: bool,
     ) -> ToolResult:
-        """
-        Execute a single tool call with retries.
-        
-        Args:
-            call: Tool call to execute
-            config: Retry configuration to use
-            timeout: Optional timeout for execution
-            use_cache: Whether to use cached results
-            
-        Returns:
-            Tool result after retries
-        """
         attempt = 0
         last_error: Optional[str] = None
         pid = 0
         machine = "unknown"
-        
+
+        # ---------------------------------------------------------------- #
+        # Deadline budget (wall-clock)
+        # ---------------------------------------------------------------- #
+        deadline = None
+        if timeout is not None:
+            deadline = time.monotonic() + timeout
+
         while True:
+            # ---------------------------------------------------------------- #
+            # Check whether we have any time left *before* trying the call
+            # ---------------------------------------------------------------- #
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return ToolResult(
+                        tool=call.tool,
+                        result=None,
+                        error=f"Timeout after {timeout}s",
+                        start_time=datetime.now(timezone.utc),
+                        end_time=datetime.now(timezone.utc),
+                        machine=machine,
+                        pid=pid,
+                        attempts=attempt,
+                    )
+            else:
+                remaining = None  # unlimited
+
+            # ---------------------------------------------------------------- #
+            # Execute one attempt
+            # ---------------------------------------------------------------- #
             start_time = datetime.now(timezone.utc)
-            
             try:
-                # Pass the use_cache parameter if the executor supports it
-                executor_kwargs = {"timeout": timeout}
+                kwargs = {"timeout": remaining} if remaining is not None else {}
                 if hasattr(self.executor, "use_cache"):
-                    executor_kwargs["use_cache"] = use_cache
-                
-                # Execute call
-                tool_results = await self.executor.execute([call], **executor_kwargs)
-                result = tool_results[0]
+                    kwargs["use_cache"] = use_cache
+
+                result = (await self.executor.execute([call], **kwargs))[0]
                 pid = result.pid
                 machine = result.machine
-                
-                # Check for error in result
-                if result.error:
-                    last_error = result.error
-                    if config.should_retry(attempt, error_str=result.error):
-                        logger.debug(
-                            f"Retrying tool {call.tool} after error: {result.error} (attempt {attempt + 1}/{config.max_retries})"
-                        )
-                        await asyncio.sleep(config.get_delay(attempt))
-                        attempt += 1
-                        continue
-                        
-                    # No retry: if any retries happened, wrap final error
-                    if attempt > 0:
-                        end_time = datetime.now(timezone.utc)
-                        final = ToolResult(
-                            tool=call.tool,
-                            result=None,
-                            error=f"Max retries reached ({config.max_retries}): {last_error}",
-                            start_time=start_time,
-                            end_time=end_time,
-                            machine=machine,
-                            pid=pid
-                        )
-                        # Attach attempts
-                        final.attempts = attempt + 1  # Include the original attempt
-                        return final
-                        
-                    # No retries occurred, return the original failure
-                    result.attempts = 1
+
+                # Success?
+                if not result.error:
+                    result.attempts = attempt + 1
                     return result
-                
-                # Success: attach attempts and return
-                result.attempts = attempt + 1  # Include the original attempt
-                return result
-                
-            except Exception as e:
-                err_str = str(e)
-                last_error = err_str
-                
-                if config.should_retry(attempt, error=e):
-                    logger.info(
-                        f"Retrying tool {call.tool} after exception: {err_str} (attempt {attempt + 1}/{config.max_retries})"
-                    )
-                    await asyncio.sleep(config.get_delay(attempt))
+
+                # Error: decide on retry
+                last_error = result.error
+                if cfg.should_retry(attempt, error_str=result.error):
+                    delay = cfg.get_delay(attempt)
+                    # never overshoot the deadline
+                    if deadline is not None:
+                        delay = min(delay, max(deadline - time.monotonic(), 0))
+                    if delay:
+                        await asyncio.sleep(delay)
                     attempt += 1
                     continue
-                    
-                # No more retries: return error result
+
+                # No more retries wanted
+                result.error = self._wrap_error(last_error, attempt, cfg)
+                result.attempts = attempt + 1
+                return result
+
+            # ---------------------------------------------------------------- #
+            # Exception path
+            # ---------------------------------------------------------------- #
+            except Exception as exc:  # noqa: BLE001
+                err_str = str(exc)
+                last_error = err_str
+                if cfg.should_retry(attempt, error=exc):
+                    delay = cfg.get_delay(attempt)
+                    if deadline is not None:
+                        delay = min(delay, max(deadline - time.monotonic(), 0))
+                    if delay:
+                        await asyncio.sleep(delay)
+                    attempt += 1
+                    continue
+
                 end_time = datetime.now(timezone.utc)
-                final_exc = ToolResult(
+                return ToolResult(
                     tool=call.tool,
                     result=None,
-                    error=err_str,
+                    error=self._wrap_error(err_str, attempt, cfg),
                     start_time=start_time,
                     end_time=end_time,
                     machine=machine,
-                    pid=pid
+                    pid=pid,
+                    attempts=attempt + 1,
                 )
-                final_exc.attempts = attempt + 1  # Include the original attempt
-                return final_exc
+
+    # --------------------------------------------------------------------- #
+    # Helpers
+    # --------------------------------------------------------------------- #
+    @staticmethod
+    def _wrap_error(err: str, attempt: int, cfg: RetryConfig) -> str:
+        if attempt >= cfg.max_retries and attempt > 0:
+            return f"Max retries reached ({cfg.max_retries}): {err}"
+        return err
 
 
+# --------------------------------------------------------------------------- #
+# Decorator helper
+# --------------------------------------------------------------------------- #
 def retryable(
+    *,
     max_retries: int = 3,
     base_delay: float = 1.0,
     max_delay: float = 60.0,
     jitter: bool = True,
     retry_on_exceptions: Optional[List[Type[Exception]]] = None,
-    retry_on_error_substrings: Optional[List[str]] = None
+    retry_on_error_substrings: Optional[List[str]] = None,
 ):
     """
-    Decorator for tool classes to configure retry behavior.
-    
-    Example:
-        @retryable(max_retries=5, base_delay=2.0)
-        class MyTool:
-            async def execute(self, x: int, y: int) -> int:
-                return x + y
-                
-    Args:
-        max_retries: Maximum number of retry attempts
-        base_delay: Base delay between retries in seconds
-        max_delay: Maximum delay between retries in seconds
-        jitter: Whether to add random jitter to delays
-        retry_on_exceptions: List of exception types to retry on
-        retry_on_error_substrings: List of error message substrings to retry on
-        
-    Returns:
-        Decorated class with retry configuration
+    Class decorator that attaches a :class:`RetryConfig` to a *tool* class.
+
+    Example
+    -------
+    ```python
+    @retryable(max_retries=5, base_delay=0.5)
+    class MyTool:
+        ...
+    ```
     """
-    def decorator(cls):
+
+    def _decorator(cls):
         cls._retry_config = RetryConfig(
             max_retries=max_retries,
             base_delay=base_delay,
             max_delay=max_delay,
             jitter=jitter,
             retry_on_exceptions=retry_on_exceptions,
-            retry_on_error_substrings=retry_on_error_substrings
+            retry_on_error_substrings=retry_on_error_substrings,
         )
         return cls
-    return decorator
+
+    return _decorator

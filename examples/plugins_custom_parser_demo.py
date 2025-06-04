@@ -63,7 +63,7 @@ class AngleParser:
 
 
 async def main():
-    # Make sure our plugin is discoverable – normally done at app start-up
+    # Make sure our plugin is discoverable - normally done at app start-up
     plugin_registry.register_plugin("parser", "AngleParser", AngleParser())
 
     raw = "Tell me the weather: !!weather location=Berlin units=metric"

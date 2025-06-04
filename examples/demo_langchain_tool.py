@@ -43,7 +43,7 @@ class PalindromeTool(BaseTool):
 @register_tool(name="palindrome_tool")
 class PalindromeAdapter:
     """
-    Thin adapter that forwards the call to the LangChain tool’s
+    Thin adapter that forwards the call to the LangChain tool's
     async API and simply returns its result.
     """
 

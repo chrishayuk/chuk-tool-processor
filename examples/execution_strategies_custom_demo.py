@@ -53,7 +53,7 @@ plugin_registry.register_plugin("execution_strategy", "ShoutStrategy", ShoutStra
 # Try it out
 # ---------------------------------------------------------------------
 async def main() -> None:
-    registry = await initialize()          # we don’t need real tools for this demo
+    registry = await initialize()          # we don't need real tools for this demo
     calls = [ToolCall(tool="ping"), ToolCall(tool="echo")]
     executor = ToolExecutor(registry=registry, strategy=ShoutStrategy())
 

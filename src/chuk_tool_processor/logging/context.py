@@ -4,12 +4,12 @@ Async-safe context management for structured logging.
 
 This module provides:
 
-* **LogContext** – an `asyncio`-aware container that keeps a per-task dict of
+* **LogContext** - an `asyncio`-aware container that keeps a per-task dict of
   contextual data (request IDs, span IDs, arbitrary metadata, …).
-* **log_context** – a global instance of `LogContext` for convenience.
-* **StructuredAdapter** – a `logging.LoggerAdapter` that injects the current
+* **log_context** - a global instance of `LogContext` for convenience.
+* **StructuredAdapter** - a `logging.LoggerAdapter` that injects the current
   `log_context.context` into every log record.
-* **get_logger** – helper that returns a configured `StructuredAdapter`.
+* **get_logger** - helper that returns a configured `StructuredAdapter`.
 """
 
 from __future__ import annotations
@@ -75,7 +75,7 @@ class LogContext:
     Async-safe context container.
 
     Holds a mutable dict that is *local* to the current asyncio task, so
-    concurrent coroutines don’t interfere with each other.
+    concurrent coroutines don't interfere with each other.
     """
 
     # ------------------------------------------------------------------ #
@@ -196,7 +196,7 @@ class StructuredAdapter(logging.LoggerAdapter):
     """
 
     # --------------------------- core hook -------------------------------- #
-    def process(self, msg, kwargs):  # noqa: D401 – keep signature from base
+    def process(self, msg, kwargs):  # noqa: D401 - keep signature from base
         kwargs = kwargs or {}
         extra = kwargs.get("extra", {}).copy()
         ctx = log_context.context

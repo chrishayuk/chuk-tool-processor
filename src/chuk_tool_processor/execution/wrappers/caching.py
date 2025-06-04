@@ -4,9 +4,9 @@ Async-native caching wrapper for tool execution.
 
 This module provides:
 
-* **CacheInterface** – abstract async cache contract for custom implementations
-* **InMemoryCache** – simple, thread-safe in-memory cache with TTL support
-* **CachingToolExecutor** – executor wrapper that transparently caches results
+* **CacheInterface** - abstract async cache contract for custom implementations
+* **InMemoryCache** - simple, thread-safe in-memory cache with TTL support
+* **CachingToolExecutor** - executor wrapper that transparently caches results
 
 Results retrieved from cache are marked with `cached=True` and `machine="cache"`
 for easy detection.

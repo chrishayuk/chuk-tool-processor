@@ -16,7 +16,7 @@ class ParserPlugin(ABC):
     Every parser plugin **must** implement the async ``try_parse`` coroutine.
 
     The processor awaits it and expects *a list* of :class:`ToolCall`
-    objects. If the plugin doesn’t recognise the input it should return an
+    objects. If the plugin doesn't recognise the input it should return an
     empty list.
     """
 

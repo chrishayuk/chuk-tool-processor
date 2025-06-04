@@ -6,10 +6,10 @@
 Demonstrate all *built-in* async parser plugins that ship with
 ``chuk_tool_processor``:
 
-• FunctionCallPlugin   – single ``{"function_call": {...}}`` payload
-• JsonToolPlugin       – generic ``{"tool_calls": [...]}`` arrays
-• OpenAIToolPlugin     – OpenAI chat-completions style ``tool_calls`` objects
-• XmlToolPlugin        – single-line ``<tool …/>`` tags
+• FunctionCallPlugin   - single ``{"function_call": {...}}`` payload
+• JsonToolPlugin       - generic ``{"tool_calls": [...]}`` arrays
+• OpenAIToolPlugin     - OpenAI chat-completions style ``tool_calls`` objects
+• XmlToolPlugin        - single-line ``<tool …/>`` tags
 
 For each plugin we feed a representative input string and print the resulting
 ``ToolCall`` objects.

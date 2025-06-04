@@ -35,7 +35,7 @@ from chuk_tool_processor.plugins.discovery import (
 try:
     # NEW canonical location
     from chuk_tool_processor.plugins.parsers.base import ParserPlugin
-except ModuleNotFoundError:  # pragma: no cover – optional feature genuinely absent
+except ModuleNotFoundError:  # pragma: no cover - optional feature genuinely absent
     ParserPlugin = None  # ­type: ignore[assignment]
 
 from chuk_tool_processor.models.execution_strategy import ExecutionStrategy
@@ -86,13 +86,13 @@ if ParserPlugin:
 
 else:
 
-    class DummyParser:  # pragma: no cover – fallback if parsers are really disabled
+    class DummyParser:  # pragma: no cover - fallback if parsers are really disabled
         async def try_parse(self, raw):  # type: ignore[override]
             return []
 
 
 class DummyExec(ExecutionStrategy):
-    async def run(self, calls, timeout=None):  # pragma: no cover – never executed
+    async def run(self, calls, timeout=None):  # pragma: no cover - never executed
         return []
 
 
@@ -102,7 +102,7 @@ class DummyCustom:
 
 
 # --------------------------------------------------------------------------- #
-# Discovery – unit tests (use *public* API where possible)
+# Discovery - unit tests (use *public* API where possible)
 # --------------------------------------------------------------------------- #
 class TestPluginDiscovery:
     """Directly exercise the internal `_maybe_register` helper."""
@@ -134,7 +134,7 @@ class TestPluginDiscovery:
 
 
 # --------------------------------------------------------------------------- #
-# Integration – mock import machinery to simulate real package walking
+# Integration - mock import machinery to simulate real package walking
 # --------------------------------------------------------------------------- #
 class TestDiscoveryIntegration:
     """End-to-end discovery using the public `discover_plugins` helpers."""

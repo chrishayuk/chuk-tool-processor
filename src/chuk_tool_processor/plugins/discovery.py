@@ -58,13 +58,13 @@ class PluginDiscovery:
     """
     Recursively scans *package_paths* for plugin classes and registers them.
 
-    * Parser plugins – concrete subclasses of :class:`ParserPlugin`
+    * Parser plugins - concrete subclasses of :class:`ParserPlugin`
       with an **async** ``try_parse`` coroutine.
 
-    * Execution strategies – concrete subclasses of
+    * Execution strategies - concrete subclasses of
       :class:`ExecutionStrategy`.
 
-    * Explicitly-decorated plugins – classes tagged with ``@plugin(...)``.
+    * Explicitly-decorated plugins - classes tagged with ``@plugin(...)``.
     """
 
     # ------------------------------------------------------------------ #

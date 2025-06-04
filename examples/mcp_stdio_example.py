@@ -5,7 +5,7 @@ Demo: wire a remote MCP “time” server into CHUK via **stdio** transport.
 
 Prerequisites
 -------------
-Nothing but `uv` installed – the time-server will be fetched on-the-fly
+Nothing but `uv` installed - the time-server will be fetched on-the-fly
 (`uvx mcp-server-time …`).
 
 What it shows

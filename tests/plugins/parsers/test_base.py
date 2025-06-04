@@ -31,7 +31,7 @@ def test_cannot_instantiate_abstract():
         class Bad(ParserPlugin):
             pass
 
-        Bad()  # noqa: B024 – we expect this to raise
+        Bad()  # noqa: B024 - we expect this to raise
 
 
 @pytest.mark.asyncio

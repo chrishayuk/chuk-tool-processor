@@ -131,7 +131,7 @@ class StdioTransport(MCPBaseTransport):
     def get_streams(self):
         """
         Expose the low-level streams so legacy callers can access them
-        directly.  The base-class’ default returns an empty list; here we
+        directly.  The base-class' default returns an empty list; here we
         return a single-element list when the transport is active.
         """
         if self.read_stream and self.write_stream:
@@ -145,7 +145,7 @@ class StdioTransport(MCPBaseTransport):
         self, tool_name: str, arguments: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
-        Execute *tool_name* with *arguments* and normalise the server’s reply.
+        Execute *tool_name* with *arguments* and normalise the server's reply.
 
         The echo-server often returns:
         {

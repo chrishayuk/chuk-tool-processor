@@ -68,7 +68,7 @@ class XmlToolPlugin(ParserPlugin):
         return calls
 
     # ------------------------------------------------------------------ #
-    # Helper – robust JSON decode for the args attribute
+    # Helper - robust JSON decode for the args attribute
     # ------------------------------------------------------------------ #
     @staticmethod
     def _decode_args(raw_args: str) -> dict:
@@ -89,7 +89,7 @@ class XmlToolPlugin(ParserPlugin):
             except json.JSONDecodeError:
                 parsed = None
 
-        # 3️⃣ Last resort – naive unescaping of \" → "
+        # 3️⃣ Last resort - naive unescaping of \" → "
         if parsed is None:
             try:
                 parsed = json.loads(raw_args.replace(r"\"", "\""))

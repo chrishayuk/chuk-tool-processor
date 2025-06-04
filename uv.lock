@@ -147,7 +147,7 @@ wheels = [
 
 [[package]]
 name = "chuk-tool-processor"
-version = "0.3"
+version = "0.4.1"
 source = { editable = "." }
 dependencies = [
     { name = "chuk-mcp" },

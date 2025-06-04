@@ -4,7 +4,7 @@
 Discover the remote MCP tools exposed by a :class:`~chuk_tool_processor.mcp.stream_manager.StreamManager`
 instance and register them in the local CHUK registry.
 
-The helper is now **async-native** – call it with ``await``.
+The helper is now **async-native** - call it with ``await``.
 """
 
 from __future__ import annotations
@@ -55,7 +55,7 @@ async def register_mcp_tools(
     for tool_def in mcp_tools:
         tool_name = tool_def.get("name")
         if not tool_name:
-            logger.warning("Remote tool definition without a 'name' field – skipped")
+            logger.warning("Remote tool definition without a 'name' field - skipped")
             continue
 
         description = tool_def.get("description") or f"MCP tool • {tool_name}"
@@ -96,5 +96,5 @@ async def register_mcp_tools(
         except Exception as exc:  # noqa: BLE001
             logger.error("Failed to register MCP tool '%s': %s", tool_name, exc)
 
-    logger.info("MCP registration complete – %d tool(s) available", len(registered))
+    logger.info("MCP registration complete - %d tool(s) available", len(registered))
     return registered

@@ -52,6 +52,6 @@ class OpenAIToolPlugin(ParserPlugin):
                 tool_cls = tool_by_openai_name(fn["name"])
                 out.append(ToolCall(tool=tool_cls.__name__, arguments=fn["arguments"]))
             except (KeyError, TypeError):
-                # unknown or malformed entry – skip
+                # unknown or malformed entry - skip
                 continue
         return out

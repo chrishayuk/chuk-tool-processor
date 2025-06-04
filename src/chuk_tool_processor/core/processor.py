@@ -367,7 +367,7 @@ class ToolProcessor:
                     all_calls.extend(result)
 
         # ------------------------------------------------------------------ #
-        # Remove duplicates – use a stable digest instead of hashing a
+        # Remove duplicates - use a stable digest instead of hashing a
         # frozenset of argument items (which breaks on unhashable types).
         # ------------------------------------------------------------------ #
         def _args_digest(args: Dict[str, Any]) -> str:

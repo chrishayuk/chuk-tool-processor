@@ -393,7 +393,7 @@ class InProcessStrategy(ExecutionStrategy):
         """
         Execute a single tool call with guaranteed timeout.
 
-        The entire invocation – including argument validation – is wrapped
+        The entire invocation - including argument validation - is wrapped
         by the semaphore to honour *max_concurrency*.
         
         Args:

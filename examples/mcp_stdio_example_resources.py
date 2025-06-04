@@ -9,7 +9,7 @@ Prerequisites
 -------------
 * `server_config.json` must contain a server entry called "sqlite"
   that can be started with `uvx` or any other command.
-* Run inside the project’s virtual-env.
+* Run inside the project's virtual-env.
 
 Usage
 -----
@@ -63,7 +63,7 @@ async def bootstrap() -> StreamManager:
     and return the ready `StreamManager`.
     """
     if not CONFIG_FILE.exists():
-        logger.error("Missing %s – add a 'sqlite' server definition first.", CONFIG_FILE)
+        logger.error("Missing %s - add a 'sqlite' server definition first.", CONFIG_FILE)
         raise SystemExit(1)
 
     _, sm = await setup_mcp_stdio(
@@ -119,7 +119,7 @@ def show_prompts(payload: Any) -> None:
     for p in prompts:
         line = f"  • {p.get('name', '<unnamed>')}"
         if desc := p.get("description"):
-            line += f" – {desc}"
+            line += f" - {desc}"
         print(line)
 
 
