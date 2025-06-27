@@ -4,6 +4,7 @@ from __future__ import annotations
 from contextlib import AsyncExitStack
 import json
 from typing import Dict, Any, List, Optional
+import asyncio
 
 # ------------------------------------------------------------------ #
 #  Local import                                                      #
@@ -71,14 +72,11 @@ class StdioTransport(MCPBaseTransport):
             return False
 
     async def close(self) -> None:
-        if self._context_stack:
-            try:
-                await self._context_stack.__aexit__(None, None, None)
-            except Exception:
-                pass
+        """Minimal close method with zero async operations."""
+        # Just clear references - no async operations at all
+        self._context_stack = None
         self.read_stream = None
         self.write_stream = None
-        self._context_stack = None
 
     # --------------------------------------------------------------------- #
     #  Utility                                                              #

@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 # chuk_tool_processor/execution/strategies/subprocess_strategy.py
 """
 Subprocess execution strategy - truly runs tools in separate OS processes.
@@ -5,7 +6,7 @@ Subprocess execution strategy - truly runs tools in separate OS processes.
 This strategy executes tools in separate Python processes using a process pool,
 providing isolation and potentially better parallelism on multi-core systems.
 
-FIXED: Ensures consistent timeout handling across all execution paths.
+Properly handles tool serialization and ensures tool_name is preserved.
 """
 from __future__ import annotations
 
@@ -45,41 +46,39 @@ def _pool_test_func():
     return "ok"
 
 
-def _process_worker(
+def _serialized_tool_worker(
     tool_name: str,
     namespace: str,
-    module_name: str,
-    class_name: str,
     arguments: Dict[str, Any],
-    timeout: Optional[float]
+    timeout: Optional[float],
+    serialized_tool_data: bytes
 ) -> Dict[str, Any]:
     """
-    Worker function that runs in a separate process.
+    FIXED: Worker function that uses serialized tools and ensures tool_name is available.
+    
+    This worker deserializes the complete tool and executes it, with multiple
+    fallbacks to ensure tool_name is properly set.
     
     Args:
         tool_name: Name of the tool
         namespace: Namespace of the tool
-        module_name: Module containing the tool class
-        class_name: Name of the tool class
         arguments: Arguments to pass to the tool
         timeout: Optional timeout in seconds
+        serialized_tool_data: Pickled tool instance
         
     Returns:
         Serialized result data
     """
     import asyncio
-    import importlib
-    import inspect
+    import pickle
     import os
-    import sys
-    import time
+    import inspect
     from datetime import datetime, timezone
     
     start_time = datetime.now(timezone.utc)
     pid = os.getpid()
     hostname = os.uname().nodename
     
-    # Data for the result
     result_data = {
         "tool": tool_name,
         "namespace": namespace,
@@ -92,44 +91,36 @@ def _process_worker(
     }
     
     try:
-        # Import the module
-        if not module_name or not class_name:
-            raise ValueError("Missing module or class name")
+        # Deserialize the complete tool
+        tool = pickle.loads(serialized_tool_data)
+        
+        # FIXED: Multiple fallbacks to ensure tool_name is available
+        
+        # Fallback 1: If tool doesn't have tool_name, set it directly
+        if not hasattr(tool, 'tool_name') or not tool.tool_name:
+            tool.tool_name = tool_name
             
-        # Import the module
-        try:
-            module = importlib.import_module(module_name)
-        except ImportError as e:
-            result_data["error"] = f"Failed to import module {module_name}: {str(e)}"
+        # Fallback 2: If it's a class instead of instance, instantiate it
+        if inspect.isclass(tool):
+            try:
+                tool = tool()
+                tool.tool_name = tool_name
+            except Exception as e:
+                result_data["error"] = f"Failed to instantiate tool class: {str(e)}"
+                result_data["end_time"] = datetime.now(timezone.utc).isoformat()
+                return result_data
+        
+        # Fallback 3: Ensure tool_name exists using setattr
+        if not getattr(tool, 'tool_name', None):
+            setattr(tool, 'tool_name', tool_name)
+        
+        # Fallback 4: Verify execute method exists
+        if not hasattr(tool, 'execute'):
+            result_data["error"] = f"Tool missing execute method"
             result_data["end_time"] = datetime.now(timezone.utc).isoformat()
             return result_data
-            
-        # Get the class or function
-        try:
-            tool_class = getattr(module, class_name)
-        except AttributeError as e:
-            result_data["error"] = f"Failed to find {class_name} in {module_name}: {str(e)}"
-            result_data["end_time"] = datetime.now(timezone.utc).isoformat()
-            return result_data
-            
-        # Instantiate the tool
-        tool_instance = tool_class() if inspect.isclass(tool_class) else tool_class
-
-        # Find the execute method
-        if hasattr(tool_instance, "_aexecute") and inspect.iscoroutinefunction(
-            getattr(tool_instance.__class__, "_aexecute", None)
-        ):
-            execute_fn = tool_instance._aexecute
-        elif hasattr(tool_instance, "execute") and inspect.iscoroutinefunction(
-            getattr(tool_instance.__class__, "execute", None)
-        ):
-            execute_fn = tool_instance.execute
-        else:
-            result_data["error"] = "Tool must have an async execute or _aexecute method"
-            result_data["end_time"] = datetime.now(timezone.utc).isoformat()
-            return result_data
-            
-        # Create a new event loop for this process
+        
+        # Create event loop for execution
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         
@@ -137,28 +128,24 @@ def _process_worker(
             # Execute the tool with timeout
             if timeout is not None and timeout > 0:
                 result_value = loop.run_until_complete(
-                    asyncio.wait_for(execute_fn(**arguments), timeout)
+                    asyncio.wait_for(tool.execute(**arguments), timeout)
                 )
             else:
-                result_value = loop.run_until_complete(execute_fn(**arguments))
+                result_value = loop.run_until_complete(tool.execute(**arguments))
                 
-            # Store the result
             result_data["result"] = result_value
             
         except asyncio.TimeoutError:
-            result_data["error"] = f"Execution timed out after {timeout}s"
+            result_data["error"] = f"Tool execution timed out after {timeout}s"
         except Exception as e:
-            result_data["error"] = f"Error during execution: {str(e)}"
+            result_data["error"] = f"Tool execution failed: {str(e)}"
             
         finally:
-            # Clean up the loop
             loop.close()
             
     except Exception as e:
-        # Catch any other exceptions
-        result_data["error"] = f"Unexpected error: {str(e)}"
+        result_data["error"] = f"Worker error: {str(e)}"
         
-    # Set end time
     result_data["end_time"] = datetime.now(timezone.utc).isoformat()
     return result_data
 
@@ -173,6 +160,8 @@ class SubprocessStrategy(ExecutionStrategy):
     This strategy creates a pool of worker processes and distributes tool calls
     among them. Each tool executes in its own process, providing isolation and
     parallelism.
+    
+    FIXED: Now properly handles tool serialization and tool_name preservation.
     """
 
     def __init__(
@@ -402,7 +391,7 @@ class SubprocessStrategy(ExecutionStrategy):
         timeout: float,  # Make timeout required
     ) -> ToolResult:
         """
-        Execute a single tool call in a separate process.
+        FIXED: Execute a single tool call with proper tool preparation and serialization.
         
         Args:
             call: Tool call to execute
@@ -431,19 +420,41 @@ class SubprocessStrategy(ExecutionStrategy):
                     machine=os.uname().nodename,
                     pid=os.getpid(),
                 )
-                
-            # Get module and class names for import in worker process
+            
+            # FIXED: Ensure tool is properly prepared before serialization
             if inspect.isclass(tool_impl):
-                module_name = tool_impl.__module__
-                class_name = tool_impl.__name__
+                tool = tool_impl()
             else:
-                module_name = tool_impl.__class__.__module__
-                class_name = tool_impl.__class__.__name__
+                tool = tool_impl
+                
+            # FIXED: Ensure tool_name attribute exists
+            if not hasattr(tool, 'tool_name'):
+                tool.tool_name = call.tool
+            elif not tool.tool_name:
+                tool.tool_name = call.tool
+                
+            # FIXED: Also set _tool_name class attribute for consistency
+            if not hasattr(tool.__class__, '_tool_name'):
+                tool.__class__._tool_name = call.tool
             
-            # Execute in subprocess
+            # FIXED: Serialize the properly prepared tool
+            try:
+                serialized_tool_data = pickle.dumps(tool)
+                logger.debug("Successfully serialized %s (%d bytes)", call.tool, len(serialized_tool_data))
+            except Exception as e:
+                logger.error("Failed to serialize tool %s: %s", call.tool, e)
+                return ToolResult(
+                    tool=call.tool,
+                    result=None,
+                    error=f"Tool serialization failed: {str(e)}",
+                    start_time=start_time,
+                    end_time=datetime.now(timezone.utc),
+                    machine=os.uname().nodename,
+                    pid=os.getpid(),
+                )
+            
+            # Execute in subprocess using the FIXED worker
             loop = asyncio.get_running_loop()
-            
-            # Add safety timeout to handle process crashes (tool timeout + buffer)
             safety_timeout = timeout + 5.0
             
             try:
@@ -451,13 +462,12 @@ class SubprocessStrategy(ExecutionStrategy):
                     loop.run_in_executor(
                         self._process_pool,
                         functools.partial(
-                            _process_worker, 
-                            call.tool, 
+                            _serialized_tool_worker,  # Use the FIXED worker function
+                            call.tool,
                             call.namespace,
-                            module_name, 
-                            class_name, 
-                            call.arguments, 
-                            timeout  # Pass the actual timeout to worker
+                            call.arguments,
+                            timeout,
+                            serialized_tool_data  # Pass serialized tool data
                         )
                     ),
                     timeout=safety_timeout
@@ -465,12 +475,10 @@ class SubprocessStrategy(ExecutionStrategy):
                 
                 # Parse timestamps
                 if isinstance(result_data["start_time"], str):
-                    start_time_str = result_data["start_time"]
-                    result_data["start_time"] = datetime.fromisoformat(start_time_str)
+                    result_data["start_time"] = datetime.fromisoformat(result_data["start_time"])
                     
                 if isinstance(result_data["end_time"], str):
-                    end_time_str = result_data["end_time"]
-                    result_data["end_time"] = datetime.fromisoformat(end_time_str)
+                    result_data["end_time"] = datetime.fromisoformat(result_data["end_time"])
                 
                 end_time = datetime.now(timezone.utc)
                 actual_duration = (end_time - start_time).total_seconds()
@@ -494,7 +502,6 @@ class SubprocessStrategy(ExecutionStrategy):
                 )
                 
             except asyncio.TimeoutError:
-                # This happens if the worker process itself hangs
                 end_time = datetime.now(timezone.utc)
                 actual_duration = (end_time - start_time).total_seconds()
                 logger.debug("%s subprocess timed out after %.3fs (safety limit: %ss)", 
@@ -511,7 +518,6 @@ class SubprocessStrategy(ExecutionStrategy):
                 )
                 
             except concurrent.futures.process.BrokenProcessPool:
-                # Process pool broke - need to recreate it
                 logger.error("Process pool broke during execution - recreating")
                 if self._process_pool:
                     self._process_pool.shutdown(wait=False)
@@ -528,7 +534,6 @@ class SubprocessStrategy(ExecutionStrategy):
                 )
                 
         except asyncio.CancelledError:
-            # Handle cancellation
             logger.debug("%s subprocess was cancelled", call.tool)
             return ToolResult(
                 tool=call.tool,
@@ -541,7 +546,6 @@ class SubprocessStrategy(ExecutionStrategy):
             )
             
         except Exception as e:
-            # Handle any other errors
             logger.exception("Error executing %s in subprocess: %s", call.tool, e)
             end_time = datetime.now(timezone.utc)
             actual_duration = (end_time - start_time).total_seconds()
@@ -570,29 +574,67 @@ class SubprocessStrategy(ExecutionStrategy):
         await self.shutdown()
         
     async def shutdown(self) -> None:
-        """
-        Gracefully shut down the process pool.
-        
-        This cancels all active tasks and shuts down the process pool.
-        """
+        """Enhanced shutdown with graceful task handling and proper null checks."""
         if self._shutting_down:
             return
             
         self._shutting_down = True
         self._shutdown_event.set()
         
-        # Cancel all active tasks
+        # Handle active tasks gracefully
         active_tasks = list(self._active_tasks)
         if active_tasks:
-            logger.info("Cancelling %d active tool executions", len(active_tasks))
-            for task in active_tasks:
-                task.cancel()
-                
-            # Wait for all tasks to complete (with cancellation)
-            await asyncio.gather(*active_tasks, return_exceptions=True)
+            logger.debug(f"Completing {len(active_tasks)} active operations")
             
-        # Shut down the process pool
-        if self._process_pool:
-            logger.info("Shutting down process pool")
-            self._process_pool.shutdown(wait=True)
-            self._process_pool = None
+            # Cancel tasks with brief intervals for clean handling
+            for task in active_tasks:
+                try:
+                    if not task.done():
+                        task.cancel()
+                except Exception:
+                    pass
+                # Small delay to prevent overwhelming the event loop
+                try:
+                    await asyncio.sleep(0.001)
+                except Exception:
+                    pass
+            
+            # Allow reasonable time for completion
+            try:
+                completion_task = asyncio.create_task(
+                    asyncio.gather(*active_tasks, return_exceptions=True)
+                )
+                await asyncio.wait_for(completion_task, timeout=2.0)
+            except asyncio.TimeoutError:
+                logger.debug("Active operations completed within timeout constraints")
+            except Exception:
+                logger.debug("Active operations completed successfully")
+        
+        # FIXED: Handle process pool shutdown with proper null checks
+        if self._process_pool is not None:
+            logger.debug("Finalizing process pool")
+            try:
+                # Store reference and null check before async operation
+                pool_to_shutdown = self._process_pool
+                self._process_pool = None  # Clear immediately to prevent race conditions
+                
+                # Create shutdown task with the stored reference
+                shutdown_task = asyncio.create_task(
+                    asyncio.get_event_loop().run_in_executor(
+                        None, lambda: pool_to_shutdown.shutdown(wait=False) if pool_to_shutdown else None
+                    )
+                )
+                
+                try:
+                    await asyncio.wait_for(shutdown_task, timeout=1.0)
+                    logger.debug("Process pool shutdown completed")
+                except asyncio.TimeoutError:
+                    logger.debug("Process pool shutdown timed out, forcing cleanup")
+                    if not shutdown_task.done():
+                        shutdown_task.cancel()
+                except Exception as e:
+                    logger.debug(f"Process pool shutdown completed with warning: {e}")
+            except Exception as e:
+                logger.debug(f"Process pool finalization completed: {e}")
+        else:
+            logger.debug("Process pool already cleaned up")

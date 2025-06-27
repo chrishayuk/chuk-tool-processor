@@ -16,6 +16,18 @@ from __future__ import annotations
 import logging
 import sys
 
+# Auto-initialize shutdown error suppression when logging package is imported
+def _initialize_shutdown_fixes():
+    """Initialize shutdown error suppression when the package is imported."""
+    try:
+        from .context import _setup_shutdown_error_suppression
+        _setup_shutdown_error_suppression()
+    except ImportError:
+        pass
+
+# Initialize when package is imported
+_initialize_shutdown_fixes()
+
 # Import internal modules in correct order to avoid circular imports
 # First, formatter has no internal dependencies
 from .formatter import StructuredFormatter

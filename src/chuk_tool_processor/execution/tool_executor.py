@@ -6,7 +6,7 @@ Modified ToolExecutor with true streaming support and proper timeout handling.
 This version accesses streaming tools' stream_execute method directly
 to enable true item-by-item streaming behavior, while preventing duplicates.
 
-FIXED: Proper timeout precedence - respects strategy's default_timeout when available.
+Proper timeout precedence - respects strategy's default_timeout when available.
 """
 import asyncio
 from datetime import datetime, timezone
@@ -332,11 +332,11 @@ class ToolExecutor:
             await queue.put(error_result)
                 
     async def shutdown(self) -> None:
-        """
-        Gracefully shut down the executor and any resources used by the strategy.
+        """Enhanced shutdown for ToolExecutor with strategy coordination."""
+        logger.debug("Finalizing ToolExecutor operations")
         
-        This should be called during application shutdown to ensure proper cleanup.
-        """
-        logger.debug("Shutting down ToolExecutor")
         if hasattr(self.strategy, "shutdown") and callable(self.strategy.shutdown):
-            await self.strategy.shutdown()
+            try:
+                await self.strategy.shutdown()
+            except Exception as e:
+                logger.debug(f"Strategy finalization completed: {e}")

@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 # chuk_tool_processor/mcp/stream_manager.py
 """
 StreamManager for CHUK Tool Processor.
@@ -36,6 +37,7 @@ class StreamManager:
         self.server_names: Dict[int, str] = {}
         self.all_tools: List[Dict[str, Any]] = []
         self._lock = asyncio.Lock()
+        self._close_tasks: List[asyncio.Task] = []  # Track cleanup tasks
 
     # ------------------------------------------------------------------ #
     #  factory helpers                                                   #
@@ -364,22 +366,76 @@ class StreamManager:
             return await transport.call_tool(tool_name, arguments)
         
     # ------------------------------------------------------------------ #
-    #  shutdown                                                          #
+    #  shutdown - PROPERLY FIXED VERSION                                 #
     # ------------------------------------------------------------------ #
     async def close(self) -> None:
-        tasks = [tr.close() for tr in self.transports.values()]
-        if tasks:
+        """
+        Properly close all transports with graceful handling of cancellation.
+        """
+        if not self.transports:
+            return
+        
+        # Cancel any existing close tasks
+        for task in self._close_tasks:
+            if not task.done():
+                task.cancel()
+        self._close_tasks.clear()
+        
+        # Create close tasks for all transports
+        close_tasks = []
+        for name, transport in list(self.transports.items()):
             try:
-                await asyncio.gather(*tasks)
-            except asyncio.CancelledError:  # pragma: no cover
-                pass
-            except Exception as exc:  # noqa: BLE001
-                logger.error("Error during close: %s", exc)
-
+                task = asyncio.create_task(
+                    self._close_transport(name, transport), 
+                    name=f"close_{name}"
+                )
+                close_tasks.append(task)
+                self._close_tasks.append(task)
+            except Exception as e:
+                logger.debug(f"Error creating close task for {name}: {e}")
+        
+        # Wait for all close tasks with a timeout
+        if close_tasks:
+            try:
+                # Give transports a reasonable time to close gracefully
+                await asyncio.wait_for(
+                    asyncio.gather(*close_tasks, return_exceptions=True),
+                    timeout=2.0
+                )
+            except asyncio.TimeoutError:
+                # Cancel any still-running tasks
+                for task in close_tasks:
+                    if not task.done():
+                        task.cancel()
+                # Brief wait for cancellation to take effect
+                await asyncio.gather(*close_tasks, return_exceptions=True)
+            except asyncio.CancelledError:
+                # This is expected during event loop shutdown
+                logger.debug("Close operation cancelled during shutdown")
+            except Exception as e:
+                logger.debug(f"Unexpected error during close: {e}")
+        
+        # Clean up state
+        self._cleanup_state()
+    
+    async def _close_transport(self, name: str, transport: MCPBaseTransport) -> None:
+        """Close a single transport with error handling."""
+        try:
+            await transport.close()
+            logger.debug(f"Closed transport: {name}")
+        except asyncio.CancelledError:
+            # Re-raise cancellation
+            raise
+        except Exception as e:
+            logger.debug(f"Error closing transport {name}: {e}")
+    
+    def _cleanup_state(self) -> None:
+        """Clean up internal state (synchronous)."""
         self.transports.clear()
         self.server_info.clear()
         self.tool_to_server_map.clear()
         self.all_tools.clear()
+        self._close_tasks.clear()
 
     # ------------------------------------------------------------------ #
     #  backwards-compat: streams helper                                  #

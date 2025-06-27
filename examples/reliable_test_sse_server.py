@@ -197,7 +197,7 @@ async def handle_message(request: Request):
     
     try:
         message = await request.json()
-        logger.info(f"Received message for session {session_id}: {message.get('method', 'no-method')} (id: {message.get('id', 'no-id')})")
+        logger.debug(f"Received message for session {session_id}: {message.get('method', 'no-method')} (id: {message.get('id', 'no-id')})")
     except Exception as e:
         logger.error(f"Invalid JSON from session {session_id}: {e}")
         raise HTTPException(status_code=400, detail="Invalid JSON")
@@ -352,7 +352,7 @@ def main():
         uvicorn.run(
             app,
             host="0.0.0.0",
-            port=8020,
+            port=8000,
             log_level="warning",  # Reduce uvicorn noise
             access_log=False
         )
