@@ -14,12 +14,42 @@ import asyncio
 import json
 import os
 import sys
+import logging
 from pathlib import Path
 from typing import Any, List, Tuple
 
 from colorama import Fore, Style, init as colorama_init
 
 colorama_init(autoreset=True)
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Fix for CancelledError during asyncio shutdown
+# ═══════════════════════════════════════════════════════════════════════════
+
+def setup_asyncio_cleanup():
+    """Setup proper asyncio cleanup to prevent CancelledError warnings."""
+    def handle_exception(loop, context):
+        exception = context.get('exception')
+        if isinstance(exception, asyncio.CancelledError):
+            # Silently ignore CancelledError during shutdown
+            return
+        
+        # Log other exceptions normally
+        loop.default_exception_handler(context)
+    
+    # Set the exception handler for the current event loop
+    try:
+        loop = asyncio.get_running_loop()
+        loop.set_exception_handler(handle_exception)
+    except RuntimeError:
+        # No running loop yet, will set later
+        pass
+
+# Apply the fix
+setup_asyncio_cleanup()
+
+# Also suppress asyncio logger for CancelledError
+logging.getLogger('asyncio').setLevel(logging.CRITICAL)
 
 # ─── local-package bootstrap ───────────────────────────────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -135,53 +165,106 @@ def show_results(title: str, calls: List[ToolCall], results: List[ToolResult]) -
         print(Style.DIM + "-" * 60)
 
 
+async def graceful_shutdown():
+    """Perform graceful shutdown of all async tasks."""
+    try:
+        # Close the stream manager if it exists
+        if hasattr(bootstrap_mcp, 'stream_manager'):
+            try:
+                await bootstrap_mcp.stream_manager.close()
+                logger.debug("Stream manager closed successfully")
+            except asyncio.CancelledError:
+                logger.debug("Stream manager close cancelled during shutdown")
+            except Exception as e:
+                logger.error(f"Error closing stream manager: {e}")
+        
+        # Don't wait or cancel tasks during shutdown - let asyncio.run() handle it
+        logger.debug("Graceful shutdown completed")
+    
+    except Exception as e:
+        logger.error(f"Error during graceful shutdown: {e}")
+
+
 # ─── main demo ──────────────────────────────────────────────────────────────
 async def run_demo() -> None:
     print(Fore.GREEN + "=== MCP Time Tool-Calling Demo ===" + Style.RESET_ALL)
 
-    await bootstrap_mcp()
+    # Setup asyncio exception handler for this loop
+    loop = asyncio.get_running_loop()
+    
+    def handle_exception(loop, context):
+        exception = context.get('exception')
+        if isinstance(exception, asyncio.CancelledError):
+            return  # Ignore CancelledError
+        loop.default_exception_handler(context)
+    
+    loop.set_exception_handler(handle_exception)
 
-    registry = await ToolRegistryProvider.get_registry()
+    try:
+        await bootstrap_mcp()
 
-    executor = ToolExecutor(
-        registry,
-        strategy=InProcessStrategy(
+        registry = await ToolRegistryProvider.get_registry()
+
+        executor = ToolExecutor(
             registry,
-            default_timeout=5.0,
-            max_concurrency=4,
-        ),
-    )
-
-    # sequential examples --------------------------------------------------
-    for title, plugin, raw in PLUGINS:
-        # new parser API is async
-        calls = await plugin.try_parse(raw)
-        results = await executor.execute(calls)
-        show_results(f"{title} → sequential", calls, results)
-
-    # parallel demo --------------------------------------------------------
-    banner("Parallel current-time calls")
-
-    parallel_calls = [
-        ToolCall(
-            tool=f"{NAMESPACE}.get_current_time",
-            arguments={"timezone": tz},
+            strategy=InProcessStrategy(
+                registry,
+                default_timeout=5.0,
+                max_concurrency=4,
+            ),
         )
-        for tz in ["UTC", "Europe/Paris", "Asia/Kolkata", "America/New_York"]
-    ]
 
-    parallel_results = await executor.execute(parallel_calls)
-    show_results("Parallel run", parallel_calls, parallel_results)
+        # sequential examples --------------------------------------------------
+        for title, plugin, raw in PLUGINS:
+            # new parser API is async
+            calls = await plugin.try_parse(raw)
+            results = await executor.execute(calls)
+            show_results(f"{title} → sequential", calls, results)
 
-    # goodbye
-    await bootstrap_mcp.stream_manager.close()  # type: ignore[attr-defined]
+        # parallel demo --------------------------------------------------------
+        banner("Parallel current-time calls")
+
+        parallel_calls = [
+            ToolCall(
+                tool=f"{NAMESPACE}.get_current_time",
+                arguments={"timezone": tz},
+            )
+            for tz in ["UTC", "Europe/Paris", "Asia/Kolkata", "America/New_York"]
+        ]
+
+        parallel_results = await executor.execute(parallel_calls)
+        show_results("Parallel run", parallel_calls, parallel_results)
+
+    except KeyboardInterrupt:
+        logger.info("Demo interrupted by user")
+    except Exception as e:
+        logger.error(f"Demo error: {e}")
+        raise
+    finally:
+        # Always perform graceful shutdown
+        await graceful_shutdown()
 
 
-if __name__ == "__main__":
-    import logging
-
+def main():
+    """Main entry point with proper error handling."""
+    # Set up logging
     logging.getLogger("chuk_tool_processor").setLevel(
         getattr(logging, os.environ.get("LOGLEVEL", "INFO").upper())
     )
+    
+    try:
+        # Run the demo with proper cleanup
+        asyncio.run(run_demo())
+        print(Fore.GREEN + "\n✅ Demo completed successfully!" + Style.RESET_ALL)
+    
+    except KeyboardInterrupt:
+        print(Fore.YELLOW + "\n👋 Demo interrupted by user. Goodbye!" + Style.RESET_ALL)
+    
+    except Exception as e:
+        print(Fore.RED + f"\n❌ Demo failed: {e}" + Style.RESET_ALL)
+        logger.error(f"Demo failed: {e}", exc_info=True)
+        sys.exit(1)
 
-    asyncio.run(run_demo())
+
+if __name__ == "__main__":
+    main()
