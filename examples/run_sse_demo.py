@@ -51,7 +51,7 @@ async def run_demo():
     
     # Start the mock server
     print("🚀 Starting mock SSE server...")
-    server_script = project_root / "examples" / "test_sse_server.py"
+    server_script = project_root / "examples" / "mcp_sse_server.py"
     client_script = project_root / "examples" / "mcp_sse_example_calling_usage.py"
     
     print(f"🖥️  Server script: {server_script}")

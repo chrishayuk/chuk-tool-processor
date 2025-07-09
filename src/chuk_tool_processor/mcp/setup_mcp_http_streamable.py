@@ -1,12 +1,16 @@
 #!/usr/bin/env python
-# chuk_tool_processor/mcp/setup_mcp_sse.py
+# chuk_tool_processor/mcp/setup_mcp_http_streamable.py
 """
-Bootstrap helper for MCP over **SSE** transport.
+Bootstrap helper for MCP over **HTTP Streamable** transport.
+
+The HTTP Streamable transport is the modern replacement for SSE transport
+as of MCP spec 2025-03-26, providing better infrastructure compatibility
+and more flexible response handling.
 
 It:
 
 1. spins up :class:`~chuk_tool_processor.mcp.stream_manager.StreamManager`
-   with the `"sse"` transport,
+   with the `"http_streamable"` transport,
 2. discovers & registers the remote MCP tools locally, and
 3. returns a ready-to-use :class:`~chuk_tool_processor.core.processor.ToolProcessor`.
 """
@@ -20,18 +24,18 @@ from chuk_tool_processor.logging import get_logger
 from chuk_tool_processor.mcp.register_mcp_tools import register_mcp_tools
 from chuk_tool_processor.mcp.stream_manager import StreamManager
 
-logger = get_logger("chuk_tool_processor.mcp.setup_sse")
+logger = get_logger("chuk_tool_processor.mcp.setup_http_streamable")
 
 
 # --------------------------------------------------------------------------- #
 # public helper
 # --------------------------------------------------------------------------- #
-async def setup_mcp_sse(  # noqa: C901 - long but just a config facade
+async def setup_mcp_http_streamable(
     *,
     servers: List[Dict[str, str]],
     server_names: Optional[Dict[int, str]] = None,
-    connection_timeout: float = 30.0,  # 🔧 INCREASED DEFAULT: was 10.0
-    default_timeout: float = 30.0,     # 🔧 INCREASED DEFAULT: was 10.0
+    connection_timeout: float = 30.0,
+    default_timeout: float = 30.0,
     max_concurrency: Optional[int] = None,
     enable_caching: bool = True,
     cache_ttl: int = 300,
@@ -40,17 +44,21 @@ async def setup_mcp_sse(  # noqa: C901 - long but just a config facade
     tool_rate_limits: Optional[Dict[str, tuple]] = None,
     enable_retries: bool = True,
     max_retries: int = 3,
-    namespace: str = "sse",
+    namespace: str = "http",
 ) -> Tuple[ToolProcessor, StreamManager]:
     """
-    Initialise SSE-transport MCP + a :class:`ToolProcessor`.
+    Initialize HTTP Streamable transport MCP + a :class:`ToolProcessor`.
 
+    This uses the modern HTTP Streamable transport (spec 2025-03-26) which
+    provides better infrastructure compatibility and more flexible response
+    handling compared to the deprecated SSE transport.
+    
     Call with ``await`` from your async context.
     
     Args:
-        servers: List of server configurations with 'name' and 'url' keys
+        servers: List of server configurations with 'name', 'url', and optionally 'api_key' keys
         server_names: Optional mapping of server indices to names
-        connection_timeout: Timeout for initial SSE connection setup
+        connection_timeout: Timeout for initial HTTP connection setup
         default_timeout: Default timeout for tool execution
         max_concurrency: Maximum concurrent operations
         enable_caching: Whether to enable response caching
@@ -64,13 +72,26 @@ async def setup_mcp_sse(  # noqa: C901 - long but just a config facade
         
     Returns:
         Tuple of (ToolProcessor, StreamManager)
+        
+    Example:
+        >>> servers = [
+        ...     {
+        ...         "name": "my_server",
+        ...         "url": "http://localhost:8000",
+        ...         "api_key": "optional-api-key"
+        ...     }
+        ... ]
+        >>> processor, stream_manager = await setup_mcp_http_streamable(
+        ...     servers=servers,
+        ...     namespace="mytools"
+        ... )
     """
-    # 1️⃣  create & connect the stream-manager with BOTH timeout parameters
-    stream_manager = await StreamManager.create_with_sse(
+    # 1️⃣  create & connect the stream-manager with HTTP Streamable transport
+    stream_manager = await StreamManager.create_with_http_streamable(
         servers=servers,
         server_names=server_names,
-        connection_timeout=connection_timeout,  # 🔧 ADD THIS LINE
-        default_timeout=default_timeout,        # 🔧 ADD THIS LINE
+        connection_timeout=connection_timeout,
+        default_timeout=default_timeout,
     )
 
     # 2️⃣  pull the remote tool list and register each one locally
@@ -90,7 +111,7 @@ async def setup_mcp_sse(  # noqa: C901 - long but just a config facade
     )
 
     logger.info(
-        "MCP (SSE) initialised - %s tool%s registered into namespace '%s'",
+        "MCP (HTTP Streamable) initialised - %s tool%s registered into namespace '%s'",
         len(registered),
         "" if len(registered) == 1 else "s",
         namespace,

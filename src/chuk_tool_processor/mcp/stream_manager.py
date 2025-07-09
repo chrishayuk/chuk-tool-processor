@@ -1,7 +1,6 @@
-#!/usr/bin/env python
 # chuk_tool_processor/mcp/stream_manager.py
 """
-StreamManager for CHUK Tool Processor.
+StreamManager for CHUK Tool Processor - Updated with HTTP Streamable support
 """
 from __future__ import annotations
 
@@ -16,6 +15,7 @@ from chuk_tool_processor.mcp.transport import (
     MCPBaseTransport,
     StdioTransport,
     SSETransport,
+    HTTPStreamableTransport,
 )
 from chuk_tool_processor.logging import get_logger
 
@@ -25,11 +25,13 @@ logger = get_logger("chuk_tool_processor.mcp.stream_manager")
 class StreamManager:
     """
     Manager for MCP server streams with support for multiple transport types.
+    
+    Updated to support the latest transports:
+    - STDIO (process-based)
+    - SSE (Server-Sent Events) 
+    - HTTP Streamable (modern replacement for SSE, spec 2025-03-26)
     """
 
-    # ------------------------------------------------------------------ #
-    #  construction                                                      #
-    # ------------------------------------------------------------------ #
     def __init__(self) -> None:
         self.transports: Dict[str, MCPBaseTransport] = {}
         self.server_info: List[Dict[str, Any]] = []
@@ -37,7 +39,6 @@ class StreamManager:
         self.server_names: Dict[int, str] = {}
         self.all_tools: List[Dict[str, Any]] = []
         self._lock = asyncio.Lock()
-        self._close_tasks: List[asyncio.Task] = []  # Track cleanup tasks
 
     # ------------------------------------------------------------------ #
     #  factory helpers                                                   #
@@ -49,7 +50,7 @@ class StreamManager:
         servers: List[str],
         server_names: Optional[Dict[int, str]] = None,
         transport_type: str = "stdio",
-        default_timeout: float = 30.0,  # ADD: For consistency
+        default_timeout: float = 30.0,
     ) -> "StreamManager":
         inst = cls()
         await inst.initialize(
@@ -57,7 +58,7 @@ class StreamManager:
             servers, 
             server_names, 
             transport_type,
-            default_timeout=default_timeout  # PASS THROUGH
+            default_timeout=default_timeout
         )
         return inst
 
@@ -66,20 +67,38 @@ class StreamManager:
         cls,
         servers: List[Dict[str, str]],
         server_names: Optional[Dict[int, str]] = None,
-        connection_timeout: float = 10.0,  # ADD: For SSE connection setup
-        default_timeout: float = 30.0,     # ADD: For tool execution
+        connection_timeout: float = 10.0,
+        default_timeout: float = 30.0,
     ) -> "StreamManager":
         inst = cls()
         await inst.initialize_with_sse(
             servers, 
             server_names,
-            connection_timeout=connection_timeout,  # PASS THROUGH
-            default_timeout=default_timeout         # PASS THROUGH
+            connection_timeout=connection_timeout,
+            default_timeout=default_timeout
+        )
+        return inst
+
+    @classmethod
+    async def create_with_http_streamable(
+        cls,
+        servers: List[Dict[str, str]],
+        server_names: Optional[Dict[int, str]] = None,
+        connection_timeout: float = 30.0,
+        default_timeout: float = 30.0,
+    ) -> "StreamManager":
+        """Create StreamManager with HTTP Streamable transport."""
+        inst = cls()
+        await inst.initialize_with_http_streamable(
+            servers, 
+            server_names,
+            connection_timeout=connection_timeout,
+            default_timeout=default_timeout
         )
         return inst
 
     # ------------------------------------------------------------------ #
-    #  initialisation - stdio / sse                                      #
+    #  initialisation - stdio / sse / http_streamable                    #
     # ------------------------------------------------------------------ #
     async def initialize(
         self,
@@ -87,7 +106,7 @@ class StreamManager:
         servers: List[str],
         server_names: Optional[Dict[int, str]] = None,
         transport_type: str = "stdio",
-        default_timeout: float = 30.0,  # ADD: For consistency
+        default_timeout: float = 30.0,
     ) -> None:
         async with self._lock:
             self.server_names = server_names or {}
@@ -98,11 +117,9 @@ class StreamManager:
                         params = await load_config(config_file, server_name)
                         transport: MCPBaseTransport = StdioTransport(params)
                     elif transport_type == "sse":
-                        # WARNING: For SSE transport, prefer using create_with_sse() instead
-                        # This is a fallback for backward compatibility
                         logger.warning("Using SSE transport in initialize() - consider using initialize_with_sse() instead")
+                        params = await load_config(config_file, server_name)
                         
-                        # Try to extract URL from params or use localhost as fallback
                         if isinstance(params, dict) and 'url' in params:
                             sse_url = params['url']
                             api_key = params.get('api_key')
@@ -116,6 +133,26 @@ class StreamManager:
                             api_key,
                             default_timeout=default_timeout
                         )
+                    elif transport_type == "http_streamable":
+                        logger.warning("Using HTTP Streamable transport in initialize() - consider using initialize_with_http_streamable() instead")
+                        params = await load_config(config_file, server_name)
+                        
+                        if isinstance(params, dict) and 'url' in params:
+                            http_url = params['url']
+                            api_key = params.get('api_key')
+                            session_id = params.get('session_id')
+                        else:
+                            http_url = "http://localhost:8000"
+                            api_key = None
+                            session_id = None
+                            logger.warning(f"No URL configured for HTTP Streamable transport, using default: {http_url}")
+                        
+                        transport = HTTPStreamableTransport(
+                            http_url,
+                            api_key,
+                            default_timeout=default_timeout,
+                            session_id=session_id
+                        )
                     else:
                         logger.error("Unsupported transport type: %s", transport_type)
                         continue
@@ -124,10 +161,8 @@ class StreamManager:
                         logger.error("Failed to init %s", server_name)
                         continue
 
-                    #  store transport
                     self.transports[server_name] = transport
 
-                    #  ping + gather tools
                     status = "Up" if await transport.send_ping() else "Down"
                     tools = await transport.get_tools()
 
@@ -146,7 +181,7 @@ class StreamManager:
                         }
                     )
                     logger.info("Initialised %s - %d tool(s)", server_name, len(tools))
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     logger.error("Error initialising %s: %s", server_name, exc)
 
             logger.info(
@@ -159,8 +194,8 @@ class StreamManager:
         self,
         servers: List[Dict[str, str]],
         server_names: Optional[Dict[int, str]] = None,
-        connection_timeout: float = 10.0,  # ADD: For SSE connection setup
-        default_timeout: float = 30.0,     # ADD: For tool execution
+        connection_timeout: float = 10.0,
+        default_timeout: float = 30.0,
     ) -> None:
         async with self._lock:
             self.server_names = server_names or {}
@@ -171,12 +206,11 @@ class StreamManager:
                     logger.error("Bad server config: %s", cfg)
                     continue
                 try:
-                    # FIXED: Pass timeout parameters to SSETransport
                     transport = SSETransport(
                         url, 
                         cfg.get("api_key"),
-                        connection_timeout=connection_timeout,  # ADD THIS
-                        default_timeout=default_timeout         # ADD THIS
+                        connection_timeout=connection_timeout,
+                        default_timeout=default_timeout
                     )
                     
                     if not await transport.initialize():
@@ -197,11 +231,63 @@ class StreamManager:
                         {"id": idx, "name": name, "tools": len(tools), "status": status}
                     )
                     logger.info("Initialised SSE %s - %d tool(s)", name, len(tools))
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     logger.error("Error initialising SSE %s: %s", name, exc)
 
             logger.info(
                 "StreamManager ready - %d SSE server(s), %d tool(s)",
+                len(self.transports),
+                len(self.all_tools),
+            )
+
+    async def initialize_with_http_streamable(
+        self,
+        servers: List[Dict[str, str]],
+        server_names: Optional[Dict[int, str]] = None,
+        connection_timeout: float = 30.0,
+        default_timeout: float = 30.0,
+    ) -> None:
+        """Initialize with HTTP Streamable transport (modern MCP spec 2025-03-26)."""
+        async with self._lock:
+            self.server_names = server_names or {}
+
+            for idx, cfg in enumerate(servers):
+                name, url = cfg.get("name"), cfg.get("url")
+                if not (name and url):
+                    logger.error("Bad server config: %s", cfg)
+                    continue
+                try:
+                    transport = HTTPStreamableTransport(
+                        url, 
+                        cfg.get("api_key"),
+                        connection_timeout=connection_timeout,
+                        default_timeout=default_timeout,
+                        session_id=cfg.get("session_id")
+                    )
+                    
+                    if not await transport.initialize():
+                        logger.error("Failed to init HTTP Streamable %s", name)
+                        continue
+
+                    self.transports[name] = transport
+                    status = "Up" if await transport.send_ping() else "Down"
+                    tools = await transport.get_tools()
+
+                    for t in tools:
+                        tname = t.get("name")
+                        if tname:
+                            self.tool_to_server_map[tname] = name
+                    self.all_tools.extend(tools)
+
+                    self.server_info.append(
+                        {"id": idx, "name": name, "tools": len(tools), "status": status}
+                    )
+                    logger.info("Initialised HTTP Streamable %s - %d tool(s)", name, len(tools))
+                except Exception as exc:
+                    logger.error("Error initialising HTTP Streamable %s: %s", name, exc)
+
+            logger.info(
+                "StreamManager ready - %d HTTP Streamable server(s), %d tool(s)",
                 len(self.transports),
                 len(self.all_tools),
             )
@@ -219,26 +305,14 @@ class StreamManager:
         return self.server_info
     
     async def list_tools(self, server_name: str) -> List[Dict[str, Any]]:
-        """
-        List all tools available from a specific server.
-        
-        This method is required by ProxyServerManager for proper tool discovery.
-        
-        Args:
-            server_name: Name of the server to query
-            
-        Returns:
-            List of tool definitions from the server
-        """
+        """List all tools available from a specific server."""
         if server_name not in self.transports:
             logger.error(f"Server '{server_name}' not found in transports")
             return []
         
-        # Get the transport for this server
         transport = self.transports[server_name]
         
         try:
-            # Call the get_tools method on the transport
             tools = await transport.get_tools()
             logger.debug(f"Found {len(tools)} tools for server {server_name}")
             return tools
@@ -253,7 +327,7 @@ class StreamManager:
         async def _ping_one(name: str, tr: MCPBaseTransport):
             try:
                 ok = await tr.send_ping()
-            except Exception:  # pragma: no cover
+            except Exception:
                 ok = False
             return {"server": name, "ok": ok}
 
@@ -263,11 +337,8 @@ class StreamManager:
         out: List[Dict[str, Any]] = []
 
         async def _one(name: str, tr: MCPBaseTransport):
-            if not hasattr(tr, "list_resources"):
-                return
             try:
-                res = await tr.list_resources()  # type: ignore[attr-defined]
-                # accept either {"resources": [...]} **or** a plain list
+                res = await tr.list_resources()
                 resources = (
                     res.get("resources", []) if isinstance(res, dict) else res
                 )
@@ -285,10 +356,8 @@ class StreamManager:
         out: List[Dict[str, Any]] = []
 
         async def _one(name: str, tr: MCPBaseTransport):
-            if not hasattr(tr, "list_prompts"):
-                return
             try:
-                res = await tr.list_prompts()  # type: ignore[attr-defined]
+                res = await tr.list_prompts()
                 prompts = res.get("prompts", []) if isinstance(res, dict) else res
                 for item in prompts:
                     item = dict(item)
@@ -308,23 +377,11 @@ class StreamManager:
         tool_name: str,
         arguments: Dict[str, Any],
         server_name: Optional[str] = None,
-        timeout: Optional[float] = None,  # Timeout parameter already exists
+        timeout: Optional[float] = None,
     ) -> Dict[str, Any]:
-        """
-        Call a tool on the appropriate server with timeout support.
-        
-        Args:
-            tool_name: Name of the tool to call
-            arguments: Arguments to pass to the tool
-            server_name: Optional server name (auto-detected if not provided)
-            timeout: Optional timeout for the call
-            
-        Returns:
-            Dictionary containing the tool result or error
-        """
+        """Call a tool on the appropriate server with timeout support."""
         server_name = server_name or self.get_server_for_tool(tool_name)
         if not server_name or server_name not in self.transports:
-            # wording kept exactly for unit-test expectation
             return {
                 "isError": True,
                 "error": f"No server found for tool: {tool_name}",
@@ -332,25 +389,20 @@ class StreamManager:
         
         transport = self.transports[server_name]
         
-        # Apply timeout if specified
         if timeout is not None:
             logger.debug("Calling tool '%s' with %ss timeout", tool_name, timeout)
             try:
-                # ENHANCED: Pass timeout to transport.call_tool if it supports it
                 if hasattr(transport, 'call_tool'):
                     import inspect
                     sig = inspect.signature(transport.call_tool)
                     if 'timeout' in sig.parameters:
-                        # Transport supports timeout parameter - pass it through
                         return await transport.call_tool(tool_name, arguments, timeout=timeout)
                     else:
-                        # Transport doesn't support timeout - use asyncio.wait_for wrapper
                         return await asyncio.wait_for(
                             transport.call_tool(tool_name, arguments),
                             timeout=timeout
                         )
                 else:
-                    # Fallback to asyncio.wait_for
                     return await asyncio.wait_for(
                         transport.call_tool(tool_name, arguments),
                         timeout=timeout
@@ -362,94 +414,69 @@ class StreamManager:
                     "error": f"Tool call timed out after {timeout}s",
                 }
         else:
-            # No timeout specified, call directly
             return await transport.call_tool(tool_name, arguments)
         
     # ------------------------------------------------------------------ #
-    #  shutdown - PROPERLY FIXED VERSION                                 #
+    #  shutdown - FIXED VERSION to prevent cancel scope errors           #
     # ------------------------------------------------------------------ #
     async def close(self) -> None:
-        """
-        Properly close all transports with graceful handling of cancellation.
-        """
+        """Close all transports safely without cancel scope errors."""
         if not self.transports:
+            logger.debug("No transports to close")
             return
         
-        # Cancel any existing close tasks
-        for task in self._close_tasks:
-            if not task.done():
-                task.cancel()
-        self._close_tasks.clear()
+        logger.debug(f"Closing {len(self.transports)} transports...")
         
-        # Create close tasks for all transports
-        close_tasks = []
-        for name, transport in list(self.transports.items()):
-            try:
-                task = asyncio.create_task(
-                    self._close_transport(name, transport), 
-                    name=f"close_{name}"
-                )
-                close_tasks.append(task)
-                self._close_tasks.append(task)
-            except Exception as e:
-                logger.debug(f"Error creating close task for {name}: {e}")
+        # Strategy: Close transports sequentially with short timeouts
+        close_results = []
+        transport_items = list(self.transports.items())
         
-        # Wait for all close tasks with a timeout
-        if close_tasks:
+        for name, transport in transport_items:
             try:
-                # Give transports a reasonable time to close gracefully
-                await asyncio.wait_for(
-                    asyncio.gather(*close_tasks, return_exceptions=True),
-                    timeout=2.0
-                )
-            except asyncio.TimeoutError:
-                # Cancel any still-running tasks
-                for task in close_tasks:
-                    if not task.done():
-                        task.cancel()
-                # Brief wait for cancellation to take effect
-                await asyncio.gather(*close_tasks, return_exceptions=True)
-            except asyncio.CancelledError:
-                # This is expected during event loop shutdown
-                logger.debug("Close operation cancelled during shutdown")
+                try:
+                    await asyncio.wait_for(transport.close(), timeout=0.2)
+                    logger.debug(f"Closed transport: {name}")
+                    close_results.append((name, True, None))
+                except asyncio.TimeoutError:
+                    logger.debug(f"Transport {name} close timed out (normal during shutdown)")
+                    close_results.append((name, False, "timeout"))
+                except asyncio.CancelledError:
+                    logger.debug(f"Transport {name} close cancelled during event loop shutdown")
+                    close_results.append((name, False, "cancelled"))
+                    
             except Exception as e:
-                logger.debug(f"Unexpected error during close: {e}")
+                logger.debug(f"Error closing transport {name}: {e}")
+                close_results.append((name, False, str(e)))
         
         # Clean up state
         self._cleanup_state()
-    
-    async def _close_transport(self, name: str, transport: MCPBaseTransport) -> None:
-        """Close a single transport with error handling."""
-        try:
-            await transport.close()
-            logger.debug(f"Closed transport: {name}")
-        except asyncio.CancelledError:
-            # Re-raise cancellation
-            raise
-        except Exception as e:
-            logger.debug(f"Error closing transport {name}: {e}")
-    
+        
+        # Log summary
+        successful_closes = sum(1 for _, success, _ in close_results if success)
+        if close_results:
+            logger.debug(f"Transport cleanup: {successful_closes}/{len(close_results)} closed successfully")
+
     def _cleanup_state(self) -> None:
-        """Clean up internal state (synchronous)."""
-        self.transports.clear()
-        self.server_info.clear()
-        self.tool_to_server_map.clear()
-        self.all_tools.clear()
-        self._close_tasks.clear()
+        """Clean up internal state synchronously."""
+        try:
+            self.transports.clear()
+            self.server_info.clear()
+            self.tool_to_server_map.clear()
+            self.all_tools.clear()
+            self.server_names.clear()
+        except Exception as e:
+            logger.debug(f"Error during state cleanup: {e}")
 
     # ------------------------------------------------------------------ #
     #  backwards-compat: streams helper                                  #
     # ------------------------------------------------------------------ #
     def get_streams(self) -> List[Tuple[Any, Any]]:
-        """
-        Return a list of ``(read_stream, write_stream)`` tuples for **all**
-        transports.  Older CLI commands rely on this helper.
-        """
+        """Return a list of (read_stream, write_stream) tuples for all transports."""
         pairs: List[Tuple[Any, Any]] = []
 
         for tr in self.transports.values():
             if hasattr(tr, "get_streams") and callable(tr.get_streams):
-                pairs.extend(tr.get_streams())  # type: ignore[arg-type]
+                pairs.extend(tr.get_streams())
                 continue
 
             rd = getattr(tr, "read_stream", None)
@@ -459,7 +486,7 @@ class StreamManager:
 
         return pairs
 
-    # convenience alias
     @property
-    def streams(self) -> List[Tuple[Any, Any]]:  # pragma: no cover
+    def streams(self) -> List[Tuple[Any, Any]]:
+        """Convenience alias for get_streams()."""
         return self.get_streams()

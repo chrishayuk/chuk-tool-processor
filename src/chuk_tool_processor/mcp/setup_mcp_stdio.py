@@ -48,11 +48,13 @@ async def setup_mcp_stdio(  # noqa: C901 - long but just a config facade
     Call with ``await`` from your async context.
     """
     # 1️⃣  create & connect the stream-manager
+    # FIXED: Pass the default_timeout parameter to StreamManager.create
     stream_manager = await StreamManager.create(
         config_file=config_file,
         servers=servers,
         server_names=server_names,
         transport_type="stdio",
+        default_timeout=default_timeout,  # 🔧 ADD THIS LINE
     )
 
     # 2️⃣  pull the remote tool list and register each one locally
