@@ -1,9 +1,9 @@
 # tests/tool_processor/plugins/parsers/test_openai_tool.py
 """OpenAI *tool_calls* parser plugin.
 
-Maps Chat‑Completions native tool calls back into *ToolCall* objects using
+Maps Chat-Completions native tool calls back into *ToolCall* objects using
 ``registry.tool_export.tool_by_openai_name``.  The import is done lazily
-inside ``try_parse`` to avoid circular‑import issues revealed by tests.
+inside ``try_parse`` to avoid circular-import issues revealed by tests.
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ logger = get_logger("chuk_tool_processor.plugins.parser.openai_tool_plugin")
 
 
 class OpenAIToolPlugin(ParserPlugin):
-    """Convert Chat‑Completions *tool_calls* to internal *ToolCall*s."""
+    """Convert Chat-Completions *tool_calls* to internal *ToolCall*s."""
 
     # ------------------------------------------------------------------
     def try_parse(self, raw: str | Any) -> List[ToolCall]:  # type: ignore[override]

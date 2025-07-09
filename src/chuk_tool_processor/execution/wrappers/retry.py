@@ -2,7 +2,7 @@
 """
 Async-native retry wrapper for tool execution.
 
-Adds exponential–back-off retry logic and *deadline-aware* timeout handling so a
+Adds exponential-back-off retry logic and *deadline-aware* timeout handling so a
 `timeout=` passed by callers is treated as the **total wall-clock budget** for
 all attempts of a single tool call.
 """

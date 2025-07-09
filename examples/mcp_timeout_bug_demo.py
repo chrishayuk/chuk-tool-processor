@@ -3,14 +3,14 @@
 examples/mcp_timeout_bug_demo.py (cleaned)
 
 Minimal demo that verifies the MCP timeout / retry behaviour 
-without the heavy‑weight tracing that was needed during the bug hunt.
+without the heavy-weight tracing that was needed during the bug hunt.
 
 Run it with
 
     $ python examples/mcp_timeout_bug_demo.py
 
 You should see each step finishing in ~timeout seconds rather than the full
-20‑second hang simulated by the mock transport.
+20-second hang simulated by the mock transport.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Dict, List, Any
 
 # ---------------------------------------------------------------------------
-# Local imports – add project root so `python examples/...` works everywhere.
+# Local imports - add project root so `python examples/...` works everywhere.
 # ---------------------------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -36,12 +36,12 @@ from chuk_tool_processor.models.tool_call import ToolCall
 # ---------------------------------------------------------------------------
 
 class _MockTransport:
-    """Transport that *never* responds within the caller‑supplied timeout."""
+    """Transport that *never* responds within the caller-supplied timeout."""
 
-    async def initialize(self) -> bool:  # noqa: D401 – simple bool
+    async def initialize(self) -> bool:  # noqa: D401 - simple bool
         return True
 
-    async def close(self) -> None:  # noqa: D401 – just a noop
+    async def close(self) -> None:  # noqa: D401 - just a noop
         return None
 
     async def send_ping(self) -> bool:  # keep StreamManager happy
@@ -71,7 +71,7 @@ async def _patched_stream_manager():
 
     from chuk_tool_processor.mcp.stream_manager import StreamManager
 
-    async def _factory(  # type: ignore[override] – signature comes from classmethod
+    async def _factory(  # type: ignore[override] - signature comes from classmethod
         cls, servers, server_names=None
     ):
         mgr = StreamManager()
@@ -115,7 +115,7 @@ async def _run_demo() -> None:
         # -------------------------------------------------------------------
         # 1️⃣ Processor.process (XML) with explicit timeout
         # -------------------------------------------------------------------
-        print("\n1️⃣  processor.process() – expect ~3s timeout")
+        print("\n1️⃣  processor.process() - expect ~3s timeout")
         start = time.perf_counter()
         result = await processor.process(
             '<tool name="mcp.hanging_tool" args="{\"message\": \"hello\"}"/>',
@@ -127,7 +127,7 @@ async def _run_demo() -> None:
         # -------------------------------------------------------------------
         # 2️⃣ Processor.execute (ToolCall) with explicit timeout
         # -------------------------------------------------------------------
-        print("\n2️⃣  processor.execute() – expect ~1s timeout")
+        print("\n2️⃣  processor.execute() - expect ~1s timeout")
         tc = ToolCall(tool="hanging_tool", namespace="mcp", arguments={})
         start = time.perf_counter()
         result = await processor.execute([tc], timeout=1.0)
@@ -137,7 +137,7 @@ async def _run_demo() -> None:
         # -------------------------------------------------------------------
         # 3️⃣ StreamManager.call_tool with timeout parameter
         # -------------------------------------------------------------------
-        print("\n3️⃣  stream_manager.call_tool() – expect ~2s timeout")
+        print("\n3️⃣  stream_manager.call_tool() - expect ~2s timeout")
         start = time.perf_counter()
         sm_result = await stream_manager.call_tool(
             "hanging_tool", {"message": "hi"}, timeout=2.0
@@ -153,7 +153,7 @@ async def _run_demo() -> None:
 # ---------------------------------------------------------------------------
 
 def _report(err: str | None, elapsed: float, *, expect: float) -> None:
-    """Pretty‑print outcome and highlight if expectation wasn’t met."""
+    """Pretty-print outcome and highlight if expectation wasn’t met."""
 
     status = "✅ OK" if err and abs(elapsed - expect) < 0.5 else "⚠️  ISSUE"
     print(f"   · elapsed {_pretty(elapsed)} → {status}; error=\"{err}\"")
