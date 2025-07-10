@@ -9,65 +9,51 @@ import logging
 
 from .base_transport import MCPBaseTransport
 
-# Import latest chuk-mcp HTTP Streamable transport
-# Try different possible naming conventions
+# Import chuk-mcp HTTP transport components
 try:
-    # First try the expected naming
-    from chuk_mcp.transports.http_streamable import http_streamable_client
-    from chuk_mcp.transports.http_streamable.parameters import HTTPStreamableParameters
-    HAS_HTTP_STREAMABLE_SUPPORT = True
-    STREAMABLE_CLIENT = http_streamable_client
-    STREAMABLE_PARAMS = HTTPStreamableParameters
-except ImportError:
-    try:
-        # Try alternative naming
-        from chuk_mcp.transports.streamable_http import streamable_http_client
-        from chuk_mcp.transports.streamable_http.parameters import StreamableHttpParameters
-        HAS_HTTP_STREAMABLE_SUPPORT = True
-        STREAMABLE_CLIENT = streamable_http_client
-        STREAMABLE_PARAMS = StreamableHttpParameters
-    except ImportError:
-        HAS_HTTP_STREAMABLE_SUPPORT = False
-
-# Import protocol messages
-try:
+    from chuk_mcp.transports.http import http_client
+    from chuk_mcp.transports.http.parameters import StreamableHTTPParameters
     from chuk_mcp.protocol.messages import (
+        send_initialize,
         send_ping, 
         send_tools_list,
         send_tools_call,
-        send_resources_list,
-        send_prompts_list,
     )
-    HAS_PROTOCOL_MESSAGES = True
+    HAS_HTTP_SUPPORT = True
 except ImportError:
-    HAS_PROTOCOL_MESSAGES = False
+    HAS_HTTP_SUPPORT = False
+
+# Import optional resource and prompt support
+try:
+    from chuk_mcp.protocol.messages import (
+        send_resources_list,
+        send_resources_read,
+        send_prompts_list,
+        send_prompts_get,
+    )
+    HAS_RESOURCES_PROMPTS = True
+except ImportError:
+    HAS_RESOURCES_PROMPTS = False
 
 logger = logging.getLogger(__name__)
 
 
 class HTTPStreamableTransport(MCPBaseTransport):
     """
-    Enhanced HTTP Streamable transport using latest chuk-mcp APIs.
+    HTTP Streamable transport using chuk-mcp HTTP client.
     
-    This implements the modern Streamable HTTP transport (spec 2025-03-26)
-    which replaces the deprecated SSE transport with a cleaner, more flexible approach.
-    
-    Key features:
-    - Single /mcp endpoint for all communication
-    - Works with standard HTTP infrastructure  
-    - Supports both immediate and streaming responses
-    - Better error handling and retry logic
-    - Stateless operation when streaming not needed
+    This implements the modern MCP spec (2025-03-26) replacement for SSE transport.
+    Follows the same patterns as SSETransport but uses HTTP requests instead of SSE.
     """
 
     def __init__(self, url: str, api_key: Optional[str] = None, 
                  connection_timeout: float = 30.0, default_timeout: float = 30.0,
                  session_id: Optional[str] = None, enable_metrics: bool = True):
         """
-        Initialize HTTP Streamable transport.
+        Initialize HTTP Streamable transport with chuk-mcp.
         
         Args:
-            url: Base URL of the MCP server (will append /mcp if needed)
+            url: HTTP server URL (should end with /mcp)
             api_key: Optional API key for authentication
             connection_timeout: Timeout for initial connection
             default_timeout: Default timeout for operations
@@ -86,13 +72,13 @@ class HTTPStreamableTransport(MCPBaseTransport):
         self.session_id = session_id
         self.enable_metrics = enable_metrics
         
-        # State tracking
-        self._streamable_context = None
+        # State tracking (following SSE pattern)
+        self._http_context = None
         self._read_stream = None
         self._write_stream = None
         self._initialized = False
         
-        # Performance metrics
+        # Performance metrics (enhanced from SSE version)
         self._metrics = {
             "total_calls": 0,
             "successful_calls": 0,
@@ -103,15 +89,15 @@ class HTTPStreamableTransport(MCPBaseTransport):
             "initialization_time": None
         }
         
-        if not HAS_HTTP_STREAMABLE_SUPPORT:
+        if not HAS_HTTP_SUPPORT:
             logger.warning("HTTP Streamable transport not available - operations will fail")
-        if not HAS_PROTOCOL_MESSAGES:
-            logger.warning("Protocol messages not available - operations will fail")
+        if not HAS_RESOURCES_PROMPTS:
+            logger.debug("Resources/prompts not available in chuk-mcp")
 
     async def initialize(self) -> bool:
-        """Initialize using latest chuk-mcp streamable http client with enhanced monitoring."""
-        if not HAS_HTTP_STREAMABLE_SUPPORT or not HAS_PROTOCOL_MESSAGES:
-            logger.error("HTTP Streamable transport or protocol messages not available in chuk-mcp")
+        """Initialize using chuk-mcp http_client (following SSE pattern)."""
+        if not HAS_HTTP_SUPPORT:
+            logger.error("HTTP Streamable transport not available in chuk-mcp")
             return False
             
         if self._initialized:
@@ -123,32 +109,37 @@ class HTTPStreamableTransport(MCPBaseTransport):
         try:
             logger.info(f"Initializing HTTP Streamable transport to {self.url}")
             
-            # Create HTTP Streamable parameters
-            streamable_params = STREAMABLE_PARAMS(
-                url=self.url,
-                timeout=self.connection_timeout,
-            )
-            
-            # Add session ID if provided
-            if self.session_id:
-                streamable_params.session_id = self.session_id
-                logger.debug(f"Using session ID: {self.session_id}")
-            
-            # Add API key via headers if provided
+            # Create HTTP parameters for chuk-mcp (following SSE pattern)
+            headers = {}
             if self.api_key:
-                streamable_params.headers = {"Authorization": f"Bearer {self.api_key}"}
+                headers["Authorization"] = f"Bearer {self.api_key}"
                 logger.debug("API key configured for authentication")
             
-            # Create and enter the context - let chuk-mcp handle MCP handshake
-            self._streamable_context = STREAMABLE_CLIENT(streamable_params)
+            if self.session_id:
+                headers["X-Session-ID"] = self.session_id
+                logger.debug(f"Using session ID: {self.session_id}")
             
-            logger.debug("Establishing HTTP Streamable connection...")
+            http_params = StreamableHTTPParameters(
+                url=self.url,
+                timeout=self.connection_timeout,
+                headers=headers,
+                bearer_token=self.api_key,
+                session_id=self.session_id,
+                enable_streaming=True,  # Enable SSE streaming when available
+                max_concurrent_requests=10
+            )
+            
+            # Create and enter the HTTP context (same pattern as SSE)
+            self._http_context = http_client(http_params)
+            
+            logger.debug("Establishing HTTP connection and MCP handshake...")
             self._read_stream, self._write_stream = await asyncio.wait_for(
-                self._streamable_context.__aenter__(),
+                self._http_context.__aenter__(),
                 timeout=self.connection_timeout
             )
             
-            # Verify the connection works with a simple ping
+            # At this point, chuk-mcp should have established the HTTP connection
+            # Verify the connection works with a simple ping (same as SSE)
             logger.debug("Verifying connection with ping...")
             ping_start = time.time()
             ping_success = await asyncio.wait_for(
@@ -166,14 +157,15 @@ class HTTPStreamableTransport(MCPBaseTransport):
                 logger.info(f"HTTP Streamable transport initialized successfully in {init_time:.3f}s (ping: {ping_time:.3f}s)")
                 return True
             else:
-                logger.warning("HTTP Streamable connection established but ping failed")
-                # Still consider it initialized since connection was established
+                logger.warning("HTTP connection established but ping failed")
+                # Still consider it initialized since connection was established (same as SSE)
                 self._initialized = True
                 self._metrics["initialization_time"] = time.time() - start_time
                 return True
 
         except asyncio.TimeoutError:
             logger.error(f"HTTP Streamable initialization timed out after {self.connection_timeout}s")
+            logger.error("This may indicate the server is not responding to MCP initialization")
             await self._cleanup()
             return False
         except Exception as e:
@@ -182,11 +174,11 @@ class HTTPStreamableTransport(MCPBaseTransport):
             return False
 
     async def close(self) -> None:
-        """Close the HTTP Streamable transport properly with metrics summary."""
+        """Close the HTTP Streamable transport properly (same pattern as SSE)."""
         if not self._initialized:
             return
         
-        # Log final metrics
+        # Log final metrics (enhanced from SSE)
         if self.enable_metrics and self._metrics["total_calls"] > 0:
             logger.info(
                 f"HTTP Streamable transport closing - Total calls: {self._metrics['total_calls']}, "
@@ -195,8 +187,8 @@ class HTTPStreamableTransport(MCPBaseTransport):
             )
             
         try:
-            if self._streamable_context is not None:
-                await self._streamable_context.__aexit__(None, None, None)
+            if self._http_context is not None:
+                await self._http_context.__aexit__(None, None, None)
                 logger.debug("HTTP Streamable context closed")
                 
         except Exception as e:
@@ -205,22 +197,23 @@ class HTTPStreamableTransport(MCPBaseTransport):
             await self._cleanup()
 
     async def _cleanup(self) -> None:
-        """Clean up internal state."""
-        self._streamable_context = None
+        """Clean up internal state (same as SSE)."""
+        self._http_context = None
         self._read_stream = None
         self._write_stream = None
         self._initialized = False
 
     async def send_ping(self) -> bool:
-        """Send ping with performance tracking."""
+        """Send ping with performance tracking (enhanced from SSE)."""
         if not self._initialized or not self._read_stream:
+            logger.error("Cannot send ping: transport not initialized")
             return False
         
         start_time = time.time()
         try:
             result = await asyncio.wait_for(
                 send_ping(self._read_stream, self._write_stream),
-                timeout=5.0
+                timeout=self.default_timeout
             )
             
             if self.enable_metrics:
@@ -237,7 +230,7 @@ class HTTPStreamableTransport(MCPBaseTransport):
             return False
 
     async def get_tools(self) -> List[Dict[str, Any]]:
-        """Get tools list with performance tracking."""
+        """Get tools list with performance tracking (enhanced from SSE)."""
         if not self._initialized:
             logger.error("Cannot get tools: transport not initialized")
             return []
@@ -249,7 +242,7 @@ class HTTPStreamableTransport(MCPBaseTransport):
                 timeout=self.default_timeout
             )
             
-            # Normalize response
+            # Normalize response (same as SSE)
             if isinstance(tools_response, dict):
                 tools = tools_response.get("tools", [])
             elif isinstance(tools_response, list):
@@ -336,7 +329,7 @@ class HTTPStreamableTransport(MCPBaseTransport):
             }
 
     def _update_metrics(self, response_time: float, success: bool) -> None:
-        """Update performance metrics."""
+        """Update performance metrics (new feature)."""
         if success:
             self._metrics["successful_calls"] += 1
         else:
@@ -348,7 +341,11 @@ class HTTPStreamableTransport(MCPBaseTransport):
         )
 
     async def list_resources(self) -> Dict[str, Any]:
-        """List resources using latest chuk-mcp."""
+        """List resources using chuk-mcp (same as SSE)."""
+        if not HAS_RESOURCES_PROMPTS:
+            logger.debug("Resources/prompts not available in chuk-mcp")
+            return {}
+            
         if not self._initialized:
             return {}
         
@@ -366,7 +363,11 @@ class HTTPStreamableTransport(MCPBaseTransport):
             return {}
 
     async def list_prompts(self) -> Dict[str, Any]:
-        """List prompts using latest chuk-mcp."""
+        """List prompts using chuk-mcp (same as SSE)."""
+        if not HAS_RESOURCES_PROMPTS:
+            logger.debug("Resources/prompts not available in chuk-mcp")
+            return {}
+            
         if not self._initialized:
             return {}
         
@@ -384,7 +385,7 @@ class HTTPStreamableTransport(MCPBaseTransport):
             return {}
 
     def _normalize_tool_response(self, raw_response: Dict[str, Any]) -> Dict[str, Any]:
-        """Normalize response for backward compatibility."""
+        """Normalize response for backward compatibility (same as SSE)."""
         # Handle explicit error in response
         if "error" in raw_response:
             error_info = raw_response["error"]
@@ -427,7 +428,7 @@ class HTTPStreamableTransport(MCPBaseTransport):
         }
 
     def _extract_content(self, content_list: Any) -> Any:
-        """Extract content from MCP content format with enhanced error handling."""
+        """Extract content from MCP content format (same as SSE)."""
         if not isinstance(content_list, list) or not content_list:
             return content_list
         
@@ -449,21 +450,21 @@ class HTTPStreamableTransport(MCPBaseTransport):
         return content_list
 
     def get_streams(self) -> List[tuple]:
-        """Provide streams for backward compatibility."""
+        """Provide streams for backward compatibility (same as SSE)."""
         if self._initialized and self._read_stream and self._write_stream:
             return [(self._read_stream, self._write_stream)]
         return []
 
     def is_connected(self) -> bool:
-        """Check connection status."""
+        """Check connection status (same as SSE)."""
         return self._initialized and self._read_stream is not None and self._write_stream is not None
 
     def get_metrics(self) -> Dict[str, Any]:
-        """Get performance metrics."""
+        """Get performance metrics (new feature)."""
         return self._metrics.copy()
 
     def reset_metrics(self) -> None:
-        """Reset performance metrics."""
+        """Reset performance metrics (new feature)."""
         self._metrics = {
             "total_calls": 0,
             "successful_calls": 0,
@@ -475,14 +476,14 @@ class HTTPStreamableTransport(MCPBaseTransport):
         }
 
     async def __aenter__(self):
-        """Context manager support."""
+        """Context manager support (same as SSE)."""
         success = await self.initialize()
         if not success:
             raise RuntimeError("Failed to initialize HTTP Streamable transport")
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Context manager cleanup."""
+        """Context manager cleanup (same as SSE)."""
         await self.close()
 
     def __repr__(self) -> str:
