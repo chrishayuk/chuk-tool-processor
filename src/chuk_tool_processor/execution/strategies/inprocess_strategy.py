@@ -7,7 +7,12 @@ This strategy executes tools concurrently in the same process using asyncio.
 It has special support for streaming tools, accessing their stream_execute method
 directly to enable true item-by-item streaming.
 
-FIXED: Ensures consistent timeout handling across all execution paths.
+Enhanced tool name resolution that properly handles:
+- Simple names: "get_current_time" 
+- Namespaced names: "diagnostic_test.get_current_time"
+- Cross-namespace fallback searching
+
+Ensures consistent timeout handling across all execution paths.
 ENHANCED: Clean shutdown handling to prevent anyio cancel scope errors.
 """
 from __future__ import annotations
@@ -17,7 +22,7 @@ import inspect
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Any, List, Optional, AsyncIterator, Set
+from typing import Any, List, Optional, AsyncIterator, Set, Tuple
 
 from chuk_tool_processor.core.exceptions import ToolExecutionError
 from chuk_tool_processor.models.execution_strategy import ExecutionStrategy
@@ -216,15 +221,15 @@ class InProcessStrategy(ExecutionStrategy):
             return
             
         try:
-            # Get the tool implementation
-            tool_impl = await self.registry.get_tool(call.tool, call.namespace)
+            # Use enhanced tool resolution instead of direct lookup
+            tool_impl, resolved_namespace = await self._resolve_tool_info(call.tool, call.namespace)
             if tool_impl is None:
                 # Tool not found
                 now = datetime.now(timezone.utc)
                 result = ToolResult(
                     tool=call.tool,
                     result=None,
-                    error=f"Tool '{call.tool}' not found",
+                    error=f"Tool '{call.tool}' not found in any namespace",
                     start_time=now,
                     end_time=now,
                     machine=os.uname().nodename,
@@ -232,6 +237,8 @@ class InProcessStrategy(ExecutionStrategy):
                 )
                 await queue.put(result)
                 return
+                
+            logger.debug(f"Resolved streaming tool '{call.tool}' to namespace '{resolved_namespace}'")
                 
             # Instantiate if class
             tool = tool_impl() if inspect.isclass(tool_impl) else tool_impl
@@ -423,18 +430,20 @@ class InProcessStrategy(ExecutionStrategy):
             )
 
         try:
-            # Get the tool implementation
-            impl = await self.registry.get_tool(call.tool, call.namespace)
+            # Use enhanced tool resolution instead of direct lookup
+            impl, resolved_namespace = await self._resolve_tool_info(call.tool, call.namespace)
             if impl is None:
                 return ToolResult(
                     tool=call.tool,
                     result=None,
-                    error=f"Tool '{call.tool}' not found",
+                    error=f"Tool '{call.tool}' not found in any namespace",
                     start_time=start,
                     end_time=datetime.now(timezone.utc),
                     machine=machine,
                     pid=pid,
                 )
+
+            logger.debug(f"Resolved tool '{call.tool}' to namespace '{resolved_namespace}'")
 
             # Instantiate if class
             tool = impl() if inspect.isclass(impl) else impl
@@ -591,6 +600,96 @@ class InProcessStrategy(ExecutionStrategy):
                 machine=machine,
                 pid=pid,
             )
+
+    async def _resolve_tool_info(self, tool_name: str, preferred_namespace: str = "default") -> Tuple[Optional[Any], Optional[str]]:
+        """
+        Enhanced tool name resolution with comprehensive fallback logic.
+        
+        This method handles:
+        1. Simple names: "get_current_time" -> search in specified namespace first, then all namespaces
+        2. Namespaced names: "diagnostic_test.get_current_time" -> extract namespace and tool name
+        3. Fallback searching across all namespaces when not found in default
+        
+        Args:
+            tool_name: Name of the tool to resolve
+            preferred_namespace: Preferred namespace to search first
+        
+        Returns:
+            Tuple of (tool_object, resolved_namespace) or (None, None) if not found
+        """
+        logger.debug(f"Resolving tool: '{tool_name}' (preferred namespace: '{preferred_namespace}')")
+        
+        # Strategy 1: Handle namespaced tool names (namespace.tool_name format)
+        if '.' in tool_name:
+            parts = tool_name.split('.', 1)  # Split on first dot only
+            namespace = parts[0]
+            actual_tool_name = parts[1]
+            
+            logger.debug(f"Namespaced lookup: namespace='{namespace}', tool='{actual_tool_name}'")
+            
+            tool = await self.registry.get_tool(actual_tool_name, namespace)
+            if tool is not None:
+                logger.debug(f"Found tool '{actual_tool_name}' in namespace '{namespace}'")
+                return tool, namespace
+            else:
+                logger.debug(f"Tool '{actual_tool_name}' not found in namespace '{namespace}'")
+                return None, None
+        
+        # Strategy 2: Simple tool name - try preferred namespace first
+        if preferred_namespace:
+            logger.debug(f"Simple tool lookup: trying preferred namespace '{preferred_namespace}' for '{tool_name}'")
+            tool = await self.registry.get_tool(tool_name, preferred_namespace)
+            if tool is not None:
+                logger.debug(f"Found tool '{tool_name}' in preferred namespace '{preferred_namespace}'")
+                return tool, preferred_namespace
+        
+        # Strategy 3: Try default namespace if different from preferred
+        if preferred_namespace != "default":
+            logger.debug(f"Simple tool lookup: trying default namespace for '{tool_name}'")
+            tool = await self.registry.get_tool(tool_name, "default")
+            if tool is not None:
+                logger.debug(f"Found tool '{tool_name}' in default namespace")
+                return tool, "default"
+        
+        # Strategy 4: Search all namespaces as fallback
+        logger.debug(f"Tool '{tool_name}' not in preferred/default namespace, searching all namespaces...")
+        
+        try:
+            # Get all available namespaces
+            namespaces = await self.registry.list_namespaces()
+            logger.debug(f"Available namespaces: {namespaces}")
+            
+            # Search each namespace
+            for namespace in namespaces:
+                if namespace in [preferred_namespace, "default"]:
+                    continue  # Already tried these
+                    
+                logger.debug(f"Searching namespace '{namespace}' for tool '{tool_name}'")
+                tool = await self.registry.get_tool(tool_name, namespace)
+                if tool is not None:
+                    logger.debug(f"Found tool '{tool_name}' in namespace '{namespace}'")
+                    return tool, namespace
+            
+            # Strategy 5: Final fallback - list all tools and do fuzzy matching
+            logger.debug(f"Tool '{tool_name}' not found in any namespace, trying fuzzy matching...")
+            all_tools = await self.registry.list_tools()
+            
+            # Look for exact matches in tool name (ignoring namespace)
+            for namespace, registered_name in all_tools:
+                if registered_name == tool_name:
+                    logger.debug(f"Fuzzy match: found '{registered_name}' in namespace '{namespace}'")
+                    tool = await self.registry.get_tool(registered_name, namespace)
+                    if tool is not None:
+                        return tool, namespace
+            
+            # Log all available tools for debugging
+            logger.debug(f"Available tools: {all_tools}")
+            
+        except Exception as e:
+            logger.error(f"Error during namespace search: {e}")
+        
+        logger.warning(f"Tool '{tool_name}' not found in any namespace")
+        return None, None
             
     @property
     def supports_streaming(self) -> bool:
