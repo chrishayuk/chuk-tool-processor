@@ -1,15 +1,8 @@
 #!/usr/bin/env python
 """
-mcp_sse_example_calling_usage.py
-──────────────────────────────────
-Showcases three parser plugins (JSON, XML, Function-call) invoking
-mock **perplexity_search** tools through a test MCP SSE server.
-
-Prerequisites:
-- Run the test server first: python examples/test_sse_server.py
-- Server provides mock Perplexity tools for demonstration
-
-It also fires a handful of parallel calls to demonstrate concurrency.
+mcp_sse_example_calling_usage.py - FIXED PORT CONFIGURATION
+──────────────────────────────────────────────────────────
+Fixed to connect to the correct server port (8020).
 """
 
 from __future__ import annotations
@@ -51,8 +44,8 @@ from chuk_tool_processor.models.tool_result import ToolResult                   
 
 logger = get_logger("mcp-mock-sse-demo")
 
-# ─── config / bootstrap ─────────────────────────────────────────────────────
-SSE_SERVER_URL = "http://localhost:8000"
+# ─── FIXED CONFIG ───────────────────────────────────────────────────────────
+SSE_SERVER_URL = "http://localhost:8020"  # ← FIXED: Changed from 8000 to 8020
 SERVER_NAME = "mock_perplexity_server"
 NAMESPACE = "sse"          # where remote tools will be registered
 
@@ -60,7 +53,7 @@ NAMESPACE = "sse"          # where remote tools will be registered
 async def bootstrap_mcp() -> None:
     """Start the SSE transport and connect to the mock test server."""
     try:
-        print("🔄 Connecting to mock MCP SSE server...")
+        print(f"🔄 Connecting to mock MCP SSE server at {SSE_SERVER_URL}...")
         _, sm = await setup_mcp_sse(
             servers=[
                 {
@@ -80,7 +73,7 @@ async def bootstrap_mcp() -> None:
         logger.error(f"Failed to bootstrap MCP SSE: {e}")
         print(f"❌ Could not connect to mock SSE server at {SSE_SERVER_URL}")
         print("Please start the test server first:")
-        print("   python examples/test_sse_server.py")
+        print("   python examples/mcp_sse_server.py")  # Updated command
         raise
 
 
@@ -151,7 +144,7 @@ def show_results(title: str, calls: List[ToolCall], results: List[ToolResult]) -
 async def run_demo() -> None:
     print(Fore.GREEN + "=== Mock MCP Perplexity Search Tool-Calling Demo (SSE) ===" + Style.RESET_ALL)
     print("This demo uses a mock test server that simulates Perplexity API responses.")
-    print("Start the test server with: python examples/test_sse_server.py")
+    print("Start the test server with: python examples/mcp_sse_server.py")
 
     try:
         await bootstrap_mcp()
@@ -164,8 +157,8 @@ async def run_demo() -> None:
         registry,
         strategy=InProcessStrategy(
             registry,
-            default_timeout=2.0,  # 2 second timeout - will be enforced consistently
-            max_concurrency=2,    # Reduce concurrency for stability
+            default_timeout=10.0,  # Increased timeout for demo stability
+            max_concurrency=3,     # Moderate concurrency
         ),
     )
 
@@ -260,9 +253,9 @@ async def run_demo() -> None:
         show_results("Different Tool Types (same query)", feature_calls, feature_results)
         
         print(Fore.CYAN + "\nNotice how each tool type returns different response formats:" + Style.RESET_ALL)
-        print("  • perplexity_search: Standard conversational response")
-        print("  • perplexity_deep_research: Detailed analysis with citations")
-        print("  • perplexity_quick_fact: Concise factual answer")
+        print("  • perplexity_search: Standard search results with sources")
+        print("  • perplexity_deep_research: Detailed analysis with findings")
+        print("  • perplexity_quick_fact: Concise factual answer with confidence")
         
     except Exception as e:
         print(f"❌ Feature demonstration failed: {e}")
