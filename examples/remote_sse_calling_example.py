@@ -88,6 +88,9 @@ def get_remote_mcp_servers() -> List[dict[str, str]]:
     print(f"MCP_SERVER_NAME_MAP: {os.getenv('MCP_SERVER_NAME_MAP', 'NOT SET')}")
     print(f"MCP_BEARER_TOKEN: {'SET' if os.getenv('MCP_BEARER_TOKEN') else 'NOT SET'}")
     
+    # Get bearer token
+    bearer_token = os.getenv('MCP_BEARER_TOKEN')
+    
     # Load environment variable overrides
     name_override = _load_override("MCP_SERVER_NAME_MAP")
     url_override = _load_override("MCP_SERVER_URL_MAP")
@@ -100,22 +103,37 @@ def get_remote_mcp_servers() -> List[dict[str, str]]:
     
     if single_server_url:
         print(f"🌐 Using single remote SSE MCP server: {single_server_url[:50]}{'...' if len(single_server_url) > 50 else ''}")
-        return [{
+        server_config = {
             "name": "perplexity_server",
             "url": single_server_url,
-        }]
+        }
+        # ADD THE API KEY!
+        if bearer_token:
+            server_config["api_key"] = bearer_token
+        return [server_config]
     
     # Check URL override map
     if url_override:
         servers = []
         for server_name, server_url in url_override.items():
             actual_name = name_override.get(server_name, server_name)
-            servers.append({
+            server_config = {
                 "name": actual_name,
                 "url": server_url,
-            })
+            }
+            # ADD THE API KEY!
+            if bearer_token:
+                server_config["api_key"] = bearer_token
+            servers.append(server_config)
         print(f"🌐 Using {len(servers)} remote SSE MCP server(s) from URL map")
-        print(f"📋 Servers: {servers}")
+        # Don't print the actual api_key in logs
+        safe_servers = []
+        for s in servers:
+            safe_s = s.copy()
+            if 'api_key' in safe_s:
+                safe_s['api_key'] = 'SET'
+            safe_servers.append(safe_s)
+        print(f"📋 Servers: {safe_servers}")
         return servers
     
     # No MCP configuration found
@@ -140,6 +158,8 @@ async def bootstrap_remote_mcp() -> None:
         print(f"🔄 Connecting to remote SSE MCP server(s)...")
         for server in servers:
             print(f"  📡 {server['name']}: {server['url']}")
+            if 'api_key' in server:
+                print(f"     🔑 Auth: SET")
         
         server_names = {i: srv["name"] for i, srv in enumerate(servers)}
         
@@ -289,9 +309,36 @@ async def run_remote_demo() -> None:
         # Create generic test calls for whatever tools are available
         generic_calls = []
         for ns, tool_name in tools[:3]:  # Test first 3 tools
+            # Get tool metadata to determine correct arguments
+            tool_meta = await registry.get_metadata(tool_name, ns)
+            args = {}
+            
+            if tool_meta and hasattr(tool_meta, 'input_schema'):
+                schema = tool_meta.input_schema
+                required = schema.get('required', [])
+                properties = schema.get('properties', {})
+                
+                for field in required:
+                    if field in properties:
+                        prop = properties[field]
+                        if prop.get('type') == 'string':
+                            if 'query' in field.lower():
+                                args[field] = f"Test query for {tool_name}"
+                            elif 'message' in field.lower():
+                                args[field] = f"Test message for {tool_name}"
+                            else:
+                                args[field] = "test_string"
+                        elif prop.get('type') == 'integer':
+                            args[field] = 1
+                        elif prop.get('type') == 'boolean':
+                            args[field] = True
+            
+            if not args:
+                args = {"query": f"Test query for {tool_name}"}
+            
             generic_calls.append(ToolCall(
                 tool=f"{ns}.{tool_name}",
-                arguments={"query": f"Test query for {tool_name}"}
+                arguments=args
             ))
         
         if generic_calls:
@@ -321,9 +368,61 @@ async def run_remote_demo() -> None:
         
         parallel_calls = []
         for i, (ns, tool_name) in enumerate(tools[:3]):  # Max 3 parallel
+            # Get tool metadata to build correct arguments
+            tool_meta = await registry.get_metadata(tool_name, ns)
+            
+            # Build arguments based on tool requirements
+            if tool_name == "echo":
+                args = {"message": f"Parallel test {i+1}: Hello from SSE!"}
+            elif tool_name == "get_current_time":
+                args = {"timezone": "UTC"}
+            elif tool_name == "convert_time":
+                args = {
+                    "source_timezone": "UTC",
+                    "time": "12:00",
+                    "target_timezone": "America/New_York"
+                }
+            elif tool_name == "ping":
+                args = {"host": "google.com"}
+            elif tool_name == "tcp_ping":
+                args = {"host": "google.com", "port": 80}
+            elif tool_name == "perplexity_search":
+                args = {"query": f"Parallel test query {i+1}"}
+            elif tool_name == "perplexity_quick_fact":
+                args = {"query": f"What is test fact {i+1}?"}
+            elif tool_name == "google_search":
+                args = {"query": f"Test search {i+1}"}
+            elif tool_name == "wikipedia_search":
+                args = {"query": "Python programming"}
+            else:
+                # For unknown tools, try to build minimal valid args from schema
+                args = {}
+                if tool_meta and hasattr(tool_meta, 'input_schema'):
+                    schema = tool_meta.input_schema
+                    required = schema.get('required', [])
+                    properties = schema.get('properties', {})
+                    
+                    for field in required[:1]:  # Just fill first required field
+                        if field in properties:
+                            prop = properties[field]
+                            if prop.get('type') == 'string':
+                                # Check if it's likely a query field
+                                if 'query' in field.lower() or 'message' in field.lower() or 'text' in field.lower():
+                                    args[field] = f"Parallel test {i+1}"
+                                elif 'timezone' in field.lower():
+                                    args[field] = "UTC"
+                                elif 'host' in field.lower():
+                                    args[field] = "example.com"
+                                else:
+                                    args[field] = "test_value"
+                            elif prop.get('type') == 'integer':
+                                args[field] = 1
+                            elif prop.get('type') == 'boolean':
+                                args[field] = True
+            
             parallel_calls.append(ToolCall(
                 tool=f"{ns}.{tool_name}",
-                arguments={"query": f"Parallel test query {i+1} for {tool_name}"}
+                arguments=args
             ))
         
         try:

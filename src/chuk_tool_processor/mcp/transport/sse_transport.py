@@ -1,364 +1,426 @@
 # chuk_tool_processor/mcp/transport/sse_transport.py
+"""
+Fixed SSE transport that matches your server's actual behavior.
+Based on your working debug script.
+"""
 from __future__ import annotations
 
 import asyncio
 import json
-from typing import Dict, Any, List, Optional
+import uuid
+from typing import Dict, Any, List, Optional, Tuple
 import logging
 
+import httpx
+
 from .base_transport import MCPBaseTransport
-
-# Import latest chuk-mcp SSE transport
-try:
-    from chuk_mcp.transports.sse import sse_client
-    from chuk_mcp.transports.sse.parameters import SSEParameters
-    from chuk_mcp.protocol.messages import (
-        send_initialize,
-        send_ping, 
-        send_tools_list,
-        send_tools_call,
-    )
-    HAS_SSE_SUPPORT = True
-except ImportError:
-    HAS_SSE_SUPPORT = False
-
-# Import optional resource and prompt support
-try:
-    from chuk_mcp.protocol.messages import (
-        send_resources_list,
-        send_resources_read,
-        send_prompts_list,
-        send_prompts_get,
-    )
-    HAS_RESOURCES_PROMPTS = True
-except ImportError:
-    HAS_RESOURCES_PROMPTS = False
 
 logger = logging.getLogger(__name__)
 
 
 class SSETransport(MCPBaseTransport):
     """
-    Updated SSE transport using latest chuk-mcp APIs.
-    
-    Supports all required abstract methods and provides full MCP functionality.
+    SSE transport that works with your server's two-step async pattern:
+    1. POST messages to /messages endpoint
+    2. Receive responses via SSE stream
     """
 
     def __init__(self, url: str, api_key: Optional[str] = None, 
                  connection_timeout: float = 30.0, default_timeout: float = 30.0):
-        """
-        Initialize SSE transport with latest chuk-mcp.
-        
-        Args:
-            url: SSE server URL
-            api_key: Optional API key for authentication
-            connection_timeout: Timeout for initial connection
-            default_timeout: Default timeout for operations
-        """
-        self.url = url
+        """Initialize SSE transport."""
+        self.url = url.rstrip('/')
         self.api_key = api_key
         self.connection_timeout = connection_timeout
         self.default_timeout = default_timeout
         
-        # State tracking
-        self._sse_context = None
-        self._read_stream = None
-        self._write_stream = None
+        # State
+        self.session_id = None
+        self.message_url = None
+        self.pending_requests: Dict[str, asyncio.Future] = {}
         self._initialized = False
         
-        if not HAS_SSE_SUPPORT:
-            logger.warning("SSE transport not available - operations will fail")
+        # HTTP clients
+        self.stream_client = None
+        self.send_client = None
+        
+        # SSE stream
+        self.sse_task = None
+        self.sse_response = None
+        self.sse_stream_context = None
+
+    def _get_headers(self) -> Dict[str, str]:
+        """Get headers with auth if available."""
+        headers = {}
+        if self.api_key:
+            headers['Authorization'] = f'Bearer {self.api_key}'
+        return headers
 
     async def initialize(self) -> bool:
-        """Initialize using latest chuk-mcp sse_client."""
-        if not HAS_SSE_SUPPORT:
-            logger.error("SSE transport not available in chuk-mcp")
-            return False
-            
+        """Initialize SSE connection and MCP handshake."""
         if self._initialized:
             logger.warning("Transport already initialized")
             return True
-            
+        
         try:
             logger.info("Initializing SSE transport...")
             
-            # Create SSE parameters for latest chuk-mcp
-            sse_params = SSEParameters(
-                url=self.url,
-                timeout=self.connection_timeout,
-                auto_reconnect=True,
-                max_reconnect_attempts=3
+            # Create HTTP clients
+            self.stream_client = httpx.AsyncClient(timeout=self.connection_timeout)
+            self.send_client = httpx.AsyncClient(timeout=self.default_timeout)
+            
+            # Connect to SSE stream
+            sse_url = f"{self.url}/sse"
+            logger.debug(f"Connecting to SSE: {sse_url}")
+            
+            self.sse_stream_context = self.stream_client.stream(
+                'GET', sse_url, headers=self._get_headers()
             )
+            self.sse_response = await self.sse_stream_context.__aenter__()
             
-            # Create and enter the context - this should handle the full MCP handshake
-            self._sse_context = sse_client(sse_params)
+            if self.sse_response.status_code != 200:
+                logger.error(f"SSE connection failed: {self.sse_response.status_code}")
+                return False
             
-            # The sse_client should handle the entire initialization process
-            logger.debug("Establishing SSE connection and MCP handshake...")
-            self._read_stream, self._write_stream = await asyncio.wait_for(
-                self._sse_context.__aenter__(),
-                timeout=self.connection_timeout
-            )
+            logger.info("SSE streaming connection established")
             
-            # At this point, chuk-mcp should have already completed the MCP initialization
-            # Let's verify the connection works with a simple ping
-            logger.debug("Verifying connection with ping...")
-            ping_success = await asyncio.wait_for(
-                send_ping(self._read_stream, self._write_stream),
-                timeout=5.0
-            )
+            # Start SSE processing task
+            self.sse_task = asyncio.create_task(self._process_sse_stream())
             
-            if ping_success:
+            # Wait for session discovery
+            logger.debug("Waiting for session discovery...")
+            for i in range(50):  # 5 seconds max
+                if self.message_url:
+                    break
+                await asyncio.sleep(0.1)
+            
+            if not self.message_url:
+                logger.error("Failed to get session info from SSE")
+                return False
+            
+            logger.info(f"Session ready: {self.session_id}")
+            
+            # Now do MCP initialization
+            try:
+                init_response = await self._send_request("initialize", {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {
+                        "name": "chuk-tool-processor",
+                        "version": "1.0.0"
+                    }
+                })
+                
+                if 'error' in init_response:
+                    logger.error(f"Initialize failed: {init_response['error']}")
+                    return False
+                
+                # Send initialized notification
+                await self._send_notification("notifications/initialized")
+                
                 self._initialized = True
                 logger.info("SSE transport initialized successfully")
                 return True
-            else:
-                logger.warning("SSE connection established but ping failed")
-                # Still consider it initialized since connection was established
-                self._initialized = True
-                return True
-
-        except asyncio.TimeoutError:
-            logger.error(f"SSE initialization timed out after {self.connection_timeout}s")
-            logger.error("This may indicate the server is not responding to MCP initialization")
-            await self._cleanup()
-            return False
+                
+            except Exception as e:
+                logger.error(f"MCP initialization failed: {e}")
+                return False
+                
         except Exception as e:
             logger.error(f"Error initializing SSE transport: {e}", exc_info=True)
             await self._cleanup()
             return False
 
-    async def close(self) -> None:
-        """Close the SSE transport properly."""
-        if not self._initialized:
-            return
-            
+    async def _process_sse_stream(self):
+        """Process the persistent SSE stream."""
         try:
-            if self._sse_context is not None:
-                await self._sse_context.__aexit__(None, None, None)
-                logger.debug("SSE context closed")
+            logger.debug("Starting SSE stream processing...")
+            
+            async for line in self.sse_response.aiter_lines():
+                line = line.strip()
+                if not line:
+                    continue
                 
+                # Handle session endpoint discovery
+                if not self.message_url and line.startswith('data:') and '/messages/' in line:
+                    endpoint_path = line.split(':', 1)[1].strip()
+                    self.message_url = f"{self.url}{endpoint_path}"
+                    
+                    if 'session_id=' in endpoint_path:
+                        self.session_id = endpoint_path.split('session_id=')[1].split('&')[0]
+                    
+                    logger.debug(f"Got session info: {self.session_id}")
+                    continue
+                
+                # Handle JSON-RPC responses
+                if line.startswith('data:'):
+                    data_part = line.split(':', 1)[1].strip()
+                    
+                    # Skip pings and empty data
+                    if not data_part or data_part.startswith('ping'):
+                        continue
+                    
+                    try:
+                        response_data = json.loads(data_part)
+                        
+                        if 'jsonrpc' in response_data and 'id' in response_data:
+                            request_id = str(response_data['id'])
+                            
+                            # Resolve pending request
+                            if request_id in self.pending_requests:
+                                future = self.pending_requests.pop(request_id)
+                                if not future.done():
+                                    future.set_result(response_data)
+                                    logger.debug(f"Resolved request: {request_id}")
+                    
+                    except json.JSONDecodeError:
+                        pass  # Not JSON, ignore
+                        
         except Exception as e:
-            logger.debug(f"Error during transport close: {e}")
-        finally:
-            await self._cleanup()
+            logger.error(f"SSE stream error: {e}")
 
-    async def _cleanup(self) -> None:
-        """Clean up internal state."""
-        self._sse_context = None
-        self._read_stream = None
-        self._write_stream = None
-        self._initialized = False
+    async def _send_request(self, method: str, params: Dict[str, Any] = None, 
+                           timeout: Optional[float] = None) -> Dict[str, Any]:
+        """Send request and wait for async response."""
+        if not self.message_url:
+            raise RuntimeError("Not connected")
+        
+        request_id = str(uuid.uuid4())
+        message = {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": method,
+            "params": params or {}
+        }
+        
+        # Create future for response
+        future = asyncio.Future()
+        self.pending_requests[request_id] = future
+        
+        try:
+            # Send message
+            headers = {
+                'Content-Type': 'application/json',
+                **self._get_headers()
+            }
+            
+            response = await self.send_client.post(
+                self.message_url, 
+                headers=headers, 
+                json=message
+            )
+            
+            if response.status_code == 202:
+                # Wait for async response
+                timeout = timeout or self.default_timeout
+                result = await asyncio.wait_for(future, timeout=timeout)
+                return result
+            elif response.status_code == 200:
+                # Immediate response
+                self.pending_requests.pop(request_id, None)
+                return response.json()
+            else:
+                self.pending_requests.pop(request_id, None)
+                raise RuntimeError(f"Request failed: {response.status_code}")
+                
+        except asyncio.TimeoutError:
+            self.pending_requests.pop(request_id, None)
+            raise
+        except Exception:
+            self.pending_requests.pop(request_id, None)
+            raise
+
+    async def _send_notification(self, method: str, params: Dict[str, Any] = None):
+        """Send notification (no response expected)."""
+        if not self.message_url:
+            raise RuntimeError("Not connected")
+        
+        message = {
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params or {}
+        }
+        
+        headers = {
+            'Content-Type': 'application/json',
+            **self._get_headers()
+        }
+        
+        await self.send_client.post(
+            self.message_url,
+            headers=headers,
+            json=message
+        )
 
     async def send_ping(self) -> bool:
-        """Send ping using latest chuk-mcp."""
+        """Send ping to check connection."""
         if not self._initialized:
-            logger.error("Cannot send ping: transport not initialized")
             return False
         
         try:
-            result = await asyncio.wait_for(
-                send_ping(self._read_stream, self._write_stream),
-                timeout=self.default_timeout
-            )
-            logger.debug(f"Ping result: {result}")
-            return bool(result)
-        except asyncio.TimeoutError:
-            logger.error("Ping timed out")
-            return False
-        except Exception as e:
-            logger.error(f"Ping failed: {e}")
+            # Your server might not support ping, so we'll just check if we can list tools
+            response = await self._send_request("tools/list", {}, timeout=5.0)
+            return 'error' not in response
+        except Exception:
             return False
 
     async def get_tools(self) -> List[Dict[str, Any]]:
-        """Get tools list using latest chuk-mcp."""
+        """Get tools list."""
         if not self._initialized:
             logger.error("Cannot get tools: transport not initialized")
             return []
         
         try:
-            tools_response = await asyncio.wait_for(
-                send_tools_list(self._read_stream, self._write_stream),
-                timeout=self.default_timeout
-            )
+            response = await self._send_request("tools/list", {})
             
-            # Normalize response
-            if isinstance(tools_response, dict):
-                tools = tools_response.get("tools", [])
-            elif isinstance(tools_response, list):
-                tools = tools_response
-            else:
-                logger.warning(f"Unexpected tools response type: {type(tools_response)}")
-                tools = []
+            if 'error' in response:
+                logger.error(f"Error getting tools: {response['error']}")
+                return []
             
+            tools = response.get('result', {}).get('tools', [])
             logger.debug(f"Retrieved {len(tools)} tools")
             return tools
             
-        except asyncio.TimeoutError:
-            logger.error("Get tools timed out")
-            return []
         except Exception as e:
             logger.error(f"Error getting tools: {e}")
             return []
 
     async def call_tool(self, tool_name: str, arguments: Dict[str, Any], 
                        timeout: Optional[float] = None) -> Dict[str, Any]:
-        """Call tool using latest chuk-mcp."""
+        """Call a tool."""
         if not self._initialized:
             return {
                 "isError": True,
                 "error": "Transport not initialized"
             }
 
-        tool_timeout = timeout or self.default_timeout
-
         try:
             logger.debug(f"Calling tool {tool_name} with args: {arguments}")
             
-            raw_response = await asyncio.wait_for(
-                send_tools_call(
-                    self._read_stream, 
-                    self._write_stream, 
-                    tool_name, 
-                    arguments
-                ),
-                timeout=tool_timeout
+            response = await self._send_request(
+                "tools/call",
+                {
+                    "name": tool_name,
+                    "arguments": arguments
+                },
+                timeout=timeout
             )
             
-            logger.debug(f"Tool {tool_name} raw response: {raw_response}")
-            return self._normalize_tool_response(raw_response)
-
+            if 'error' in response:
+                return {
+                    "isError": True,
+                    "error": response['error'].get('message', 'Unknown error')
+                }
+            
+            # Extract result
+            result = response.get('result', {})
+            
+            # Handle content format
+            if 'content' in result:
+                content = result['content']
+                if isinstance(content, list) and len(content) == 1:
+                    content_item = content[0]
+                    if isinstance(content_item, dict) and content_item.get('type') == 'text':
+                        text_content = content_item.get('text', '')
+                        try:
+                            # Try to parse as JSON
+                            parsed_content = json.loads(text_content)
+                            return {
+                                "isError": False,
+                                "content": parsed_content
+                            }
+                        except json.JSONDecodeError:
+                            return {
+                                "isError": False,
+                                "content": text_content
+                            }
+                
+                return {
+                    "isError": False,
+                    "content": content
+                }
+            
+            return {
+                "isError": False,
+                "content": result
+            }
+            
         except asyncio.TimeoutError:
-            logger.error(f"Tool {tool_name} timed out after {tool_timeout}s")
             return {
                 "isError": True,
-                "error": f"Tool execution timed out after {tool_timeout}s"
+                "error": f"Tool execution timed out"
             }
         except Exception as e:
             logger.error(f"Error calling tool {tool_name}: {e}")
             return {
                 "isError": True,
-                "error": f"Tool execution failed: {str(e)}"
+                "error": str(e)
             }
 
     async def list_resources(self) -> Dict[str, Any]:
-        """List resources using latest chuk-mcp."""
-        if not HAS_RESOURCES_PROMPTS:
-            logger.debug("Resources/prompts not available in chuk-mcp")
-            return {}
-            
+        """List resources."""
         if not self._initialized:
             return {}
         
         try:
-            response = await asyncio.wait_for(
-                send_resources_list(self._read_stream, self._write_stream),
-                timeout=self.default_timeout
-            )
-            return response if isinstance(response, dict) else {}
-        except asyncio.TimeoutError:
-            logger.error("List resources timed out")
-            return {}
-        except Exception as e:
-            logger.debug(f"Error listing resources: {e}")
+            response = await self._send_request("resources/list", {}, timeout=10.0)
+            if 'error' in response:
+                logger.debug(f"Resources not supported: {response['error']}")
+                return {}
+            return response.get('result', {})
+        except Exception:
             return {}
 
     async def list_prompts(self) -> Dict[str, Any]:
-        """List prompts using latest chuk-mcp."""
-        if not HAS_RESOURCES_PROMPTS:
-            logger.debug("Resources/prompts not available in chuk-mcp")
-            return {}
-            
+        """List prompts."""
         if not self._initialized:
             return {}
         
         try:
-            response = await asyncio.wait_for(
-                send_prompts_list(self._read_stream, self._write_stream),
-                timeout=self.default_timeout
-            )
-            return response if isinstance(response, dict) else {}
-        except asyncio.TimeoutError:
-            logger.error("List prompts timed out")
-            return {}
-        except Exception as e:
-            logger.debug(f"Error listing prompts: {e}")
+            response = await self._send_request("prompts/list", {}, timeout=10.0)
+            if 'error' in response:
+                logger.debug(f"Prompts not supported: {response['error']}")
+                return {}
+            return response.get('result', {})
+        except Exception:
             return {}
 
-    def _normalize_tool_response(self, raw_response: Dict[str, Any]) -> Dict[str, Any]:
-        """Normalize response for backward compatibility."""
-        # Handle explicit error in response
-        if "error" in raw_response:
-            error_info = raw_response["error"]
-            if isinstance(error_info, dict):
-                error_msg = error_info.get("message", "Unknown error")
-            else:
-                error_msg = str(error_info)
-            
-            return {
-                "isError": True,
-                "error": error_msg
-            }
+    async def close(self) -> None:
+        """Close the transport."""
+        await self._cleanup()
 
-        # Handle successful response with result
-        if "result" in raw_response:
-            result = raw_response["result"]
-            
-            if isinstance(result, dict) and "content" in result:
-                return {
-                    "isError": False,
-                    "content": self._extract_content(result["content"])
-                }
-            else:
-                return {
-                    "isError": False,
-                    "content": result
-                }
-
-        # Handle direct content-based response
-        if "content" in raw_response:
-            return {
-                "isError": False,
-                "content": self._extract_content(raw_response["content"])
-            }
-
-        # Fallback
-        return {
-            "isError": False,
-            "content": raw_response
-        }
-
-    def _extract_content(self, content_list: Any) -> Any:
-        """Extract content from MCP content format."""
-        if not isinstance(content_list, list) or not content_list:
-            return content_list
+    async def _cleanup(self) -> None:
+        """Clean up resources."""
+        if self.sse_task:
+            self.sse_task.cancel()
+            try:
+                await self.sse_task
+            except asyncio.CancelledError:
+                pass
         
-        # Handle single content item
-        if len(content_list) == 1:
-            content_item = content_list[0]
-            if isinstance(content_item, dict):
-                if content_item.get("type") == "text":
-                    text_content = content_item.get("text", "")
-                    # Try to parse JSON, fall back to plain text
-                    try:
-                        return json.loads(text_content)
-                    except json.JSONDecodeError:
-                        return text_content
-                else:
-                    return content_item
+        if self.sse_stream_context:
+            try:
+                await self.sse_stream_context.__aexit__(None, None, None)
+            except Exception:
+                pass
         
-        # Multiple content items
-        return content_list
+        if self.stream_client:
+            await self.stream_client.aclose()
+        
+        if self.send_client:
+            await self.send_client.aclose()
+        
+        self._initialized = False
+        self.session_id = None
+        self.message_url = None
+        self.pending_requests.clear()
 
     def get_streams(self) -> List[tuple]:
-        """Provide streams for backward compatibility."""
-        if self._initialized and self._read_stream and self._write_stream:
-            return [(self._read_stream, self._write_stream)]
+        """Not applicable for this transport."""
         return []
 
     def is_connected(self) -> bool:
-        """Check connection status."""
-        return self._initialized and self._read_stream is not None and self._write_stream is not None
+        """Check if connected."""
+        return self._initialized and self.session_id is not None
 
     async def __aenter__(self):
         """Context manager support."""
@@ -372,6 +434,6 @@ class SSETransport(MCPBaseTransport):
         await self.close()
 
     def __repr__(self) -> str:
-        """String representation for debugging."""
+        """String representation."""
         status = "initialized" if self._initialized else "not initialized"
-        return f"SSETransport(status={status}, url={self.url})"
+        return f"SSETransport(status={status}, url={self.url}, session={self.session_id})"
