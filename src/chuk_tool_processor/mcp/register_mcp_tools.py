@@ -95,7 +95,7 @@ async def register_mcp_tools(
         except Exception as exc:
             logger.error("Failed to register MCP tool '%s': %s", tool_name, exc)
 
-    logger.info("MCP registration complete - %d tool(s) available", len(registered))
+    logger.debug("MCP registration complete - %d tool(s) available", len(registered))
     return registered
 
 
@@ -134,14 +134,14 @@ async def update_mcp_tools_stream_manager(
                 if tool and hasattr(tool, 'set_stream_manager'):
                     tool.set_stream_manager(new_stream_manager)
                     updated_count += 1
-                    logger.debug(f"Updated StreamManager for tool '{namespace}:{tool_name}'")
+                    logger.debug("Updated StreamManager for tool '%s:%s'", namespace, tool_name)
             except Exception as e:
-                logger.warning(f"Failed to update StreamManager for tool '{namespace}:{tool_name}': {e}")
+                logger.warning("Failed to update StreamManager for tool '%s:%s': %s", namespace, tool_name, e)
         
         action = "connected" if new_stream_manager else "disconnected"
-        logger.info(f"StreamManager {action} for {updated_count} tools in namespace '{namespace}'")
+        logger.debug("StreamManager %s for %d tools in namespace '%s'", action, updated_count, namespace)
         
     except Exception as e:
-        logger.error(f"Failed to update tools in namespace '{namespace}': {e}")
+        logger.error("Failed to update tools in namespace '%s': %s", namespace, e)
     
     return updated_count

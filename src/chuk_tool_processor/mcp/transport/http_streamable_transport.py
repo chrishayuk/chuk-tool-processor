@@ -107,7 +107,7 @@ class HTTPStreamableTransport(MCPBaseTransport):
         start_time = time.time()
         
         try:
-            logger.info(f"Initializing HTTP Streamable transport to {self.url}")
+            logger.debug("Initializing HTTP Streamable transport to %s", self.url)
             
             # Create HTTP parameters for chuk-mcp (following SSE pattern)
             headers = {}
@@ -117,7 +117,7 @@ class HTTPStreamableTransport(MCPBaseTransport):
             
             if self.session_id:
                 headers["X-Session-ID"] = self.session_id
-                logger.debug(f"Using session ID: {self.session_id}")
+                logger.debug("Using session ID: %s", self.session_id)
             
             http_params = StreamableHTTPParameters(
                 url=self.url,
@@ -154,7 +154,7 @@ class HTTPStreamableTransport(MCPBaseTransport):
                 self._metrics["initialization_time"] = init_time
                 self._metrics["last_ping_time"] = ping_time
                 
-                logger.info(f"HTTP Streamable transport initialized successfully in {init_time:.3f}s (ping: {ping_time:.3f}s)")
+                logger.debug("HTTP Streamable transport initialized successfully in %.3fs (ping: %.3fs)", init_time, ping_time)
                 return True
             else:
                 logger.warning("HTTP connection established but ping failed")
@@ -164,12 +164,12 @@ class HTTPStreamableTransport(MCPBaseTransport):
                 return True
 
         except asyncio.TimeoutError:
-            logger.error(f"HTTP Streamable initialization timed out after {self.connection_timeout}s")
+            logger.error("HTTP Streamable initialization timed out after %ss", self.connection_timeout)
             logger.error("This may indicate the server is not responding to MCP initialization")
             await self._cleanup()
             return False
         except Exception as e:
-            logger.error(f"Error initializing HTTP Streamable transport: {e}", exc_info=True)
+            logger.error("Error initializing HTTP Streamable transport: %s", e, exc_info=True)
             await self._cleanup()
             return False
 
@@ -180,10 +180,11 @@ class HTTPStreamableTransport(MCPBaseTransport):
         
         # Log final metrics (enhanced from SSE)
         if self.enable_metrics and self._metrics["total_calls"] > 0:
-            logger.info(
-                f"HTTP Streamable transport closing - Total calls: {self._metrics['total_calls']}, "
-                f"Success rate: {(self._metrics['successful_calls']/self._metrics['total_calls']*100):.1f}%, "
-                f"Avg response time: {self._metrics['avg_response_time']:.3f}s"
+            logger.debug(
+                "HTTP Streamable transport closing - Total calls: %d, Success rate: %.1f%%, Avg response time: %.3fs",
+                self._metrics["total_calls"],
+                (self._metrics["successful_calls"] / self._metrics["total_calls"] * 100),
+                self._metrics["avg_response_time"]
             )
             
         try:
@@ -192,7 +193,7 @@ class HTTPStreamableTransport(MCPBaseTransport):
                 logger.debug("HTTP Streamable context closed")
                 
         except Exception as e:
-            logger.debug(f"Error during transport close: {e}")
+            logger.debug("Error during transport close: %s", e)
         finally:
             await self._cleanup()
 
@@ -219,14 +220,14 @@ class HTTPStreamableTransport(MCPBaseTransport):
             if self.enable_metrics:
                 ping_time = time.time() - start_time
                 self._metrics["last_ping_time"] = ping_time
-                logger.debug(f"Ping completed in {ping_time:.3f}s: {result}")
+                logger.debug("Ping completed in %.3fs: %s", ping_time, result)
             
             return bool(result)
         except asyncio.TimeoutError:
             logger.error("Ping timed out")
             return False
         except Exception as e:
-            logger.error(f"Ping failed: {e}")
+            logger.error("Ping failed: %s", e)
             return False
 
     async def get_tools(self) -> List[Dict[str, Any]]:
@@ -248,12 +249,12 @@ class HTTPStreamableTransport(MCPBaseTransport):
             elif isinstance(tools_response, list):
                 tools = tools_response
             else:
-                logger.warning(f"Unexpected tools response type: {type(tools_response)}")
+                logger.warning("Unexpected tools response type: %s", type(tools_response))
                 tools = []
             
             if self.enable_metrics:
                 response_time = time.time() - start_time
-                logger.debug(f"Retrieved {len(tools)} tools in {response_time:.3f}s")
+                logger.debug("Retrieved %d tools in %.3fs", len(tools), response_time)
             
             return tools
             
@@ -261,7 +262,7 @@ class HTTPStreamableTransport(MCPBaseTransport):
             logger.error("Get tools timed out")
             return []
         except Exception as e:
-            logger.error(f"Error getting tools: {e}")
+            logger.error("Error getting tools: %s", e)
             return []
 
     async def call_tool(self, tool_name: str, arguments: Dict[str, Any], 
@@ -280,7 +281,7 @@ class HTTPStreamableTransport(MCPBaseTransport):
             self._metrics["total_calls"] += 1
 
         try:
-            logger.debug(f"Calling tool '{tool_name}' with timeout {tool_timeout}s")
+            logger.debug("Calling tool '%s' with timeout %ss", tool_name, tool_timeout)
             
             raw_response = await asyncio.wait_for(
                 send_tools_call(
@@ -299,9 +300,9 @@ class HTTPStreamableTransport(MCPBaseTransport):
                 self._update_metrics(response_time, not result.get("isError", False))
                 
             if not result.get("isError", False):
-                logger.debug(f"Tool '{tool_name}' completed successfully in {response_time:.3f}s")
+                logger.debug("Tool '%s' completed successfully in %.3fs", tool_name, response_time)
             else:
-                logger.warning(f"Tool '{tool_name}' failed in {response_time:.3f}s: {result.get('error', 'Unknown error')}")
+                logger.warning("Tool '%s' failed in %.3fs: %s", tool_name, response_time, result.get('error', 'Unknown error'))
             
             return result
 
@@ -311,7 +312,7 @@ class HTTPStreamableTransport(MCPBaseTransport):
                 self._update_metrics(response_time, False)
                 
             error_msg = f"Tool execution timed out after {tool_timeout}s"
-            logger.error(f"Tool '{tool_name}' {error_msg}")
+            logger.error("Tool '%s' %s", tool_name, error_msg)
             return {
                 "isError": True,
                 "error": error_msg
@@ -322,7 +323,7 @@ class HTTPStreamableTransport(MCPBaseTransport):
                 self._update_metrics(response_time, False)
                 
             error_msg = f"Tool execution failed: {str(e)}"
-            logger.error(f"Tool '{tool_name}' error: {error_msg}")
+            logger.error("Tool '%s' error: %s", tool_name, error_msg)
             return {
                 "isError": True,
                 "error": error_msg
@@ -359,7 +360,7 @@ class HTTPStreamableTransport(MCPBaseTransport):
             logger.error("List resources timed out")
             return {}
         except Exception as e:
-            logger.debug(f"Error listing resources: {e}")
+            logger.debug("Error listing resources: %s", e)
             return {}
 
     async def list_prompts(self) -> Dict[str, Any]:
@@ -381,7 +382,7 @@ class HTTPStreamableTransport(MCPBaseTransport):
             logger.error("List prompts timed out")
             return {}
         except Exception as e:
-            logger.debug(f"Error listing prompts: {e}")
+            logger.debug("Error listing prompts: %s", e)
             return {}
 
     def _normalize_tool_response(self, raw_response: Dict[str, Any]) -> Dict[str, Any]:

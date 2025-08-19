@@ -89,8 +89,8 @@ async def setup_mcp_sse(  # noqa: C901 - long but just a config facade
         max_retries=max_retries,
     )
 
-    logger.info(
-        "MCP (SSE) initialised - %s tool%s registered into namespace '%s'",
+    logger.debug(
+        "MCP (SSE) initialised - %d tool%s registered into namespace '%s'",
         len(registered),
         "" if len(registered) == 1 else "s",
         namespace,

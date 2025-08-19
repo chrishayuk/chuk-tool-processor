@@ -53,7 +53,7 @@ class StdioTransport(MCPBaseTransport):
             return True
             
         try:
-            logger.info("Initializing STDIO transport...")
+            logger.debug("Initializing STDIO transport...")
             self._context = stdio_client(self.server_params)
             self._streams = await self._context.__aenter__()
             
@@ -61,13 +61,13 @@ class StdioTransport(MCPBaseTransport):
             init_result = await send_initialize(*self._streams)
             if init_result:
                 self._initialized = True
-                logger.info("STDIO transport initialized successfully")
+                logger.debug("STDIO transport initialized successfully")
                 return True
             else:
                 await self._cleanup()
                 return False
         except Exception as e:
-            logger.error(f"Error initializing STDIO transport: {e}")
+            logger.error("Error initializing STDIO transport: %s", e)
             await self._cleanup()
             return False
 
@@ -78,7 +78,7 @@ class StdioTransport(MCPBaseTransport):
                 # Simple delegation - the StreamManager now calls this in the correct context
                 await self._context.__aexit__(None, None, None)
             except Exception as e:
-                logger.debug(f"Error during close: {e}")
+                logger.debug("Error during close: %s", e)
             finally:
                 await self._cleanup()
 

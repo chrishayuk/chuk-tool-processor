@@ -110,8 +110,8 @@ async def setup_mcp_http_streamable(
         max_retries=max_retries,
     )
 
-    logger.info(
-        "MCP (HTTP Streamable) initialised - %s tool%s registered into namespace '%s'",
+    logger.debug(
+        "MCP (HTTP Streamable) initialised - %d tool%s registered into namespace '%s'",
         len(registered),
         "" if len(registered) == 1 else "s",
         namespace,

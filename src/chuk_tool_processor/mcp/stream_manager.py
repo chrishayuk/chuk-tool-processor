@@ -73,7 +73,7 @@ class StreamManager:
             )
             return inst
         except asyncio.TimeoutError:
-            logger.error(f"StreamManager initialization timed out after {initialization_timeout}s")
+            logger.error("StreamManager initialization timed out after %ss", initialization_timeout)
             raise RuntimeError(f"StreamManager initialization timed out after {initialization_timeout}s")
 
     @classmethod
@@ -99,7 +99,7 @@ class StreamManager:
             )
             return inst
         except asyncio.TimeoutError:
-            logger.error(f"SSE StreamManager initialization timed out after {initialization_timeout}s")
+            logger.error("SSE StreamManager initialization timed out after %ss", initialization_timeout)
             raise RuntimeError(f"SSE StreamManager initialization timed out after {initialization_timeout}s")
 
     @classmethod
@@ -125,7 +125,7 @@ class StreamManager:
             )
             return inst
         except asyncio.TimeoutError:
-            logger.error(f"HTTP Streamable StreamManager initialization timed out after {initialization_timeout}s")
+            logger.error("HTTP Streamable StreamManager initialization timed out after %ss", initialization_timeout)
             raise RuntimeError(f"HTTP Streamable StreamManager initialization timed out after {initialization_timeout}s")
 
     # ------------------------------------------------------------------ #
@@ -196,7 +196,7 @@ class StreamManager:
                         else:
                             sse_url = "http://localhost:8000"
                             api_key = None
-                            logger.warning(f"No URL configured for SSE transport, using default: {sse_url}")
+                            logger.warning("No URL configured for SSE transport, using default: %s", sse_url)
                         
                         transport = SSETransport(
                             sse_url,
@@ -215,7 +215,7 @@ class StreamManager:
                             http_url = "http://localhost:8000"
                             api_key = None
                             session_id = None
-                            logger.warning(f"No URL configured for HTTP Streamable transport, using default: {http_url}")
+                            logger.warning("No URL configured for HTTP Streamable transport, using default: %s", http_url)
                         
                         transport = HTTPStreamableTransport(
                             http_url,
@@ -252,13 +252,13 @@ class StreamManager:
                             "status": status,
                         }
                     )
-                    logger.info("Initialised %s - %d tool(s)", server_name, len(tools))
+                    logger.debug("Initialised %s - %d tool(s)", server_name, len(tools))
                 except asyncio.TimeoutError:
                     logger.error("Timeout initialising %s", server_name)
                 except Exception as exc:
                     logger.error("Error initialising %s: %s", server_name, exc)
 
-            logger.info(
+            logger.debug(
                 "StreamManager ready - %d server(s), %d tool(s)",
                 len(self.transports),
                 len(self.all_tools),
@@ -307,13 +307,13 @@ class StreamManager:
                     self.server_info.append(
                         {"id": idx, "name": name, "tools": len(tools), "status": status}
                     )
-                    logger.info("Initialised SSE %s - %d tool(s)", name, len(tools))
+                    logger.debug("Initialised SSE %s - %d tool(s)", name, len(tools))
                 except asyncio.TimeoutError:
                     logger.error("Timeout initialising SSE %s", name)
                 except Exception as exc:
                     logger.error("Error initialising SSE %s: %s", name, exc)
 
-            logger.info(
+            logger.debug(
                 "StreamManager ready - %d SSE server(s), %d tool(s)",
                 len(self.transports),
                 len(self.all_tools),
@@ -364,13 +364,13 @@ class StreamManager:
                     self.server_info.append(
                         {"id": idx, "name": name, "tools": len(tools), "status": status}
                     )
-                    logger.info("Initialised HTTP Streamable %s - %d tool(s)", name, len(tools))
+                    logger.debug("Initialised HTTP Streamable %s - %d tool(s)", name, len(tools))
                 except asyncio.TimeoutError:
                     logger.error("Timeout initialising HTTP Streamable %s", name)
                 except Exception as exc:
                     logger.error("Error initialising HTTP Streamable %s: %s", name, exc)
 
-            logger.info(
+            logger.debug(
                 "StreamManager ready - %d HTTP Streamable server(s), %d tool(s)",
                 len(self.transports),
                 len(self.all_tools),
@@ -395,20 +395,20 @@ class StreamManager:
             return []
             
         if server_name not in self.transports:
-            logger.error(f"Server '{server_name}' not found in transports")
+            logger.error("Server '%s' not found in transports", server_name)
             return []
         
         transport = self.transports[server_name]
         
         try:
             tools = await asyncio.wait_for(transport.get_tools(), timeout=10.0)
-            logger.debug(f"Found {len(tools)} tools for server {server_name}")
+            logger.debug("Found %d tools for server %s", len(tools), server_name)
             return tools
         except asyncio.TimeoutError:
-            logger.error(f"Timeout listing tools for server {server_name}")
+            logger.error("Timeout listing tools for server %s", server_name)
             return []
         except Exception as e:
-            logger.error(f"Error listing tools for server {server_name}: {e}")
+            logger.error("Error listing tools for server %s: %s", server_name, e)
             return []
 
     # ------------------------------------------------------------------ #
@@ -541,7 +541,7 @@ class StreamManager:
             self._closed = True
             return
         
-        logger.debug(f"Closing {len(self.transports)} transports...")
+        logger.debug("Closing %d transports...", len(self.transports))
         
         try:
             # Use shield to protect the cleanup operation from cancellation
@@ -551,7 +551,7 @@ class StreamManager:
             logger.debug("Close operation cancelled, performing synchronous cleanup")
             self._sync_cleanup()
         except Exception as e:
-            logger.debug(f"Error during close: {e}")
+            logger.debug("Error during close: %s", e)
             self._sync_cleanup()
         finally:
             self._closed = True
@@ -565,7 +565,7 @@ class StreamManager:
         try:
             await self._concurrent_close(transport_items, close_results)
         except Exception as e:
-            logger.debug(f"Concurrent close failed: {e}, falling back to sequential close")
+            logger.debug("Concurrent close failed: %s, falling back to sequential close", e)
             # Strategy 2: Fall back to sequential close
             await self._sequential_close(transport_items, close_results)
         
@@ -575,7 +575,7 @@ class StreamManager:
         # Log summary
         if close_results:
             successful_closes = sum(1 for _, success, _ in close_results if success)
-            logger.debug(f"Transport cleanup: {successful_closes}/{len(close_results)} closed successfully")
+            logger.debug("Transport cleanup: %d/%d closed successfully", successful_closes, len(close_results))
 
     async def _concurrent_close(self, transport_items: List[Tuple[str, MCPBaseTransport]], close_results: List) -> None:
         """Try to close all transports concurrently."""
@@ -602,10 +602,10 @@ class StreamManager:
                 for i, (name, _) in enumerate(close_tasks):
                     result = results[i] if i < len(results) else None
                     if isinstance(result, Exception):
-                        logger.debug(f"Transport {name} close failed: {result}")
+                        logger.debug("Transport %s close failed: %s", name, result)
                         close_results.append((name, False, str(result)))
                     else:
-                        logger.debug(f"Transport {name} closed successfully")
+                        logger.debug("Transport %s closed successfully", name)
                         close_results.append((name, True, None))
                         
             except asyncio.TimeoutError:
@@ -632,16 +632,16 @@ class StreamManager:
                     self._close_single_transport(name, transport),
                     timeout=0.5  # Short timeout per transport
                 )
-                logger.debug(f"Closed transport: {name}")
+                logger.debug("Closed transport: %s", name)
                 close_results.append((name, True, None))
             except asyncio.TimeoutError:
-                logger.debug(f"Transport {name} close timed out (normal during shutdown)")
+                logger.debug("Transport %s close timed out (normal during shutdown)", name)
                 close_results.append((name, False, "timeout"))
             except asyncio.CancelledError:
-                logger.debug(f"Transport {name} close cancelled during event loop shutdown")
+                logger.debug("Transport %s close cancelled during event loop shutdown", name)
                 close_results.append((name, False, "cancelled"))
             except Exception as e:
-                logger.debug(f"Error closing transport {name}: {e}")
+                logger.debug("Error closing transport %s: %s", name, e)
                 close_results.append((name, False, str(e)))
 
     async def _close_single_transport(self, name: str, transport: MCPBaseTransport) -> None:
@@ -650,9 +650,9 @@ class StreamManager:
             if hasattr(transport, 'close') and callable(transport.close):
                 await transport.close()
             else:
-                logger.debug(f"Transport {name} has no close method")
+                logger.debug("Transport %s has no close method", name)
         except Exception as e:
-            logger.debug(f"Error closing transport {name}: {e}")
+            logger.debug("Error closing transport %s: %s", name, e)
             raise
 
     def _sync_cleanup(self) -> None:
@@ -660,9 +660,9 @@ class StreamManager:
         try:
             transport_count = len(self.transports)
             self._cleanup_state()
-            logger.debug(f"Synchronous cleanup completed for {transport_count} transports")
+            logger.debug("Synchronous cleanup completed for %d transports", transport_count)
         except Exception as e:
-            logger.debug(f"Error during synchronous cleanup: {e}")
+            logger.debug("Error during synchronous cleanup: %s", e)
 
     def _cleanup_state(self) -> None:
         """Clean up internal state synchronously."""
@@ -673,7 +673,7 @@ class StreamManager:
             self.all_tools.clear()
             self.server_names.clear()
         except Exception as e:
-            logger.debug(f"Error during state cleanup: {e}")
+            logger.debug("Error during state cleanup: %s", e)
 
     # ------------------------------------------------------------------ #
     #  backwards-compat: streams helper                                  #

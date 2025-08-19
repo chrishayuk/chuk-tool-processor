@@ -58,15 +58,15 @@ async def log_context_span(
     prev = log_context.get_copy()
     log_context.update(span_ctx)
 
-    logger.info("Starting %s", operation)
+    logger.debug("Starting %s", operation)
     try:
         yield
         if log_duration:
-            logger.info(
+            logger.debug(
                 "Completed %s", operation, extra={"context": {"duration": time.time() - start}}
             )
         else:
-            logger.info("Completed %s", operation)
+            logger.debug("Completed %s", operation)
     except Exception as exc:
         logger.exception(
             "Error in %s: %s", operation, exc, extra={"context": {"duration": time.time() - start}}
@@ -97,10 +97,10 @@ async def request_logging(
     logger = get_logger("chuk_tool_processor.request")
     request_id = log_context.start_request(request_id)
     start = time.time()
-    logger.info("Starting request %s", request_id)
+    logger.debug("Starting request %s", request_id)
     try:
         yield request_id
-        logger.info(
+        logger.debug(
             "Completed request %s",
             request_id,
             extra={"context": {"duration": time.time() - start}},
@@ -184,4 +184,4 @@ async def log_tool_call(tool_call: Any, tool_result: Any) -> None:
     if tool_result.error:
         logger.error("Tool %s failed: %s", tool_call.tool, tool_result.error, extra={"context": ctx})
     else:
-        logger.info("Tool %s succeeded in %.3fs", tool_call.tool, dur, extra={"context": ctx})
+        logger.debug("Tool %s succeeded in %.3fs", tool_call.tool, dur, extra={"context": ctx})

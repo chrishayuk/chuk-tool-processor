@@ -62,7 +62,7 @@ class SSETransport(MCPBaseTransport):
             return True
         
         try:
-            logger.info("Initializing SSE transport...")
+            logger.debug("Initializing SSE transport...")
             
             # Create HTTP clients
             self.stream_client = httpx.AsyncClient(timeout=self.connection_timeout)
@@ -70,7 +70,7 @@ class SSETransport(MCPBaseTransport):
             
             # Connect to SSE stream
             sse_url = f"{self.url}/sse"
-            logger.debug(f"Connecting to SSE: {sse_url}")
+            logger.debug("Connecting to SSE: %s", sse_url)
             
             self.sse_stream_context = self.stream_client.stream(
                 'GET', sse_url, headers=self._get_headers()
@@ -78,10 +78,10 @@ class SSETransport(MCPBaseTransport):
             self.sse_response = await self.sse_stream_context.__aenter__()
             
             if self.sse_response.status_code != 200:
-                logger.error(f"SSE connection failed: {self.sse_response.status_code}")
+                logger.error("SSE connection failed: %s", self.sse_response.status_code)
                 return False
             
-            logger.info("SSE streaming connection established")
+            logger.debug("SSE streaming connection established")
             
             # Start SSE processing task
             self.sse_task = asyncio.create_task(self._process_sse_stream())
@@ -97,7 +97,7 @@ class SSETransport(MCPBaseTransport):
                 logger.error("Failed to get session info from SSE")
                 return False
             
-            logger.info(f"Session ready: {self.session_id}")
+            logger.debug("Session ready: %s", self.session_id)
             
             # Now do MCP initialization
             try:
@@ -111,22 +111,22 @@ class SSETransport(MCPBaseTransport):
                 })
                 
                 if 'error' in init_response:
-                    logger.error(f"Initialize failed: {init_response['error']}")
+                    logger.error("Initialize failed: %s", init_response['error'])
                     return False
                 
                 # Send initialized notification
                 await self._send_notification("notifications/initialized")
                 
                 self._initialized = True
-                logger.info("SSE transport initialized successfully")
+                logger.debug("SSE transport initialized successfully")
                 return True
                 
             except Exception as e:
-                logger.error(f"MCP initialization failed: {e}")
+                logger.error("MCP initialization failed: %s", e)
                 return False
                 
         except Exception as e:
-            logger.error(f"Error initializing SSE transport: {e}", exc_info=True)
+            logger.error("Error initializing SSE transport: %s", e, exc_info=True)
             await self._cleanup()
             return False
 
@@ -148,7 +148,7 @@ class SSETransport(MCPBaseTransport):
                     if 'session_id=' in endpoint_path:
                         self.session_id = endpoint_path.split('session_id=')[1].split('&')[0]
                     
-                    logger.debug(f"Got session info: {self.session_id}")
+                    logger.debug("Got session info: %s", self.session_id)
                     continue
                 
                 # Handle JSON-RPC responses
@@ -170,13 +170,13 @@ class SSETransport(MCPBaseTransport):
                                 future = self.pending_requests.pop(request_id)
                                 if not future.done():
                                     future.set_result(response_data)
-                                    logger.debug(f"Resolved request: {request_id}")
+                                    logger.debug("Resolved request: %s", request_id)
                     
                     except json.JSONDecodeError:
                         pass  # Not JSON, ignore
                         
         except Exception as e:
-            logger.error(f"SSE stream error: {e}")
+            logger.error("SSE stream error: %s", e)
 
     async def _send_request(self, method: str, params: Dict[str, Any] = None, 
                            timeout: Optional[float] = None) -> Dict[str, Any]:
@@ -273,15 +273,15 @@ class SSETransport(MCPBaseTransport):
             response = await self._send_request("tools/list", {})
             
             if 'error' in response:
-                logger.error(f"Error getting tools: {response['error']}")
+                logger.error("Error getting tools: %s", response['error'])
                 return []
             
             tools = response.get('result', {}).get('tools', [])
-            logger.debug(f"Retrieved {len(tools)} tools")
+            logger.debug("Retrieved %d tools", len(tools))
             return tools
             
         except Exception as e:
-            logger.error(f"Error getting tools: {e}")
+            logger.error("Error getting tools: %s", e)
             return []
 
     async def call_tool(self, tool_name: str, arguments: Dict[str, Any], 
@@ -294,7 +294,7 @@ class SSETransport(MCPBaseTransport):
             }
 
         try:
-            logger.debug(f"Calling tool {tool_name} with args: {arguments}")
+            logger.debug("Calling tool %s with args: %s", tool_name, arguments)
             
             response = await self._send_request(
                 "tools/call",
@@ -347,10 +347,10 @@ class SSETransport(MCPBaseTransport):
         except asyncio.TimeoutError:
             return {
                 "isError": True,
-                "error": f"Tool execution timed out"
+                "error": "Tool execution timed out"
             }
         except Exception as e:
-            logger.error(f"Error calling tool {tool_name}: {e}")
+            logger.error("Error calling tool %s: %s", tool_name, e)
             return {
                 "isError": True,
                 "error": str(e)
@@ -364,7 +364,7 @@ class SSETransport(MCPBaseTransport):
         try:
             response = await self._send_request("resources/list", {}, timeout=10.0)
             if 'error' in response:
-                logger.debug(f"Resources not supported: {response['error']}")
+                logger.debug("Resources not supported: %s", response['error'])
                 return {}
             return response.get('result', {})
         except Exception:
@@ -378,7 +378,7 @@ class SSETransport(MCPBaseTransport):
         try:
             response = await self._send_request("prompts/list", {}, timeout=10.0)
             if 'error' in response:
-                logger.debug(f"Prompts not supported: {response['error']}")
+                logger.debug("Prompts not supported: %s", response['error'])
                 return {}
             return response.get('result', {})
         except Exception:

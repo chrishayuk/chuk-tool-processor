@@ -18,7 +18,7 @@ async def test_log_context_span():
     """Test the log_context_span context manager."""
     # Mock the logger
     mock_logger = MagicMock()
-    mock_logger.info = MagicMock()
+    mock_logger.debug = MagicMock()
     mock_logger.exception = MagicMock()
     
     with patch('chuk_tool_processor.logging.helpers.get_logger', return_value=mock_logger):
@@ -31,12 +31,12 @@ async def test_log_context_span():
             assert "start_time" in log_context.context
             
             # Should have logged start
-            mock_logger.info.assert_called_with("Starting %s", "test_operation")
-            mock_logger.info.reset_mock()
+            mock_logger.debug.assert_called_with("Starting %s", "test_operation")
+            mock_logger.debug.reset_mock()
         
         # Should have logged completion
-        mock_logger.info.assert_called_once()
-        args, kwargs = mock_logger.info.call_args
+        mock_logger.debug.assert_called_once()
+        args, kwargs = mock_logger.debug.call_args
         assert args[0] == "Completed %s"
         assert args[1] == "test_operation"
         assert "context" in kwargs["extra"]
@@ -48,19 +48,19 @@ async def test_log_context_span_no_duration():
     """Test log_context_span without duration logging."""
     # Mock the logger
     mock_logger = MagicMock()
-    mock_logger.info = MagicMock()
+    mock_logger.debug = MagicMock()
     
     with patch('chuk_tool_processor.logging.helpers.get_logger', return_value=mock_logger):
         # Use the context manager with log_duration=False
         async with log_context_span("test_operation", log_duration=False):
-            mock_logger.info.assert_called_with("Starting %s", "test_operation")
-            mock_logger.info.reset_mock()
+            mock_logger.debug.assert_called_with("Starting %s", "test_operation")
+            mock_logger.debug.reset_mock()
         
         # Should have logged completion without duration
-        mock_logger.info.assert_called_with("Completed %s", "test_operation")
+        mock_logger.debug.assert_called_with("Completed %s", "test_operation")
         # No extra context with duration
-        assert "extra" not in mock_logger.info.call_args[1] or \
-               "duration" not in mock_logger.info.call_args[1].get("extra", {}).get("context", {})
+        assert "extra" not in mock_logger.debug.call_args[1] or \
+               "duration" not in mock_logger.debug.call_args[1].get("extra", {}).get("context", {})
 
 
 @pytest.mark.asyncio
@@ -68,7 +68,7 @@ async def test_log_context_span_with_exception():
     """Test log_context_span with an exception."""
     # Mock the logger
     mock_logger = MagicMock()
-    mock_logger.info = MagicMock()
+    mock_logger.debug = MagicMock()
     mock_logger.exception = MagicMock()
     
     with patch('chuk_tool_processor.logging.helpers.get_logger', return_value=mock_logger):
@@ -92,7 +92,7 @@ async def test_request_logging():
     """Test the request_logging context manager."""
     # Mock the logger
     mock_logger = MagicMock()
-    mock_logger.info = MagicMock()
+    mock_logger.debug = MagicMock()
     mock_logger.exception = MagicMock()
     
     with patch('chuk_tool_processor.logging.helpers.get_logger', return_value=mock_logger):
@@ -106,12 +106,12 @@ async def test_request_logging():
             assert log_context.context["request_id"] == "test-request"
             
             # Should have logged start
-            mock_logger.info.assert_called_with("Starting request %s", "test-request")
-            mock_logger.info.reset_mock()
+            mock_logger.debug.assert_called_with("Starting request %s", "test-request")
+            mock_logger.debug.reset_mock()
         
         # Should have logged completion
-        mock_logger.info.assert_called_once()
-        args, kwargs = mock_logger.info.call_args
+        mock_logger.debug.assert_called_once()
+        args, kwargs = mock_logger.debug.call_args
         assert args[0] == "Completed request %s"
         assert args[1] == "test-request"
         assert "context" in kwargs["extra"]
@@ -144,7 +144,7 @@ async def test_request_logging_with_exception():
     """Test request_logging with an exception."""
     # Mock the logger
     mock_logger = MagicMock()
-    mock_logger.info = MagicMock()
+    mock_logger.debug = MagicMock()
     mock_logger.exception = MagicMock()
     
     with patch('chuk_tool_processor.logging.helpers.get_logger', return_value=mock_logger):
@@ -173,7 +173,7 @@ async def test_log_tool_call_success():
     
     # Mock the logger
     mock_logger = MagicMock()
-    mock_logger.info = MagicMock()
+    mock_logger.debug = MagicMock()
     mock_logger.error = MagicMock()
     
     # Mock tool call and result with properly configured MagicMocks
@@ -197,17 +197,16 @@ async def test_log_tool_call_success():
     # Configure attempts to return an integer rather than a MagicMock
     mock_result.attempts = 1
     mock_result.cached = False
-    type(mock_result).attempts = type('', (), {'__get__': lambda *args: 1})
     
     with patch('chuk_tool_processor.logging.helpers.get_logger', return_value=mock_logger):
         # Log the tool call
         await log_tool_call(mock_tool_call, mock_result)
         
         # Should have logged success
-        mock_logger.info.assert_called_once()
+        mock_logger.debug.assert_called_once()
         mock_logger.error.assert_not_called()
         
-        args, kwargs = mock_logger.info.call_args
+        args, kwargs = mock_logger.debug.call_args
         assert args[0] == "Tool %s succeeded in %.3fs"
         assert args[1] == "test_tool"
         assert isinstance(args[2], float)
@@ -232,7 +231,7 @@ async def test_log_tool_call_error():
     
     # Mock the logger
     mock_logger = MagicMock()
-    mock_logger.info = MagicMock()
+    mock_logger.debug = MagicMock()
     mock_logger.error = MagicMock()
     
     # Mock tool call and result with properly configured MagicMocks
@@ -253,8 +252,6 @@ async def test_log_tool_call_error():
     mock_result.end_time = end_time
     mock_result.machine = "test-machine"
     mock_result.pid = 1234
-    # Configure attempts to return an integer rather than a MagicMock
-    type(mock_result).attempts = type('', (), {'__get__': lambda *args: 1})
     
     with patch('chuk_tool_processor.logging.helpers.get_logger', return_value=mock_logger):
         # Log the tool call
@@ -262,7 +259,7 @@ async def test_log_tool_call_error():
         
         # Should have logged error
         mock_logger.error.assert_called_once()
-        mock_logger.info.assert_not_called()
+        mock_logger.debug.assert_not_called()
         
         args, kwargs = mock_logger.error.call_args
         assert args[0] == "Tool %s failed: %s"
@@ -285,9 +282,9 @@ async def test_log_tool_call_with_optional_fields():
     
     # Mock the logger properly
     mock_logger = MagicMock()
-    mock_info = MagicMock()
+    mock_debug = MagicMock()
     mock_error = MagicMock()
-    mock_logger.info = mock_info
+    mock_logger.debug = mock_debug
     mock_logger.error = mock_error
     
     # Mock tool call and result with properly configured MagicMocks
@@ -320,9 +317,9 @@ async def test_log_tool_call_with_optional_fields():
         # Log the tool call
         await log_tool_call(mock_tool_call, mock_result)
         
-        # Check basic info was logged
-        mock_info.assert_called_once()
-        args, kwargs = mock_info.call_args
+        # Check basic debug was logged
+        mock_debug.assert_called_once()
+        args, kwargs = mock_debug.call_args
         
         # First arg is format string, second should be tool name
         assert args[1] == "test_tool"
