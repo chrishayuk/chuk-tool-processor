@@ -1,81 +1,104 @@
-# tests/mcp/transport/test_stdio_transport.py - FIXED METRICS TEST
+# tests/mcp/transport/test_http_streamable_transport.py
 """
-Tests for StdioTransport class with consistent interface.
+Tests for HTTPStreamableTransport class with consistent interface.
 """
 import asyncio
-import json
 import pytest
 from unittest.mock import Mock, AsyncMock, patch
 
-from chuk_tool_processor.mcp.transport.stdio_transport import StdioTransport
-from chuk_mcp.transports.stdio.parameters import StdioParameters
+from chuk_tool_processor.mcp.transport.http_streamable_transport import HTTPStreamableTransport
 
 
-class TestStdioTransport:
-    """Test StdioTransport class with consistent interface."""
+class TestHTTPStreamableTransport:
+    """Test HTTPStreamableTransport class with consistent interface."""
     
     @pytest.fixture
     def transport(self):
-        """Create StdioTransport instance with consistent parameters."""
-        server_params = {
-            'command': 'python',
-            'args': ['-m', 'test_server'],
-            'env': {'TEST': 'true'}
-        }
-        return StdioTransport(
-            server_params,
+        """Create HTTPStreamableTransport instance with consistent parameters."""
+        return HTTPStreamableTransport(
+            "http://test.com",
+            api_key="api_key",
             connection_timeout=30.0,
             default_timeout=30.0,
+            session_id="test-session",
             enable_metrics=True
         )
     
     @pytest.fixture
     def transport_no_metrics(self):
-        """Create StdioTransport instance with metrics disabled."""
-        server_params = {'command': 'python', 'args': ['-m', 'test_server']}
-        return StdioTransport(server_params, enable_metrics=False)
+        """Create HTTPStreamableTransport instance with metrics disabled."""
+        return HTTPStreamableTransport(
+            "http://test.com",
+            enable_metrics=False
+        )
 
-    def test_init_with_dict_params(self, transport):
-        """Test initialization with dictionary parameters."""
-        assert isinstance(transport.server_params, StdioParameters)
-        assert transport.server_params.command == 'python'
-        assert transport.server_params.args == ['-m', 'test_server']
+    def test_init_url_normalization(self):
+        """Test URL normalization to /mcp endpoint."""
+        # URL without /mcp gets it added
+        transport = HTTPStreamableTransport("http://test.com")
+        assert transport.url == "http://test.com/mcp"
+        
+        # URL with /mcp is preserved
+        transport = HTTPStreamableTransport("http://test.com/mcp")
+        assert transport.url == "http://test.com/mcp"
+        
+        # URL with trailing slash handled correctly
+        transport = HTTPStreamableTransport("http://test.com/")
+        assert transport.url == "http://test.com/mcp"
+
+    def test_init_parameters(self, transport):
+        """Test initialization with consistent parameters."""
+        assert transport.url == "http://test.com/mcp"
+        assert transport.api_key == "api_key"
+        assert transport.session_id == "test-session"
         assert transport.enable_metrics is True
         assert transport.default_timeout == 30.0
-
-    def test_init_with_stdio_parameters(self):
-        """Test initialization with StdioParameters object."""
-        params = StdioParameters(command='test', args=['arg1'])
-        transport = StdioTransport(params)
-        assert transport.server_params is params
-        assert transport.enable_metrics is True  # default
+        assert transport.connection_timeout == 30.0
 
     @pytest.mark.asyncio
     async def test_initialize_success(self, transport):
-        """Test successful STDIO transport initialization with metrics tracking."""
+        """Test successful HTTP Streamable transport initialization with metrics tracking."""
         mock_context = AsyncMock()
         mock_streams = (Mock(), Mock())  # (read_stream, write_stream)
         
-        with patch('chuk_tool_processor.mcp.transport.stdio_transport.stdio_client', return_value=mock_context):
-            with patch('chuk_tool_processor.mcp.transport.stdio_transport.send_initialize', AsyncMock(return_value=True)):
+        with patch('chuk_tool_processor.mcp.transport.http_streamable_transport.http_client', return_value=mock_context):
+            with patch('chuk_tool_processor.mcp.transport.http_streamable_transport.send_ping', AsyncMock(return_value=True)):
                 mock_context.__aenter__.return_value = mock_streams
                 
                 result = await transport.initialize()
                 
                 assert result is True
                 assert transport._initialized is True
-                assert transport._streams == mock_streams
+                assert transport._read_stream == mock_streams[0]
+                assert transport._write_stream == mock_streams[1]
                 
                 # Check metrics were updated
                 metrics = transport.get_metrics()
                 assert metrics["initialization_time"] > 0
+                assert metrics["last_ping_time"] > 0
+
+    @pytest.mark.asyncio
+    async def test_initialize_ping_fails(self, transport):
+        """Test HTTP Streamable initialization when ping fails but connection succeeds."""
+        mock_context = AsyncMock()
+        mock_streams = (Mock(), Mock())
+        
+        with patch('chuk_tool_processor.mcp.transport.http_streamable_transport.http_client', return_value=mock_context):
+            with patch('chuk_tool_processor.mcp.transport.http_streamable_transport.send_ping', AsyncMock(return_value=False)):
+                mock_context.__aenter__.return_value = mock_streams
+                
+                result = await transport.initialize()
+                
+                # Still considered initialized even if ping fails
+                assert result is True
+                assert transport._initialized is True
 
     @pytest.mark.asyncio
     async def test_initialize_timeout(self, transport):
-        """Test STDIO transport initialization timeout."""
+        """Test HTTP Streamable transport initialization timeout."""
         mock_context = AsyncMock()
         
-        with patch('chuk_tool_processor.mcp.transport.stdio_transport.stdio_client', return_value=mock_context):
+        with patch('chuk_tool_processor.mcp.transport.http_streamable_transport.http_client', return_value=mock_context):
             # Simulate timeout during context entry
             mock_context.__aenter__.side_effect = asyncio.TimeoutError()
             
@@ -85,27 +108,13 @@ class TestStdioTransport:
             assert transport._initialized is False
 
     @pytest.mark.asyncio
-    async def test_initialize_send_initialize_fails(self, transport):
-        """Test STDIO transport initialization when send_initialize fails."""
-        mock_context = AsyncMock()
-        mock_streams = (Mock(), Mock())
-        
-        with patch('chuk_tool_processor.mcp.transport.stdio_transport.stdio_client', return_value=mock_context):
-            with patch('chuk_tool_processor.mcp.transport.stdio_transport.send_initialize', AsyncMock(return_value=False)):
-                mock_context.__aenter__.return_value = mock_streams
-                
-                result = await transport.initialize()
-                
-                assert result is False
-                assert transport._initialized is False
-
-    @pytest.mark.asyncio
     async def test_send_ping_success(self, transport):
-        """Test STDIO ping when initialized with metrics tracking."""
+        """Test HTTP Streamable ping when initialized with metrics tracking."""
         transport._initialized = True
-        transport._streams = (Mock(), Mock())
+        transport._read_stream = Mock()
+        transport._write_stream = Mock()
         
-        with patch('chuk_tool_processor.mcp.transport.stdio_transport.send_ping', AsyncMock(return_value=True)):
+        with patch('chuk_tool_processor.mcp.transport.http_streamable_transport.send_ping', AsyncMock(return_value=True)):
             result = await transport.send_ping()
             assert result is True
             
@@ -115,84 +124,88 @@ class TestStdioTransport:
 
     @pytest.mark.asyncio
     async def test_send_ping_not_initialized(self, transport):
-        """Test STDIO ping when not initialized."""
+        """Test HTTP Streamable ping when not initialized."""
         assert transport._initialized is False
         result = await transport.send_ping()
         assert result is False
 
     @pytest.mark.asyncio
     async def test_send_ping_exception(self, transport):
-        """Test STDIO ping with exception and metrics tracking."""
+        """Test HTTP Streamable ping with exception and metrics tracking."""
         transport._initialized = True
-        transport._streams = (Mock(), Mock())
+        transport._read_stream = Mock()
+        transport._write_stream = Mock()
         
-        with patch('chuk_tool_processor.mcp.transport.stdio_transport.send_ping', AsyncMock(side_effect=Exception("Pipe error"))):
+        with patch('chuk_tool_processor.mcp.transport.http_streamable_transport.send_ping', 
+                  AsyncMock(side_effect=Exception("Stream error"))):
             result = await transport.send_ping()
             assert result is False
             
-            # Check pipe error metrics
+            # Check stream error metrics
             metrics = transport.get_metrics()
-            assert metrics["pipe_errors"] == 1
+            assert metrics["stream_errors"] == 1
 
     def test_is_connected(self, transport):
         """Test connection status check (consistent method)."""
         # not initialized
         assert transport.is_connected() is False
-        # initialized
-        transport._initialized = True
-        transport._streams = (Mock(), Mock())
-        assert transport.is_connected() is True
         # initialized but no streams
-        transport._streams = None
+        transport._initialized = True
         assert transport.is_connected() is False
+        # fully connected
+        transport._read_stream = Mock()
+        transport._write_stream = Mock()
+        assert transport.is_connected() is True
 
     @pytest.mark.asyncio
     async def test_get_tools_success(self, transport):
-        """Test STDIO get tools when initialized with performance tracking."""
+        """Test HTTP Streamable get tools when initialized with performance tracking."""
         transport._initialized = True
-        transport._streams = (Mock(), Mock())
+        transport._read_stream = Mock()
+        transport._write_stream = Mock()
         
         expected_tools = [{"name": "search"}, {"name": "research"}]
         
-        with patch('chuk_tool_processor.mcp.transport.stdio_transport.send_tools_list', 
+        with patch('chuk_tool_processor.mcp.transport.http_streamable_transport.send_tools_list', 
                   AsyncMock(return_value={"tools": expected_tools})):
             tools = await transport.get_tools()
             assert tools == expected_tools
 
     @pytest.mark.asyncio
     async def test_get_tools_list_response(self, transport):
-        """Test STDIO get tools when response is a list."""
+        """Test HTTP Streamable get tools when response is a list."""
         transport._initialized = True
-        transport._streams = (Mock(), Mock())
+        transport._read_stream = Mock()
+        transport._write_stream = Mock()
         
         expected_tools = [{"name": "search"}]
         
-        with patch('chuk_tool_processor.mcp.transport.stdio_transport.send_tools_list', 
+        with patch('chuk_tool_processor.mcp.transport.http_streamable_transport.send_tools_list', 
                   AsyncMock(return_value=expected_tools)):
             tools = await transport.get_tools()
             assert tools == expected_tools
 
     @pytest.mark.asyncio
     async def test_get_tools_not_initialized(self, transport):
-        """Test STDIO get tools when not initialized."""
+        """Test HTTP Streamable get tools when not initialized."""
         assert transport._initialized is False
         tools = await transport.get_tools()
         assert tools == []
 
     @pytest.mark.asyncio
     async def test_call_tool_success(self, transport):
-        """Test STDIO call tool when initialized with metrics tracking."""
+        """Test HTTP Streamable call tool when initialized with metrics tracking."""
         transport._initialized = True
-        transport._streams = (Mock(), Mock())
+        transport._read_stream = Mock()
+        transport._write_stream = Mock()
         
-        # Test the STDIO-specific string preservation behavior
-        response = {"result": {"content": [{"type": "text", "text": "42"}]}}
+        response = {"result": {"content": [{"type": "text", "text": '{"answer": "success"}'}]}}
         
-        with patch('chuk_tool_processor.mcp.transport.stdio_transport.send_tools_call', 
+        with patch('chuk_tool_processor.mcp.transport.http_streamable_transport.send_tools_call', 
                   AsyncMock(return_value=response)):
             result = await transport.call_tool("search", {"query": "test"})
             assert result["isError"] is False
-            assert result["content"] == "42"  # String preserved for STDIO
+            assert result["content"]["answer"] == "success"
             
             # Check metrics were updated
             metrics = transport.get_metrics()
@@ -202,13 +215,14 @@ class TestStdioTransport:
 
     @pytest.mark.asyncio
     async def test_call_tool_with_timeout(self, transport):
-        """Test STDIO call tool with custom timeout parameter."""
+        """Test HTTP Streamable call tool with custom timeout parameter."""
         transport._initialized = True
-        transport._streams = (Mock(), Mock())
+        transport._read_stream = Mock()
+        transport._write_stream = Mock()
         
         response = {"result": {"content": "success"}}
         
-        with patch('chuk_tool_processor.mcp.transport.stdio_transport.send_tools_call', 
+        with patch('chuk_tool_processor.mcp.transport.http_streamable_transport.send_tools_call', 
                   AsyncMock(return_value=response)) as mock_send:
             result = await transport.call_tool("search", {"query": "test"}, timeout=15.0)
             assert result["isError"] is False
@@ -218,7 +232,7 @@ class TestStdioTransport:
 
     @pytest.mark.asyncio
     async def test_call_tool_not_initialized(self, transport):
-        """Test STDIO call tool when not initialized."""
+        """Test HTTP Streamable call tool when not initialized."""
         assert transport._initialized is False
         result = await transport.call_tool("test", {})
         assert result["isError"] is True
@@ -226,11 +240,12 @@ class TestStdioTransport:
 
     @pytest.mark.asyncio
     async def test_call_tool_timeout(self, transport):
-        """Test STDIO call tool with timeout and metrics tracking."""
+        """Test HTTP Streamable call tool with timeout and metrics tracking."""
         transport._initialized = True
-        transport._streams = (Mock(), Mock())
+        transport._read_stream = Mock()
+        transport._write_stream = Mock()
         
-        with patch('chuk_tool_processor.mcp.transport.stdio_transport.send_tools_call', 
+        with patch('chuk_tool_processor.mcp.transport.http_streamable_transport.send_tools_call', 
                   AsyncMock(side_effect=asyncio.TimeoutError)):
             result = await transport.call_tool("search", {}, timeout=1.0)
             assert result["isError"] is True
@@ -243,52 +258,47 @@ class TestStdioTransport:
 
     @pytest.mark.asyncio
     async def test_call_tool_exception(self, transport):
-        """Test STDIO call tool with exception and metrics tracking."""
+        """Test HTTP Streamable call tool with exception and metrics tracking."""
         transport._initialized = True
-        transport._streams = (Mock(), Mock())
+        transport._read_stream = Mock()
+        transport._write_stream = Mock()
         
-        with patch('chuk_tool_processor.mcp.transport.stdio_transport.send_tools_call', 
-                  AsyncMock(side_effect=Exception("Pipe broken"))):
+        with patch('chuk_tool_processor.mcp.transport.http_streamable_transport.send_tools_call', 
+                  AsyncMock(side_effect=Exception("Stream broken"))):
             result = await transport.call_tool("search", {})
             assert result["isError"] is True
-            assert "Pipe broken" in result["error"]
+            assert "Stream broken" in result["error"]
             
-            # Check failure metrics including pipe error
+            # Check failure metrics including stream error
             metrics = transport.get_metrics()
             assert metrics["total_calls"] == 1
             assert metrics["failed_calls"] == 1
-            assert metrics["pipe_errors"] == 1
+            assert metrics["stream_errors"] == 1
 
     @pytest.mark.asyncio
     async def test_metrics_functionality(self, transport):
-        """Test metrics get and reset functionality - FIXED."""
+        """Test metrics get and reset functionality."""
         # Initial metrics
         metrics = transport.get_metrics()
         assert metrics["total_calls"] == 0
         assert metrics["successful_calls"] == 0
         assert metrics["failed_calls"] == 0
         assert metrics["avg_response_time"] == 0.0
-        assert metrics["pipe_errors"] == 0
+        assert metrics["stream_errors"] == 0
         
-        # FIXED: Simulate actual tool calls to test metrics
-        transport._initialized = True
-        transport._streams = (Mock(), Mock())
+        # Manually increment total_calls first to prevent division by zero
+        transport._metrics["total_calls"] = 1
+        transport._update_metrics(0.5, True)  # Success
         
-        # Simulate successful call
-        with patch('chuk_tool_processor.mcp.transport.stdio_transport.send_tools_call', 
-                  AsyncMock(return_value={"result": {"content": "success"}})):
-            await transport.call_tool("test", {})
-        
-        # Simulate failed call
-        with patch('chuk_tool_processor.mcp.transport.stdio_transport.send_tools_call', 
-                  AsyncMock(side_effect=Exception("error"))):
-            await transport.call_tool("test", {})
+        transport._metrics["total_calls"] = 2  # Increment again
+        transport._update_metrics(1.0, False)  # Failure
         
         metrics = transport.get_metrics()
         assert metrics["total_calls"] == 2
         assert metrics["successful_calls"] == 1
         assert metrics["failed_calls"] == 1
-        assert metrics["avg_response_time"] > 0
+        assert metrics["total_time"] == 1.5
+        assert metrics["avg_response_time"] == 0.75
         
         # Test reset
         transport.reset_metrics()
@@ -302,44 +312,24 @@ class TestStdioTransport:
     async def test_metrics_disabled(self, transport_no_metrics):
         """Test transport behavior with metrics disabled."""
         transport_no_metrics._initialized = True
-        transport_no_metrics._streams = (Mock(), Mock())
+        transport_no_metrics._read_stream = Mock()
+        transport_no_metrics._write_stream = Mock()
         
         # Metrics should still be available but not actively updated during operations
         assert transport_no_metrics.enable_metrics is False
         metrics = transport_no_metrics.get_metrics()
         assert isinstance(metrics, dict)
 
-    def test_stdio_specific_content_extraction(self, transport):
-        """Test STDIO-specific content extraction with string preservation."""
-        # Test numeric string preservation (STDIO-specific behavior)
-        content = [{"type": "text", "text": "42"}]
-        result = transport._extract_stdio_content(content)
-        assert result == "42"  # Preserved as string
-        
-        # Test decimal string preservation
-        content = [{"type": "text", "text": "3.14"}]
-        result = transport._extract_stdio_content(content)
-        assert result == "3.14"  # Preserved as string
-        
-        # Test JSON object parsing
-        content = [{"type": "text", "text": '{"key": "value"}'}]
-        result = transport._extract_stdio_content(content)
-        assert result == {"key": "value"}  # Parsed as JSON
-        
-        # Test non-numeric string
-        content = [{"type": "text", "text": "hello"}]
-        result = transport._extract_stdio_content(content)
-        assert result == "hello"
-
     @pytest.mark.asyncio
     async def test_list_resources_success(self, transport):
         """Test listing resources when initialized."""
         transport._initialized = True
-        transport._streams = (Mock(), Mock())
+        transport._read_stream = Mock()
+        transport._write_stream = Mock()
         
         expected_resources = {"resources": [{"name": "resource1"}]}
         
-        with patch('chuk_tool_processor.mcp.transport.stdio_transport.send_resources_list', 
+        with patch('chuk_tool_processor.mcp.transport.http_streamable_transport.send_resources_list', 
                   AsyncMock(return_value=expected_resources)):
             result = await transport.list_resources()
             assert result == expected_resources
@@ -355,44 +345,19 @@ class TestStdioTransport:
     async def test_list_prompts_success(self, transport):
         """Test listing prompts when initialized."""
         transport._initialized = True
-        transport._streams = (Mock(), Mock())
+        transport._read_stream = Mock()
+        transport._write_stream = Mock()
         
         expected_prompts = {"prompts": [{"name": "prompt1"}]}
         
-        with patch('chuk_tool_processor.mcp.transport.stdio_transport.send_prompts_list', 
+        with patch('chuk_tool_processor.mcp.transport.http_streamable_transport.send_prompts_list', 
                   AsyncMock(return_value=expected_prompts)):
             result = await transport.list_prompts()
             assert result == expected_prompts
 
     @pytest.mark.asyncio
-    async def test_read_resource(self, transport):
-        """Test reading a specific resource."""
-        transport._initialized = True
-        transport._streams = (Mock(), Mock())
-        
-        expected_resource = {"content": "resource data"}
-        
-        with patch('chuk_tool_processor.mcp.transport.stdio_transport.send_resources_read', 
-                  AsyncMock(return_value=expected_resource)):
-            result = await transport.read_resource("test://resource")
-            assert result == expected_resource
-
-    @pytest.mark.asyncio
-    async def test_get_prompt(self, transport):
-        """Test getting a specific prompt."""
-        transport._initialized = True
-        transport._streams = (Mock(), Mock())
-        
-        expected_prompt = {"messages": [{"role": "user", "content": "test"}]}
-        
-        with patch('chuk_tool_processor.mcp.transport.stdio_transport.send_prompts_get', 
-                  AsyncMock(return_value=expected_prompt)):
-            result = await transport.get_prompt("test_prompt", {"arg": "value"})
-            assert result == expected_prompt
-
-    @pytest.mark.asyncio
     async def test_close_success(self, transport):
-        """Test STDIO close when initialized with metrics logging."""
+        """Test HTTP Streamable close when initialized with metrics logging."""
         transport._initialized = True
         # Add some metrics to test logging
         transport._metrics["total_calls"] = 5
@@ -400,18 +365,19 @@ class TestStdioTransport:
         transport._metrics["failed_calls"] = 1
         
         mock_context = AsyncMock()
-        transport._context = mock_context
+        transport._http_context = mock_context
         
         await transport.close()
         
         assert transport._initialized is False
-        assert transport._context is None
-        assert transport._streams is None
+        assert transport._http_context is None
+        assert transport._read_stream is None
+        assert transport._write_stream is None
         mock_context.__aexit__.assert_called_once_with(None, None, None)
 
     @pytest.mark.asyncio
     async def test_close_no_context(self, transport):
-        """Test STDIO close when no context exists."""
+        """Test HTTP Streamable close when no context exists."""
         transport._initialized = False
         await transport.close()
         assert transport._initialized is False
@@ -422,9 +388,12 @@ class TestStdioTransport:
         assert transport.get_streams() == []
         
         # Streams available when initialized
-        mock_streams = (Mock(), Mock())
-        transport._streams = mock_streams
-        assert transport.get_streams() == [mock_streams]
+        transport._initialized = True
+        transport._read_stream = Mock()
+        transport._write_stream = Mock()
+        streams = transport.get_streams()
+        assert len(streams) == 1
+        assert streams[0] == (transport._read_stream, transport._write_stream)
 
     @pytest.mark.asyncio
     async def test_context_manager_success(self, transport):
@@ -440,17 +409,17 @@ class TestStdioTransport:
     async def test_context_manager_init_failure(self, transport):
         """Test context manager when initialization fails."""
         with patch.object(transport, 'initialize', AsyncMock(return_value=False)):
-            with pytest.raises(RuntimeError, match="Failed to initialize StdioTransport"):
+            with pytest.raises(RuntimeError, match="Failed to initialize HTTPStreamableTransport"):
                 async with transport:
                     pass
 
     def test_repr_consistent_format(self, transport):
-        """Test string representation follows consistent format - FIXED."""
+        """Test string representation follows consistent format."""
         # Not initialized
         repr_str = repr(transport)
-        assert "StdioTransport" in repr_str
+        assert "HTTPStreamableTransport" in repr_str
         assert "status=not initialized" in repr_str
-        assert "command=python" in repr_str  # FIXED: Now matches expected format
+        assert "url=http://test.com/mcp" in repr_str
 
         # Initialized with metrics
         transport._initialized = True
@@ -461,3 +430,52 @@ class TestStdioTransport:
         assert "status=initialized" in repr_str
         assert "calls: 10" in repr_str
         assert "success: 80.0%" in repr_str
+
+    @pytest.mark.asyncio
+    async def test_response_normalization(self, transport):
+        """Test that response normalization uses base class methods."""
+        transport._initialized = True
+        transport._read_stream = Mock()
+        transport._write_stream = Mock()
+        
+        # Test various response formats using base class normalization
+        test_cases = [
+            # Standard MCP content format
+            {
+                "result": {"content": [{"type": "text", "text": '{"result": "success"}'}]},
+                "expected": {"isError": False, "content": {"result": "success"}}
+            },
+            # Plain text content
+            {
+                "result": {"content": [{"type": "text", "text": "plain text"}]},
+                "expected": {"isError": False, "content": "plain text"}
+            },
+            # Direct result
+            {
+                "result": {"value": 42},
+                "expected": {"isError": False, "content": {"value": 42}}
+            },
+            # Error response
+            {
+                "error": {"message": "Tool failed"},
+                "expected": {"isError": True, "error": "Tool failed"}
+            }
+        ]
+        
+        for case in test_cases:
+            # FIXED: Use correct path without slash
+            with patch('chuk_tool_processor.mcp.transport.http_streamable_transport.send_tools_call', 
+                      AsyncMock(return_value=case)):
+                result = await transport.call_tool("test", {})
+                assert result == case["expected"]
+
+    def test_http_parameters_creation(self, transport):
+        """Test that HTTP parameters are created correctly."""
+        # This test verifies the StreamableHTTPParameters are constructed properly
+        # We can't easily test the actual construction without mocking the entire
+        # http_client call, but we can verify the transport stores the right values
+        assert transport.url == "http://test.com/mcp"
+        assert transport.api_key == "api_key"
+        assert transport.session_id == "test-session"
+        assert transport.connection_timeout == 30.0
+        assert transport.default_timeout == 30.0

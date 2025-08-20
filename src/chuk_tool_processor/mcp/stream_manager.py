@@ -1,6 +1,6 @@
 # chuk_tool_processor/mcp/stream_manager.py
 """
-StreamManager for CHUK Tool Processor - Enhanced with robust shutdown handling
+StreamManager for CHUK Tool Processor - Enhanced with robust shutdown handling and headers support
 """
 from __future__ import annotations
 
@@ -27,12 +27,12 @@ class StreamManager:
     """
     Manager for MCP server streams with support for multiple transport types.
     
-    Enhanced with robust shutdown handling to prevent event loop closure issues.
+    Enhanced with robust shutdown handling and proper headers support.
     
     Updated to support the latest transports:
     - STDIO (process-based)
-    - SSE (Server-Sent Events) 
-    - HTTP Streamable (modern replacement for SSE, spec 2025-03-26)
+    - SSE (Server-Sent Events) with headers support
+    - HTTP Streamable (modern replacement for SSE, spec 2025-03-26) with graceful headers handling
     """
 
     def __init__(self) -> None:
@@ -175,6 +175,7 @@ class StreamManager:
         transport_type: str = "stdio",
         default_timeout: float = 30.0,
     ) -> None:
+        """Initialize with graceful headers handling for all transport types."""
         if self._closed:
             raise RuntimeError("Cannot initialize a closed StreamManager")
             
@@ -193,16 +194,24 @@ class StreamManager:
                         if isinstance(params, dict) and 'url' in params:
                             sse_url = params['url']
                             api_key = params.get('api_key')
+                            headers = params.get('headers', {})
                         else:
                             sse_url = "http://localhost:8000"
                             api_key = None
+                            headers = {}
                             logger.warning("No URL configured for SSE transport, using default: %s", sse_url)
                         
-                        transport = SSETransport(
-                            sse_url,
-                            api_key,
-                            default_timeout=default_timeout
-                        )
+                        # Build SSE transport with optional headers
+                        transport_params = {
+                            'url': sse_url,
+                            'api_key': api_key,
+                            'default_timeout': default_timeout
+                        }
+                        if headers:
+                            transport_params['headers'] = headers
+                        
+                        transport = SSETransport(**transport_params)
+                        
                     elif transport_type == "http_streamable":
                         logger.warning("Using HTTP Streamable transport in initialize() - consider using initialize_with_http_streamable() instead")
                         params = await load_config(config_file, server_name)
@@ -210,19 +219,28 @@ class StreamManager:
                         if isinstance(params, dict) and 'url' in params:
                             http_url = params['url']
                             api_key = params.get('api_key')
+                            headers = params.get('headers', {})
                             session_id = params.get('session_id')
                         else:
                             http_url = "http://localhost:8000"
                             api_key = None
+                            headers = {}
                             session_id = None
                             logger.warning("No URL configured for HTTP Streamable transport, using default: %s", http_url)
                         
-                        transport = HTTPStreamableTransport(
-                            http_url,
-                            api_key,
-                            default_timeout=default_timeout,
-                            session_id=session_id
-                        )
+                        # Build HTTP transport (headers not supported yet)
+                        transport_params = {
+                            'url': http_url,
+                            'api_key': api_key,
+                            'default_timeout': default_timeout,
+                            'session_id': session_id
+                        }
+                        # Note: headers not added until HTTPStreamableTransport supports them
+                        if headers:
+                            logger.debug("Headers provided but not supported in HTTPStreamableTransport yet")
+                        
+                        transport = HTTPStreamableTransport(**transport_params)
+                        
                     else:
                         logger.error("Unsupported transport type: %s", transport_type)
                         continue
@@ -271,6 +289,7 @@ class StreamManager:
         connection_timeout: float = 10.0,
         default_timeout: float = 30.0,
     ) -> None:
+        """Initialize with SSE transport with optional headers support."""
         if self._closed:
             raise RuntimeError("Cannot initialize a closed StreamManager")
             
@@ -283,12 +302,21 @@ class StreamManager:
                     logger.error("Bad server config: %s", cfg)
                     continue
                 try:
-                    transport = SSETransport(
-                        url, 
-                        cfg.get("api_key"),
-                        connection_timeout=connection_timeout,
-                        default_timeout=default_timeout
-                    )
+                    # Build SSE transport parameters with optional headers
+                    transport_params = {
+                        'url': url,
+                        'api_key': cfg.get("api_key"),
+                        'connection_timeout': connection_timeout,
+                        'default_timeout': default_timeout
+                    }
+                    
+                    # Add headers if provided
+                    headers = cfg.get("headers", {})
+                    if headers:
+                        logger.debug("SSE %s: Using configured headers: %s", name, list(headers.keys()))
+                        transport_params['headers'] = headers
+                    
+                    transport = SSETransport(**transport_params)
                     
                     if not await asyncio.wait_for(transport.initialize(), timeout=connection_timeout):
                         logger.error("Failed to init SSE %s", name)
@@ -326,7 +354,7 @@ class StreamManager:
         connection_timeout: float = 30.0,
         default_timeout: float = 30.0,
     ) -> None:
-        """Initialize with HTTP Streamable transport (modern MCP spec 2025-03-26)."""
+        """Initialize with HTTP Streamable transport with graceful headers handling."""
         if self._closed:
             raise RuntimeError("Cannot initialize a closed StreamManager")
             
@@ -339,13 +367,23 @@ class StreamManager:
                     logger.error("Bad server config: %s", cfg)
                     continue
                 try:
-                    transport = HTTPStreamableTransport(
-                        url, 
-                        cfg.get("api_key"),
-                        connection_timeout=connection_timeout,
-                        default_timeout=default_timeout,
-                        session_id=cfg.get("session_id")
-                    )
+                    # Build HTTP Streamable transport parameters
+                    transport_params = {
+                        'url': url,
+                        'api_key': cfg.get("api_key"),
+                        'connection_timeout': connection_timeout,
+                        'default_timeout': default_timeout,
+                        'session_id': cfg.get("session_id")
+                    }
+                    
+                    # Handle headers if provided (for future HTTPStreamableTransport support)
+                    headers = cfg.get("headers", {})
+                    if headers:
+                        logger.debug("HTTP Streamable %s: Headers provided but not yet supported in transport", name)
+                        # TODO: Add headers support when HTTPStreamableTransport is updated
+                        # transport_params['headers'] = headers
+                    
+                    transport = HTTPStreamableTransport(**transport_params)
                     
                     if not await asyncio.wait_for(transport.initialize(), timeout=connection_timeout):
                         logger.error("Failed to init HTTP Streamable %s", name)

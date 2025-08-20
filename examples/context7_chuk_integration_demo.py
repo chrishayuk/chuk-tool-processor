@@ -1,561 +1,499 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """
-context7_chuk_integration_demo.py
-================================
-Demonstrates Context7 MCP server integration with CHUK Tool Processor
-using HTTP Streamable transport.
+Resilient Context7 Client - Enhanced Rate Limiting
 
-This script shows:
-1. Connection to Context7 MCP server via HTTP Streamable transport
-2. Registration of Context7 tools in CHUK registry
-3. Tool execution through different parser plugins
-4. Practical examples of library documentation retrieval
-
-Prerequisites:
-- Context7 MCP server is accessible at https://mcp.context7.com/mcp
-- chuk-mcp package is installed for HTTP transport
+This version handles aggressive rate limiting with exponential backoff,
+multiple retry strategies, and intelligent request spacing.
 """
-
-from __future__ import annotations
 
 import asyncio
 import json
-import os
-import sys
+import time
+import random
 from pathlib import Path
-from typing import Any, List, Tuple
-
-try:
-    from colorama import Fore, Style, init as colorama_init
-    colorama_init(autoreset=True)
-    HAS_COLORAMA = True
-except ImportError:
-    HAS_COLORAMA = False
-    class MockColor:
-        def __getattr__(self, name): return ""
-    Fore = Style = MockColor()
-
-# ─── Local package bootstrap ───────────────────────────────────────────────
-PROJECT_ROOT = Path(__file__).resolve().parents[1] if __name__ == "__main__" else Path.cwd()
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-from chuk_tool_processor.logging import get_logger
+from typing import Dict, Optional, List, Tuple
+from datetime import datetime, timedelta
+from chuk_tool_processor.mcp.setup_mcp_http_streamable import setup_mcp_http_streamable
 from chuk_tool_processor.registry.provider import ToolRegistryProvider
 
-# Check for HTTP Streamable setup availability
-try:
-    from chuk_tool_processor.mcp.setup_mcp_http_streamable import setup_mcp_http_streamable
-    HAS_HTTP_STREAMABLE = True
-except ImportError as e:
-    HAS_HTTP_STREAMABLE = False
-    HTTP_IMPORT_ERROR = str(e)
 
-# Parser plugins
-from chuk_tool_processor.plugins.parsers.json_tool import JsonToolPlugin
-from chuk_tool_processor.plugins.parsers.xml_tool import XmlToolPlugin
-from chuk_tool_processor.plugins.parsers.function_call_tool import FunctionCallPlugin
-
-# Executor
-from chuk_tool_processor.execution.tool_executor import ToolExecutor
-from chuk_tool_processor.execution.strategies.inprocess_strategy import InProcessStrategy
-
-from chuk_tool_processor.models.tool_call import ToolCall
-from chuk_tool_processor.models.tool_result import ToolResult
-
-logger = get_logger("context7-chuk-demo")
-
-# ─── Configuration ─────────────────────────────────────────────────────────
-CONTEXT7_URL = "https://mcp.context7.com/mcp"
-SERVER_NAME = "context7"
-NAMESPACE = "context7"
-
-
-class Context7Demo:
-    """Demonstration class for Context7 integration with CHUK."""
-
-    def __init__(self):
+class ResilientContext7Client:
+    """
+    Enhanced Context7 client with aggressive rate limiting protection.
+    
+    Features:
+    - Exponential backoff with jitter
+    - Multiple retry strategies
+    - Daily request tracking
+    - Intelligent request spacing
+    - Comprehensive caching
+    """
+    
+    def __init__(
+        self, 
+        cache_file: str = "context7_cache.json",
+        initial_delay: float = 10.0,  # Start with longer delays
+        max_delay: float = 120.0,    # Cap at 2 minutes
+        max_retries: int = 3,
+        daily_request_limit: int = 50  # Conservative daily limit
+    ):
+        self.cache_file = Path(cache_file)
+        self.initial_delay = initial_delay
+        self.max_delay = max_delay
+        self.max_retries = max_retries
+        self.daily_request_limit = daily_request_limit
+        
+        self.current_delay = initial_delay
+        self.last_request_time = 0.0
         self.stream_manager = None
-        self.executor = None
-        self.registry = None
-
-    def banner(self, text: str, color: str = Fore.CYAN) -> None:
-        """Print a colored banner."""
-        if HAS_COLORAMA:
-            print(f"{color}\n=== {text} ==={Style.RESET_ALL}")
-        else:
-            print(f"\n=== {text} ===")
-
-    def info(self, text: str) -> None:
-        """Print info message."""
-        if HAS_COLORAMA:
-            print(f"{Fore.GREEN}✅ {text}{Style.RESET_ALL}")
-        else:
-            print(f"✅ {text}")
-
-    def warning(self, text: str) -> None:
-        """Print warning message."""
-        if HAS_COLORAMA:
-            print(f"{Fore.YELLOW}⚠️  {text}{Style.RESET_ALL}")
-        else:
-            print(f"⚠️  {text}")
-
-    def error(self, text: str) -> None:
-        """Print error message."""
-        if HAS_COLORAMA:
-            print(f"{Fore.RED}❌ {text}{Style.RESET_ALL}")
-        else:
-            print(f"❌ {text}")
-
-    async def check_dependencies(self) -> bool:
-        """Check if all required dependencies are available."""
-        self.banner("Dependency Check")
         
-        if not HAS_HTTP_STREAMABLE:
-            self.error(f"HTTP Streamable setup not available: {HTTP_IMPORT_ERROR}")
-            self.warning("To fix: pip install chuk-mcp")
-            return False
-
-        # Check chuk-mcp availability
-        try:
-            import chuk_mcp
-            self.info(f"chuk-mcp available at {chuk_mcp.__file__}")
-        except ImportError:
-            self.error("chuk-mcp package not installed")
-            self.warning("To fix: pip install chuk-mcp")
-            return False
-
-        # Check HTTP transport components
-        try:
-            from chuk_mcp.transports.http import http_client
-            from chuk_mcp.transports.http.parameters import StreamableHTTPParameters
-            self.info("chuk-mcp HTTP transport components available")
-        except ImportError as e:
-            self.error(f"chuk-mcp HTTP transport not available: {e}")
-            return False
-
-        self.info("All dependencies satisfied")
-        return True
-
-    async def connect_to_context7(self) -> bool:
-        """Connect to Context7 MCP server and set up tools."""
-        self.banner("Context7 Connection")
+        # Request tracking
+        self.daily_requests = 0
+        self.last_reset_date = datetime.now().date()
         
-        try:
-            print(f"🔄 Connecting to Context7 at {CONTEXT7_URL}...")
-            
-            _, self.stream_manager = await setup_mcp_http_streamable(
-                servers=[{
-                    "name": SERVER_NAME,
-                    "url": CONTEXT7_URL,
-                }],
-                server_names={0: SERVER_NAME},
-                namespace=NAMESPACE,
-                connection_timeout=30.0,
-                default_timeout=60.0,  # Longer timeout for Context7 operations
-            )
-            
-            self.info("Connected to Context7 successfully!")
-            return True
-            
-        except Exception as e:
-            self.error(f"Failed to connect to Context7: {e}")
-            logger.error(f"Context7 connection failed: {e}", exc_info=True)
-            return False
-
-    async def setup_executor(self) -> bool:
-        """Set up the tool executor."""
-        try:
-            self.registry = await ToolRegistryProvider.get_registry()
-            
-            self.executor = ToolExecutor(
-                self.registry,
-                strategy=InProcessStrategy(
-                    self.registry,
-                    default_timeout=60.0,  # Long timeout for documentation retrieval
-                    max_concurrency=2,     # Conservative for external service
-                ),
-            )
-            
-            self.info("Tool executor configured")
-            return True
-            
-        except Exception as e:
-            self.error(f"Failed to setup executor: {e}")
-            return False
-
-    async def show_available_tools(self) -> bool:
-        """Display available Context7 tools."""
-        self.banner("Available Context7 Tools")
+        # Cache management
+        self.library_cache = self._load_cache()
+        self.documentation_cache = self._load_doc_cache()
         
-        try:
-            tools = await self.registry.list_tools(NAMESPACE)
-            if not tools:
-                self.warning("No tools found in Context7 namespace")
-                return False
-
-            for ns, name in tools:
-                tool_meta = await self.registry.get_metadata(name, ns)
-                desc = tool_meta.description if tool_meta else "No description"
-                print(f"  🔧 {name}")
-                print(f"     {desc[:80]}{'...' if len(desc) > 80 else ''}")
-                
-            self.info(f"Found {len(tools)} Context7 tools")
-            return True
-            
-        except Exception as e:
-            self.error(f"Failed to list tools: {e}")
-            return False
-
-    async def test_library_resolution(self) -> None:
-        """Test the resolve-library-id tool."""
-        self.banner("Library ID Resolution Test")
+        # Enhanced known libraries
+        self.known_libraries = {
+            "react": "/facebook/react",
+            "next.js": "/vercel/next.js",
+            "nextjs": "/vercel/next.js",
+            "vue": "/vuejs/vue",
+            "vue.js": "/vuejs/vue",
+            "angular": "/angular/angular",
+            "svelte": "/sveltejs/svelte",
+            "nuxt": "/nuxt/nuxt",
+            "nuxt.js": "/nuxt/nuxt",
+            "supabase": "/supabase/supabase",
+            "firebase": "/firebase/firebase-js-sdk",
+            "tailwind": "/tailwindlabs/tailwindcss",
+            "tailwindcss": "/tailwindlabs/tailwindcss",
+            "bootstrap": "/twbs/bootstrap",
+            "mongodb": "/mongodb/docs",
+            "express": "/expressjs/express",
+            "fastapi": "/tiangolo/fastapi",
+            "django": "/django/django",
+            "flask": "/pallets/flask",
+            "prisma": "/prisma/prisma",
+            "trpc": "/trpc/trpc",
+            "zod": "/colinhacks/zod",
+            "typescript": "/microsoft/typescript",
+            "node": "/nodejs/node",
+            "nodejs": "/nodejs/node",
+            "webpack": "/webpack/webpack",
+            "vite": "/vitejs/vite",
+            "rollup": "/rollup/rollup",
+            "esbuild": "/evanw/esbuild",
+            "parcel": "/parcel-bundler/parcel",
+            "redux": "/reduxjs/redux",
+            "mobx": "/mobxjs/mobx",
+            "axios": "/axios/axios",
+            "lodash": "/lodash/lodash",
+            "moment": "/moment/moment",
+            "date-fns": "/date-fns/date-fns",
+            "chartjs": "/chartjs/chart-js",
+            "d3": "/d3/d3",
+            "threejs": "/mrdoob/three-js",
+            "electron": "/electron/electron",
+            "gatsby": "/gatsbyjs/gatsby",
+            "remix": "/remix-run/remix",
+            "astro": "/withastro/astro"
+        }
+    
+    async def __aenter__(self):
+        """Async context manager entry."""
+        await self.initialize()
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit."""
+        await self.close()
+    
+    async def initialize(self):
+        """Initialize the Context7 connection."""
+        servers = [{
+            "name": "context7",
+            "url": "https://mcp.context7.com/mcp"
+        }]
         
-        test_libraries = [
-            ("react", "React library"),
-            ("fastapi", "FastAPI framework"),
-            ("tensorflow", "TensorFlow ML library"),
-        ]
+        _, self.stream_manager = await setup_mcp_http_streamable(
+            servers=servers,
+            namespace="context7",
+            connection_timeout=30.0,
+            default_timeout=90.0,  # Longer timeout for rate-limited responses
+            enable_retries=True,
+            max_retries=1  # Reduce retries to minimize rate limiting
+        )
         
-        for lib_name, description in test_libraries:
-            try:
-                print(f"\n🔍 Resolving library ID for '{lib_name}' ({description})")
-                
-                call = ToolCall(
-                    tool=f"{NAMESPACE}.resolve-library-id",
-                    arguments={"libraryName": lib_name}
-                )
-                
-                results = await self.executor.execute([call])
-                
-                if results and not results[0].error:
-                    result_content = str(results[0].result)
-                    # Extract library IDs from the response
-                    if "/" in result_content:
-                        lines = result_content.split('\n')
-                        found_ids = [line.strip() for line in lines 
-                                   if line.strip().startswith('/') and ' ' in line]
-                        
-                        if found_ids:
-                            self.info(f"Found {len(found_ids)} matches for {lib_name}")
-                            for lib_id in found_ids[:3]:  # Show first 3
-                                print(f"  📌 {lib_id.split()[0]}")
-                        else:
-                            self.info(f"Response received for {lib_name}")
-                    else:
-                        self.info(f"Response received for {lib_name}")
-                else:
-                    error_msg = results[0].error if results else "No results"
-                    self.warning(f"Failed to resolve {lib_name}: {error_msg}")
-                    
-            except Exception as e:
-                self.error(f"Error resolving {lib_name}: {e}")
-
-    async def test_documentation_retrieval(self) -> None:
-        """Test the get-library-docs tool."""
-        self.banner("Documentation Retrieval Test")
+        # Reset daily counter if needed
+        self._check_daily_reset()
         
-        test_cases = [
-            {
-                "name": "React Hooks",
-                "library_id": "/facebook/react",
-                "topic": "useState useEffect hooks",
-                "tokens": 10000
-            },
-            {
-                "name": "FastAPI Authentication", 
-                "library_id": "/tiangolo/fastapi",
-                "topic": "authentication JWT middleware",
-                "tokens": 8000
-            },
-        ]
-        
-        for case in test_cases:
-            try:
-                print(f"\n📚 Retrieving docs: {case['name']}")
-                print(f"   Library: {case['library_id']}")
-                print(f"   Topic: {case['topic']}")
-                print(f"   Tokens: {case['tokens']}")
-                
-                call = ToolCall(
-                    tool=f"{NAMESPACE}.get-library-docs",
-                    arguments={
-                        "context7CompatibleLibraryID": case['library_id'],
-                        "topic": case['topic'],
-                        "tokens": case['tokens']
-                    }
-                )
-                
-                results = await self.executor.execute([call])
-                
-                if results and not results[0].error:
-                    content = str(results[0].result)
-                    duration = results[0].duration
-                    
-                    # Analyze content
-                    lines = content.split('\n')
-                    code_blocks = content.count('```')
-                    sections = len([line for line in lines if line.startswith('TITLE:')])
-                    
-                    self.info(f"Documentation retrieved in {duration:.2f}s")
-                    print(f"   📄 Content: {len(content):,} characters")
-                    print(f"   🔧 Code blocks: {code_blocks}")
-                    print(f"   📑 Sections: {sections}")
-                    
-                    # Show first few lines as preview
-                    preview_lines = [line for line in lines[:5] if line.strip()]
-                    if preview_lines:
-                        print(f"   👀 Preview: {preview_lines[0][:60]}...")
-                        
-                else:
-                    error_msg = results[0].error if results else "No results"
-                    if "not found" in error_msg.lower():
-                        self.warning(f"Library not found - may need different ID")
-                    else:
-                        self.error(f"Failed to get docs: {error_msg}")
-                        
-            except Exception as e:
-                self.error(f"Error retrieving docs for {case['name']}: {e}")
-
-    async def test_parser_plugins(self) -> None:
-        """Test different parser plugins with Context7 tools."""
-        self.banner("Parser Plugin Integration Test")
-        
-        # Define test cases for each parser
-        test_plugins = [
-            (
-                "JSON Plugin",
-                JsonToolPlugin(),
-                json.dumps({
-                    "tool_calls": [{
-                        "tool": f"{NAMESPACE}.resolve-library-id",
-                        "arguments": {"libraryName": "express.js"}
-                    }]
-                })
-            ),
-            (
-                "XML Plugin",
-                XmlToolPlugin(), 
-                f'<tool name="{NAMESPACE}.get-library-docs" args=\'{{"context7CompatibleLibraryID": "/vercel/next.js", "topic": "routing", "tokens": 5000}}\'/>',
-            ),
-            (
-                "Function Call Plugin",
-                FunctionCallPlugin(),
-                json.dumps({
-                    "function_call": {
-                        "name": f"{NAMESPACE}.resolve-library-id",
-                        "arguments": {"libraryName": "django"}
-                    }
-                })
-            ),
-        ]
-        
-        for plugin_name, plugin, test_input in test_plugins:
-            try:
-                print(f"\n🧪 Testing {plugin_name}")
-                
-                # Parse the input
-                calls = await plugin.try_parse(test_input)
-                if not calls:
-                    self.warning(f"{plugin_name} produced no calls")
-                    continue
-                
-                # Execute the calls
-                results = await self.executor.execute(calls)
-                
-                # Show results
-                for call, result in zip(calls, results):
-                    if not result.error:
-                        content_preview = str(result.result)[:100] + "..." if len(str(result.result)) > 100 else str(result.result)
-                        self.info(f"{plugin_name} success: {call.tool}")
-                        print(f"   📤 Result: {content_preview}")
-                    else:
-                        self.warning(f"{plugin_name} failed: {result.error}")
-                        
-            except Exception as e:
-                self.error(f"{plugin_name} test failed: {e}")
-
-    async def demonstrate_practical_usage(self) -> None:
-        """Demonstrate practical usage scenarios."""
-        self.banner("Practical Usage Scenarios")
-        
-        # Scenario 1: Research a new library
-        print("\n📋 Scenario 1: Research a new library")
-        print("   Task: Learn about Pydantic for data validation")
-        
-        try:
-            # First, resolve the library ID
-            resolve_call = ToolCall(
-                tool=f"{NAMESPACE}.resolve-library-id",
-                arguments={"libraryName": "pydantic"}
-            )
-            
-            resolve_results = await self.executor.execute([resolve_call])
-            
-            if resolve_results and not resolve_results[0].error:
-                print("   ✅ Library ID resolved")
-                
-                # Then get documentation
-                docs_call = ToolCall(
-                    tool=f"{NAMESPACE}.get-library-docs",
-                    arguments={
-                        "context7CompatibleLibraryID": "/pydantic/pydantic",
-                        "topic": "data validation models BaseModel",
-                        "tokens": 12000
-                    }
-                )
-                
-                docs_results = await self.executor.execute([docs_call])
-                
-                if docs_results and not docs_results[0].error:
-                    content = str(docs_results[0].result)
-                    self.info(f"Documentation retrieved: {len(content):,} chars")
-                    
-                    # Count practical indicators
-                    examples = content.count('example')
-                    imports = content.count('import')
-                    classes = content.count('class ')
-                    
-                    print(f"   📖 Examples found: {examples}")
-                    print(f"   📦 Import statements: {imports}")
-                    print(f"   🏗️  Class definitions: {classes}")
-                else:
-                    self.warning("Documentation retrieval failed")
-            else:
-                self.warning("Library ID resolution failed")
-                
-        except Exception as e:
-            self.error(f"Scenario 1 failed: {e}")
-        
-        # Scenario 2: Compare frameworks
-        print("\n📋 Scenario 2: Compare web frameworks")
-        print("   Task: Compare FastAPI vs Flask")
-        
-        try:
-            compare_calls = [
-                ToolCall(
-                    tool=f"{NAMESPACE}.get-library-docs",
-                    arguments={
-                        "context7CompatibleLibraryID": "/tiangolo/fastapi",
-                        "topic": "getting started tutorial basics",
-                        "tokens": 8000
-                    }
-                ),
-                ToolCall(
-                    tool=f"{NAMESPACE}.get-library-docs",
-                    arguments={
-                        "context7CompatibleLibraryID": "/pallets/flask",
-                        "topic": "getting started tutorial basics",
-                        "tokens": 8000
-                    }
-                )
-            ]
-            
-            compare_results = await self.executor.execute(compare_calls)
-            
-            frameworks = ["FastAPI", "Flask"]
-            for i, (framework, result) in enumerate(zip(frameworks, compare_results)):
-                if not result.error:
-                    content = str(result.result)
-                    self.info(f"{framework} docs retrieved: {len(content):,} chars")
-                else:
-                    self.warning(f"{framework} docs failed: {result.error}")
-                    
-        except Exception as e:
-            self.error(f"Scenario 2 failed: {e}")
-
-    async def show_performance_metrics(self) -> None:
-        """Show performance metrics if available."""
-        self.banner("Performance Metrics")
-        
-        try:
-            if self.stream_manager and hasattr(self.stream_manager, 'transports'):
-                for name, transport in self.stream_manager.transports.items():
-                    if hasattr(transport, 'get_metrics'):
-                        metrics = transport.get_metrics()
-                        print(f"\n📊 Transport: {name}")
-                        for key, value in metrics.items():
-                            if value is not None:
-                                if isinstance(value, float):
-                                    print(f"   {key}: {value:.3f}")
-                                else:
-                                    print(f"   {key}: {value}")
-            else:
-                self.info("Performance metrics not available")
-                
-        except Exception as e:
-            self.warning(f"Could not retrieve metrics: {e}")
-
-    async def cleanup(self) -> None:
+        print("✅ Resilient Context7 client initialized")
+        print(f"📊 Daily requests used: {self.daily_requests}/{self.daily_request_limit}")
+    
+    async def close(self):
         """Clean up resources."""
         if self.stream_manager:
-            try:
-                await self.stream_manager.close()
-                self.info("Cleanup completed")
-            except Exception as e:
-                self.warning(f"Cleanup warning: {e}")
-
-    async def run_demo(self) -> None:
-        """Run the complete demonstration."""
-        print("🚀 Context7 CHUK Tool Processor Integration Demo")
-        print("=" * 60)
-        print("This demo shows Context7 MCP server integration with CHUK")
-        print("using HTTP Streamable transport for documentation retrieval.\n")
-        
-        try:
-            # Check dependencies
-            if not await self.check_dependencies():
-                return
-            
-            # Connect to Context7
-            if not await self.connect_to_context7():
-                return
-            
-            # Setup executor
-            if not await self.setup_executor():
-                return
-            
-            # Show available tools
-            if not await self.show_available_tools():
-                return
-            
-            # Run tests
-            await self.test_library_resolution()
-            await self.test_documentation_retrieval()
-            await self.test_parser_plugins()
-            await self.demonstrate_practical_usage()
-            await self.show_performance_metrics()
-            
-            # Success summary
-            self.banner("Demo Completed Successfully", Fore.GREEN)
-            self.info("Context7 integration with CHUK is working!")
-            print("Key capabilities demonstrated:")
-            print("  ✅ Library ID resolution")
-            print("  ✅ Documentation retrieval")
-            print("  ✅ Parser plugin integration") 
-            print("  ✅ Practical usage scenarios")
-            print("  ✅ Performance monitoring")
-            
-        except KeyboardInterrupt:
-            self.warning("Demo interrupted by user")
-        except Exception as e:
-            self.error(f"Demo failed: {e}")
-            logger.error(f"Demo error: {e}", exc_info=True)
-        finally:
-            await self.cleanup()
-
-
-async def main():
-    """Main entry point."""
-    # Set up logging
-    logging_level = os.environ.get("LOGLEVEL", "INFO").upper()
-    import logging
-    logging.getLogger("chuk_tool_processor").setLevel(getattr(logging, logging_level))
+            await self.stream_manager.close()
+        self._save_cache()
+        self._save_doc_cache()
+        print("🧹 Resilient Context7 client closed")
     
-    # Run demo
-    demo = Context7Demo()
-    await demo.run_demo()
+    def _check_daily_reset(self):
+        """Reset daily counter if it's a new day."""
+        today = datetime.now().date()
+        if today > self.last_reset_date:
+            self.daily_requests = 0
+            self.last_reset_date = today
+            self.current_delay = self.initial_delay  # Reset delay
+            print(f"🌅 New day: Reset request counter and delays")
+    
+    def _check_daily_limit(self) -> bool:
+        """Check if we've exceeded daily request limit."""
+        self._check_daily_reset()
+        return self.daily_requests >= self.daily_request_limit
+    
+    async def _smart_rate_limit_delay(self, is_retry: bool = False):
+        """
+        Intelligent rate limiting with exponential backoff and jitter.
+        """
+        if self._check_daily_limit():
+            print(f"⚠️ Daily request limit reached ({self.daily_request_limit}). Waiting until tomorrow.")
+            raise RuntimeError("Daily request limit exceeded")
+        
+        # Calculate delay
+        base_delay = self.current_delay
+        if is_retry:
+            # Exponential backoff for retries
+            base_delay = min(base_delay * 2, self.max_delay)
+            self.current_delay = base_delay
+        
+        # Add jitter to avoid thundering herd
+        jitter = random.uniform(0.8, 1.2)
+        actual_delay = base_delay * jitter
+        
+        # Consider time since last request
+        elapsed = time.time() - self.last_request_time
+        if elapsed < actual_delay:
+            wait_time = actual_delay - elapsed
+            print(f"⏱️ Smart rate limiting: waiting {wait_time:.1f}s (base: {base_delay:.1f}s)")
+            await asyncio.sleep(wait_time)
+        
+        self.last_request_time = time.time()
+        self.daily_requests += 1
+    
+    async def _get_tool(self, tool_name: str):
+        """Get a tool from the registry."""
+        registry = await ToolRegistryProvider.get_registry()
+        tool = await registry.get_tool(tool_name, "context7")
+        if not tool:
+            raise RuntimeError(f"Tool not found: context7:{tool_name}")
+        return tool
+    
+    async def _execute_with_retry(self, tool_name: str, **params) -> Tuple[bool, Optional[str]]:
+        """
+        Execute a tool with intelligent retry logic.
+        
+        Returns:
+            (success: bool, result: Optional[str])
+        """
+        tool = await self._get_tool(tool_name)
+        
+        for attempt in range(self.max_retries + 1):
+            try:
+                # Apply rate limiting
+                await self._smart_rate_limit_delay(is_retry=attempt > 0)
+                
+                # Execute the tool
+                result = await tool.execute(**params)
+                
+                # Check for rate limiting
+                if "rate limited" in str(result).lower():
+                    if attempt < self.max_retries:
+                        print(f"   ⚠️ Rate limited (attempt {attempt + 1}/{self.max_retries + 1}). Backing off...")
+                        # Increase delay for next attempt
+                        self.current_delay = min(self.current_delay * 1.5, self.max_delay)
+                        continue
+                    else:
+                        print(f"   ❌ Rate limited after {self.max_retries + 1} attempts")
+                        return False, None
+                
+                # Success - reduce delay for future requests
+                if self.current_delay > self.initial_delay:
+                    self.current_delay = max(self.current_delay * 0.9, self.initial_delay)
+                
+                return True, str(result)
+                
+            except Exception as e:
+                if attempt < self.max_retries:
+                    print(f"   ⚠️ Error (attempt {attempt + 1}/{self.max_retries + 1}): {e}")
+                    continue
+                else:
+                    print(f"   ❌ Failed after {self.max_retries + 1} attempts: {e}")
+                    return False, None
+        
+        return False, None
+    
+    async def search_library(self, library_name: str) -> Optional[str]:
+        """
+        Search for a library with comprehensive caching and fallbacks.
+        """
+        # Check cache first
+        cache_key = library_name.lower().strip()
+        if cache_key in self.library_cache:
+            print(f"📋 Using cached library ID for '{library_name}': {self.library_cache[cache_key]}")
+            return self.library_cache[cache_key]
+        
+        # Check known libraries
+        if cache_key in self.known_libraries:
+            library_id = self.known_libraries[cache_key]
+            print(f"📋 Using known library ID for '{library_name}': {library_id}")
+            # Cache it
+            self.library_cache[cache_key] = library_id
+            return library_id
+        
+        # Check daily limit before making API call
+        if self._check_daily_limit():
+            print(f"⚠️ Daily limit reached, using fallback for '{library_name}'")
+            return self._get_fallback_library_id(library_name)
+        
+        # Perform actual search
+        print(f"🔍 Searching for library: {library_name}")
+        
+        success, result = await self._execute_with_retry(
+            "resolve-library-id",
+            libraryName=library_name,
+            timeout=60.0
+        )
+        
+        if success and result:
+            # Parse the result to extract library ID
+            library_id = self._extract_library_id(result)
+            if library_id:
+                print(f"   ✅ Found library ID: {library_id}")
+                # Cache the result
+                self.library_cache[cache_key] = library_id
+                return library_id
+        
+        # Fallback
+        print(f"   ⚠️ Search failed or no results, using fallback")
+        return self._get_fallback_library_id(library_name)
+    
+    def _extract_library_id(self, response: str) -> Optional[str]:
+        """Extract library ID from search response."""
+        lines = response.split('\n')
+        for line in lines[:30]:  # Check more lines
+            line = line.strip()
+            if line.startswith('/') and line.count('/') >= 2:
+                # Extract just the /org/project part
+                parts = line.split()
+                if parts and len(parts[0].split('/')) >= 3:
+                    return parts[0]
+        return None
+    
+    def _get_fallback_library_id(self, library_name: str) -> Optional[str]:
+        """Get fallback library ID with intelligent matching."""
+        # Try variations of the name
+        variations = [
+            library_name.lower(),
+            library_name.lower().replace('-', ''),
+            library_name.lower().replace('.js', ''),
+            library_name.lower().replace('js', ''),
+            library_name.lower().replace('.', ''),
+            library_name.lower().replace(' ', ''),
+        ]
+        
+        for variation in variations:
+            if variation in self.known_libraries:
+                fallback_id = self.known_libraries[variation]
+                print(f"   📋 Using fallback library ID: {fallback_id}")
+                # Cache the mapping
+                self.library_cache[library_name.lower().strip()] = fallback_id
+                return fallback_id
+        
+        print(f"   ❌ No fallback available for '{library_name}'")
+        return None
+    
+    async def get_documentation(
+        self, 
+        library_id: str, 
+        topic: str = None, 
+        tokens: int = 8000,
+        use_cache: bool = True
+    ) -> Optional[str]:
+        """
+        Get documentation with intelligent caching and rate limiting.
+        """
+        # Create cache key
+        cache_key = f"{library_id}:{topic or 'general'}:{tokens}"
+        
+        # Check cache first
+        if use_cache and cache_key in self.documentation_cache:
+            cache_entry = self.documentation_cache[cache_key]
+            # Check if cache is still fresh (1 day)
+            if time.time() - cache_entry['timestamp'] < 86400:
+                print(f"📋 Using cached documentation for {library_id}")
+                return cache_entry['content']
+        
+        # Check daily limit
+        if self._check_daily_limit():
+            print(f"⚠️ Daily limit reached, skipping documentation request")
+            return None
+        
+        # Ensure reasonable token range
+        tokens = max(1000, min(tokens, 10000))
+        
+        print(f"📚 Getting documentation for: {library_id}")
+        if topic:
+            print(f"   Topic: {topic}")
+        print(f"   Tokens: {tokens}")
+        
+        params = {
+            "context7CompatibleLibraryID": library_id,
+            "tokens": tokens,
+            "timeout": 90.0
+        }
+        if topic:
+            params["topic"] = topic
+        
+        success, result = await self._execute_with_retry("get-library-docs", **params)
+        
+        if success and result and len(result) > 100:
+            print(f"   ✅ Retrieved {len(result):,} characters")
+            code_examples = result.count('```')
+            if code_examples > 0:
+                print(f"   📖 Code examples: {code_examples}")
+            
+            # Cache the result
+            if use_cache:
+                self.documentation_cache[cache_key] = {
+                    'content': result,
+                    'timestamp': time.time()
+                }
+            
+            return result
+        else:
+            print(f"   ❌ Documentation request failed or returned minimal content")
+            return None
+    
+    async def get_library_documentation(
+        self, 
+        library_name: str, 
+        topic: str = None, 
+        tokens: int = 8000,
+        use_cache: bool = True
+    ) -> Optional[str]:
+        """
+        High-level method: search for library and get its documentation.
+        """
+        # Get library ID
+        library_id = await self.search_library(library_name)
+        if not library_id:
+            return None
+        
+        # Get documentation
+        return await self.get_documentation(library_id, topic, tokens, use_cache)
+    
+    def _load_cache(self) -> Dict[str, str]:
+        """Load library cache from file."""
+        if self.cache_file.exists():
+            try:
+                with open(self.cache_file, 'r') as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {}
+    
+    def _save_cache(self):
+        """Save library cache to file."""
+        try:
+            with open(self.cache_file, 'w') as f:
+                json.dump(self.library_cache, f, indent=2)
+        except Exception as e:
+            print(f"Warning: Could not save cache: {e}")
+    
+    def _load_doc_cache(self) -> Dict[str, Dict]:
+        """Load documentation cache from file."""
+        doc_cache_file = self.cache_file.with_suffix('.docs.json')
+        if doc_cache_file.exists():
+            try:
+                with open(doc_cache_file, 'r') as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {}
+    
+    def _save_doc_cache(self):
+        """Save documentation cache to file."""
+        try:
+            doc_cache_file = self.cache_file.with_suffix('.docs.json')
+            with open(doc_cache_file, 'w') as f:
+                json.dump(self.documentation_cache, f, indent=2)
+        except Exception as e:
+            print(f"Warning: Could not save doc cache: {e}")
+    
+    def get_status(self) -> Dict:
+        """Get client status and statistics."""
+        self._check_daily_reset()
+        return {
+            "daily_requests": self.daily_requests,
+            "daily_limit": self.daily_request_limit,
+            "current_delay": self.current_delay,
+            "cached_libraries": len(self.library_cache),
+            "cached_docs": len(self.documentation_cache),
+            "known_libraries": len(self.known_libraries),
+            "requests_remaining": max(0, self.daily_request_limit - self.daily_requests)
+        }
+
+
+# Example usage with enhanced resilience
+
+async def example_resilient_workflow():
+    """Example of resilient workflow that handles aggressive rate limiting."""
+    print("🌐 Resilient Context7 Workflow Example")
+    print("=" * 50)
+    
+    async with ResilientContext7Client(
+        initial_delay=15.0,  # Start with 15 second delays
+        daily_request_limit=20  # Conservative limit
+    ) as client:
+        
+        # Show status
+        status = client.get_status()
+        print(f"📊 Client status: {status['requests_remaining']} requests remaining today")
+        
+        # Example 1: Get React documentation (will likely use cache/known library)
+        print("\n📖 Getting React hooks documentation...")
+        react_docs = await client.get_library_documentation(
+            "react",
+            topic="useState useEffect useCallback useMemo",
+            tokens=6000
+        )
+        
+        if react_docs:
+            print(f"   ✅ Success: {len(react_docs):,} characters")
+            # Show preview
+            preview = react_docs[:200].replace('\n', ' ') + "..."
+            print(f"   📄 Preview: {preview}")
+        
+        # Example 2: Try a different library
+        print("\n📖 Getting Vue.js documentation...")
+        vue_docs = await client.get_library_documentation(
+            "vue.js",
+            topic="composition api setup",
+            tokens=5000
+        )
+        
+        if vue_docs:
+            print(f"   ✅ Success: {len(vue_docs):,} characters")
+        
+        # Show final status
+        final_status = client.get_status()
+        print(f"\n📊 Final status: {final_status['requests_remaining']} requests remaining")
+        print(f"💾 Cache stats: {final_status['cached_libraries']} libraries, {final_status['cached_docs']} docs")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(example_resilient_workflow())
