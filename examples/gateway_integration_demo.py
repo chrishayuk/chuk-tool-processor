@@ -52,7 +52,7 @@ class CHUKDiagnostic:
         Run the complete diagnostic suite.
         
         Args:
-            gateway_url: The gateway URL (e.g., https://ocp2.cloud.boomerangplatform.net/dev/mcp-gateway/service/gateway/sse)
+            gateway_url: The gateway URL (e.g., https://your-gateway-url/sse)
             auth_token: Optional authentication token
         """
         print("🔧 CHUK Tool Processor MCP Gateway Diagnostic")
@@ -551,7 +551,7 @@ async def main():
         os.environ.get("MCP_GATEWAY_URL") or 
         os.environ.get("GATEWAY_URL") or 
         os.environ.get("MCP_URL") or
-        "https://ocp2.cloud.boomerangplatform.net/dev/mcp-gateway/service/gateway"  # Default fallback
+        "https://your-gateway-url"  # Default fallback
     )
     
     # Auth token - check multiple possible environment variable names
@@ -566,7 +566,7 @@ async def main():
     
     # Display configuration
     print(f"🌐 Gateway URL: {GATEWAY_URL}")
-    if GATEWAY_URL == "https://ocp2.cloud.boomerangplatform.net/dev/mcp-gateway/service/gateway":
+    if GATEWAY_URL == "https://your-gateway-url":
         print("   (using default URL - set MCP_GATEWAY_URL to override)")
     else:
         print("   (loaded from environment variable)")
