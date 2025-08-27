@@ -5,6 +5,7 @@ Model representing the result of a tool execution.
 from __future__ import annotations
 
 import os
+import platform
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, List
@@ -63,7 +64,7 @@ class ToolResult(BaseModel):
         description="UTC timestamp when execution finished"
     )
     machine: str = Field(
-        default_factory=lambda: os.uname().nodename,
+        default_factory=lambda: platform.node(),
         description="Hostname where the tool ran"
     )
     pid: int = Field(

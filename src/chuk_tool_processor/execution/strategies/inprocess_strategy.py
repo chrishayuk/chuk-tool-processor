@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import os
+import platform
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, List, Optional, AsyncIterator, Set, Tuple
@@ -214,7 +215,7 @@ class InProcessStrategy(ExecutionStrategy):
                 error="System is shutting down",
                 start_time=now,
                 end_time=now,
-                machine=os.uname().nodename,
+                machine=platform.node(),
                 pid=os.getpid(),
             )
             await queue.put(result)
@@ -232,7 +233,7 @@ class InProcessStrategy(ExecutionStrategy):
                     error=f"Tool '{call.tool}' not found in any namespace",
                     start_time=now,
                     end_time=now,
-                    machine=os.uname().nodename,
+                    machine=platform.node(),
                     pid=os.getpid(),
                 )
                 await queue.put(result)
@@ -265,7 +266,7 @@ class InProcessStrategy(ExecutionStrategy):
                 error="Execution was cancelled",
                 start_time=now,
                 end_time=now,
-                machine=os.uname().nodename,
+                machine=platform.node(),
                 pid=os.getpid(),
             )
             await queue.put(result)
@@ -279,7 +280,7 @@ class InProcessStrategy(ExecutionStrategy):
                 error=f"Error setting up execution: {e}",
                 start_time=now,
                 end_time=now,
-                machine=os.uname().nodename,
+                machine=platform.node(),
                 pid=os.getpid(),
             )
             await queue.put(result)
@@ -304,7 +305,7 @@ class InProcessStrategy(ExecutionStrategy):
             timeout: Timeout in seconds (required)
         """
         start_time = datetime.now(timezone.utc)
-        machine = os.uname().nodename
+        machine = platform.node()
         pid = os.getpid()
         
         logger.debug("Streaming %s with %ss timeout", call.tool, timeout)
@@ -412,7 +413,7 @@ class InProcessStrategy(ExecutionStrategy):
             Tool execution result
         """
         pid = os.getpid()
-        machine = os.uname().nodename
+        machine = platform.node()
         start = datetime.now(timezone.utc)
         
         logger.debug("Executing %s with %ss timeout", call.tool, timeout)

@@ -20,6 +20,7 @@ import concurrent.futures
 import functools
 import inspect
 import os
+import platform
 import pickle
 import signal
 import sys
@@ -82,7 +83,7 @@ def _serialized_tool_worker(
     
     start_time = datetime.now(timezone.utc)
     pid = os.getpid()
-    hostname = os.uname().nodename
+    hostname = platform.node()
     
     result_data = {
         "tool": tool_name,
@@ -290,7 +291,7 @@ class SubprocessStrategy(ExecutionStrategy):
                     error="System is shutting down",
                     start_time=datetime.now(timezone.utc),
                     end_time=datetime.now(timezone.utc),
-                    machine=os.uname().nodename,
+                    machine=platform.node(),
                     pid=os.getpid(),
                 )
                 for call in calls
@@ -341,7 +342,7 @@ class SubprocessStrategy(ExecutionStrategy):
                     error="System is shutting down",
                     start_time=datetime.now(timezone.utc),
                     end_time=datetime.now(timezone.utc),
-                    machine=os.uname().nodename,
+                    machine=platform.node(),
                     pid=os.getpid(),
                 )
             return
@@ -422,7 +423,7 @@ class SubprocessStrategy(ExecutionStrategy):
                     error=f"Tool '{call.tool}' not found in any namespace",
                     start_time=start_time,
                     end_time=datetime.now(timezone.utc),
-                    machine=os.uname().nodename,
+                    machine=platform.node(),
                     pid=os.getpid(),
                 )
             
@@ -456,7 +457,7 @@ class SubprocessStrategy(ExecutionStrategy):
                     error=f"Tool serialization failed: {str(e)}",
                     start_time=start_time,
                     end_time=datetime.now(timezone.utc),
-                    machine=os.uname().nodename,
+                    machine=platform.node(),
                     pid=os.getpid(),
                 )
             
@@ -504,7 +505,7 @@ class SubprocessStrategy(ExecutionStrategy):
                     error=result_data.get("error"),
                     start_time=result_data.get("start_time", start_time),
                     end_time=result_data.get("end_time", end_time),
-                    machine=result_data.get("machine", os.uname().nodename),
+                    machine=result_data.get("machine", platform.node()),
                     pid=result_data.get("pid", os.getpid()),
                 )
                 
@@ -520,7 +521,7 @@ class SubprocessStrategy(ExecutionStrategy):
                     error=f"Worker process timed out after {safety_timeout}s",
                     start_time=start_time,
                     end_time=end_time,
-                    machine=os.uname().nodename,
+                    machine=platform.node(),
                     pid=os.getpid(),
                 )
                 
@@ -536,7 +537,7 @@ class SubprocessStrategy(ExecutionStrategy):
                     error="Worker process crashed",
                     start_time=start_time,
                     end_time=datetime.now(timezone.utc),
-                    machine=os.uname().nodename,
+                    machine=platform.node(),
                     pid=os.getpid(),
                 )
                 
@@ -548,7 +549,7 @@ class SubprocessStrategy(ExecutionStrategy):
                 error="Execution was cancelled",
                 start_time=start_time,
                 end_time=datetime.now(timezone.utc),
-                machine=os.uname().nodename,
+                machine=platform.node(),
                 pid=os.getpid(),
             )
             
@@ -565,7 +566,7 @@ class SubprocessStrategy(ExecutionStrategy):
                 error=f"Error: {str(e)}",
                 start_time=start_time,
                 end_time=end_time,
-                machine=os.uname().nodename,
+                machine=platform.node(),
                 pid=os.getpid(),
             )
 
