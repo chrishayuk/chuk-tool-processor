@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import List
 
 from chuk_tool_processor.models.tool_call import ToolCall
 
@@ -21,6 +20,6 @@ class ParserPlugin(ABC):
     """
 
     @abstractmethod
-    async def try_parse(self, raw: str | object) -> List[ToolCall]:  # noqa: D401
+    async def try_parse(self, raw: str | object) -> list[ToolCall]:  # noqa: D401
         """Attempt to parse *raw* into one or more :class:`ToolCall` objects."""
         ...

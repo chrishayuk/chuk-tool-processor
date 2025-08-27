@@ -10,13 +10,13 @@ All transports now follow the same interface and provide consistent behavior:
 """
 
 from .base_transport import MCPBaseTransport
-from .stdio_transport import StdioTransport
-from .sse_transport import SSETransport
 from .http_streamable_transport import HTTPStreamableTransport
+from .sse_transport import SSETransport
+from .stdio_transport import StdioTransport
 
 __all__ = [
     "MCPBaseTransport",
     "StdioTransport",
-    "SSETransport", 
+    "SSETransport",
     "HTTPStreamableTransport",
 ]

@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import json
 import re
-from typing import List
 
 from pydantic import ValidationError
 
@@ -32,6 +31,7 @@ logger = get_logger(__name__)
 
 class PluginMeta:
     """Optional descriptor that can be used by the plugin-discovery mechanism."""
+
     name: str = "xml_tool_tag"
     description: str = "Parses <tool …/> XML tags into ToolCall objects."
     version: str = "1.0.0"
@@ -49,11 +49,11 @@ class XmlToolPlugin(ParserPlugin):
     )
 
     # ------------------------------------------------------------------ #
-    async def try_parse(self, raw: str | object) -> List[ToolCall]:  # noqa: D401
+    async def try_parse(self, raw: str | object) -> list[ToolCall]:  # noqa: D401
         if not isinstance(raw, str):
             return []
 
-        calls: List[ToolCall] = []
+        calls: list[ToolCall] = []
 
         for match in self._TAG.finditer(raw):
             name = match.group("tool")
@@ -92,7 +92,7 @@ class XmlToolPlugin(ParserPlugin):
         # 3️⃣ Last resort - naive unescaping of \" → "
         if parsed is None:
             try:
-                parsed = json.loads(raw_args.replace(r"\"", "\""))
+                parsed = json.loads(raw_args.replace(r"\"", '"'))
             except json.JSONDecodeError:
                 parsed = {}
 

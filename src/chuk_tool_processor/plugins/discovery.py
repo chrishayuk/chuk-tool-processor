@@ -8,10 +8,10 @@ import inspect
 import logging
 import pkgutil
 from types import ModuleType
-from typing import Any, Dict, List, Optional, Set, Type
+from typing import Any
 
-from chuk_tool_processor.plugins.parsers.base import ParserPlugin
 from chuk_tool_processor.models.execution_strategy import ExecutionStrategy
+from chuk_tool_processor.plugins.parsers.base import ParserPlugin
 
 __all__ = [
     "plugin_registry",
@@ -33,7 +33,7 @@ class PluginRegistry:
 
     def __init__(self) -> None:
         # category → {name → object}
-        self._plugins: Dict[str, Dict[str, Any]] = {}
+        self._plugins: dict[str, dict[str, Any]] = {}
 
     # --------------------------------------------------------------------- #
     # Public API
@@ -42,10 +42,10 @@ class PluginRegistry:
         self._plugins.setdefault(category, {})[name] = plugin
         logger.debug("Registered plugin %s.%s", category, name)
 
-    def get_plugin(self, category: str, name: str) -> Optional[Any]:  # noqa: D401
+    def get_plugin(self, category: str, name: str) -> Any | None:  # noqa: D401
         return self._plugins.get(category, {}).get(name)
 
-    def list_plugins(self, category: str | None = None) -> Dict[str, List[str]]:
+    def list_plugins(self, category: str | None = None) -> dict[str, list[str]]:
         if category is not None:
             return {category: sorted(self._plugins.get(category, {}))}
         return {cat: sorted(names) for cat, names in self._plugins.items()}
@@ -70,10 +70,10 @@ class PluginDiscovery:
     # ------------------------------------------------------------------ #
     def __init__(self, registry: PluginRegistry) -> None:
         self._registry = registry
-        self._seen_modules: Set[str] = set()
+        self._seen_modules: set[str] = set()
 
     # ------------------------------------------------------------------ #
-    def discover_plugins(self, package_paths: List[str]) -> None:
+    def discover_plugins(self, package_paths: list[str]) -> None:
         """Import every package in *package_paths* and walk its subtree."""
         for pkg_path in package_paths:
             self._walk(pkg_path)
@@ -113,7 +113,7 @@ class PluginDiscovery:
                 self._maybe_register(attr)
 
     # ------------------------------------------------------------------ #
-    def _maybe_register(self, cls: Type) -> None:
+    def _maybe_register(self, cls: type) -> None:
         """Register *cls* in all matching plugin categories."""
         if inspect.isabstract(cls):
             return
@@ -133,7 +133,7 @@ class PluginDiscovery:
             self._registry.register_plugin("execution_strategy", cls.__name__, cls)
 
         # ------------- Explicit @plugin decorator ------------------
-        meta: Optional[dict] = getattr(cls, "_plugin_meta", None)
+        meta: dict | None = getattr(cls, "_plugin_meta", None)
         if meta:
             category = meta.get("category", "unknown")
             name = meta.get("name", cls.__name__)
@@ -178,6 +178,6 @@ def discover_default_plugins() -> None:
     PluginDiscovery(plugin_registry).discover_plugins(["chuk_tool_processor.plugins"])
 
 
-def discover_plugins(package_paths: List[str]) -> None:
+def discover_plugins(package_paths: list[str]) -> None:
     """Discover plugins from arbitrary external *package_paths*."""
     PluginDiscovery(plugin_registry).discover_plugins(package_paths)

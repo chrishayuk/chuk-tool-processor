@@ -8,12 +8,15 @@ validate_arguments(tool_name, fn, args) -> dict
 validate_result(tool_name, fn, result)  -> Any
 @with_validation                        -> class decorator
 """
+
 from __future__ import annotations
+
 import inspect
-import asyncio
+from collections.abc import Callable
 from functools import lru_cache, wraps
-from typing import Any, Callable, Dict, get_type_hints, Awaitable
-from pydantic import BaseModel, ValidationError, create_model, Extra
+from typing import Any, get_type_hints
+
+from pydantic import BaseModel, Extra, ValidationError, create_model
 
 # exception
 from chuk_tool_processor.core.exceptions import ToolValidationError
@@ -36,7 +39,7 @@ def _arg_model(tool_name: str, fn: Callable) -> type[BaseModel]:
     hints.pop("return", None)
 
     sig = inspect.signature(fn)
-    fields: Dict[str, tuple[Any, Any]] = {}
+    fields: dict[str, tuple[Any, Any]] = {}
     for name, hint in hints.items():
         param = sig.parameters[name]
         default = param.default if param.default is not inspect.Parameter.empty else ...
@@ -71,7 +74,7 @@ def _result_model(tool_name: str, fn: Callable) -> type[BaseModel] | None:
 # --------------------------------------------------------------------------- #
 
 
-def validate_arguments(tool_name: str, fn: Callable, args: Dict[str, Any]) -> Dict[str, Any]:
+def validate_arguments(tool_name: str, fn: Callable, args: dict[str, Any]) -> dict[str, Any]:
     """Validate function arguments against type hints."""
     try:
         model = _arg_model(tool_name, fn)
@@ -110,7 +113,7 @@ def with_validation(cls):
     # Which method did the user provide?
     fn_name = "_execute" if hasattr(cls, "_execute") else "execute"
     original = getattr(cls, fn_name)
-    
+
     # Ensure the method is async
     if not inspect.iscoroutinefunction(original):
         raise TypeError(f"Tool {cls.__name__} must have an async {fn_name} method")

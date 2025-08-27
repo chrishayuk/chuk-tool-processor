@@ -2,11 +2,12 @@
 """
 In-memory implementation of the asynchronous tool registry.
 """
+
 from __future__ import annotations
 
 import asyncio
 import inspect
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from chuk_tool_processor.core.exceptions import ToolNotFoundError
 from chuk_tool_processor.registry.interface import ToolRegistryInterface
@@ -27,9 +28,9 @@ class InMemoryToolRegistry(ToolRegistryInterface):
 
     def __init__(self) -> None:
         # {namespace: {tool_name: tool_obj}}
-        self._tools: Dict[str, Dict[str, Any]] = {}
+        self._tools: dict[str, dict[str, Any]] = {}
         # {namespace: {tool_name: ToolMetadata}}
-        self._metadata: Dict[str, Dict[str, ToolMetadata]] = {}
+        self._metadata: dict[str, dict[str, ToolMetadata]] = {}
         # Lock for thread safety
         self._lock = asyncio.Lock()
 
@@ -40,9 +41,9 @@ class InMemoryToolRegistry(ToolRegistryInterface):
     async def register_tool(
         self,
         tool: Any,
-        name: Optional[str] = None,
+        name: str | None = None,
         namespace: str = "default",
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """Register a tool in the registry asynchronously."""
         async with self._lock:
@@ -57,13 +58,9 @@ class InMemoryToolRegistry(ToolRegistryInterface):
             is_async = inspect.iscoroutinefunction(getattr(tool, "execute", None))
 
             # default description -> docstring
-            description = (
-                (inspect.getdoc(tool) or "").strip()
-                if not (metadata and "description" in metadata)
-                else None
-            )
+            description = (inspect.getdoc(tool) or "").strip() if not (metadata and "description" in metadata) else None
 
-            meta_dict: Dict[str, Any] = {
+            meta_dict: dict[str, Any] = {
                 "name": key,
                 "namespace": namespace,
                 "is_async": is_async,
@@ -79,7 +76,7 @@ class InMemoryToolRegistry(ToolRegistryInterface):
     # retrieval
     # ------------------------------------------------------------------ #
 
-    async def get_tool(self, name: str, namespace: str = "default") -> Optional[Any]:
+    async def get_tool(self, name: str, namespace: str = "default") -> Any | None:
         """Retrieve a tool by name and namespace asynchronously."""
         # Read operations don't need locking for better concurrency
         return self._tools.get(namespace, {}).get(name)
@@ -91,9 +88,7 @@ class InMemoryToolRegistry(ToolRegistryInterface):
             raise ToolNotFoundError(f"{namespace}.{name}")
         return tool
 
-    async def get_metadata(
-        self, name: str, namespace: str = "default"
-    ) -> Optional[ToolMetadata]:
+    async def get_metadata(self, name: str, namespace: str = "default") -> ToolMetadata | None:
         """Get metadata for a tool asynchronously."""
         return self._metadata.get(namespace, {}).get(name)
 
@@ -101,25 +96,23 @@ class InMemoryToolRegistry(ToolRegistryInterface):
     # listing helpers
     # ------------------------------------------------------------------ #
 
-    async def list_tools(self, namespace: Optional[str] = None) -> List[Tuple[str, str]]:
+    async def list_tools(self, namespace: str | None = None) -> list[tuple[str, str]]:
         """
         Return a list of ``(namespace, name)`` tuples asynchronously.
         """
         if namespace:
-            return [
-                (namespace, n) for n in self._tools.get(namespace, {}).keys()
-            ]
+            return [(namespace, n) for n in self._tools.get(namespace, {})]
 
-        result: List[Tuple[str, str]] = []
+        result: list[tuple[str, str]] = []
         for ns, tools in self._tools.items():
-            result.extend((ns, n) for n in tools.keys())
+            result.extend((ns, n) for n in tools)
         return result
 
-    async def list_namespaces(self) -> List[str]:
+    async def list_namespaces(self) -> list[str]:
         """List all namespaces asynchronously."""
         return list(self._tools.keys())
 
-    async def list_metadata(self, namespace: Optional[str] = None) -> List[ToolMetadata]:
+    async def list_metadata(self, namespace: str | None = None) -> list[ToolMetadata]:
         """
         Return all ToolMetadata objects asynchronously.
 
@@ -135,7 +128,7 @@ class InMemoryToolRegistry(ToolRegistryInterface):
             return list(self._metadata.get(namespace, {}).values())
 
         # flatten
-        result: List[ToolMetadata] = []
+        result: list[ToolMetadata] = []
         for ns_meta in self._metadata.values():
             result.extend(ns_meta.values())
         return result

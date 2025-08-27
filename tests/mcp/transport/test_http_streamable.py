@@ -2,16 +2,18 @@
 """
 Tests for HTTPStreamableTransport class with consistent interface.
 """
+
 import asyncio
+from unittest.mock import AsyncMock, Mock, patch
+
 import pytest
-from unittest.mock import Mock, AsyncMock, patch
 
 from chuk_tool_processor.mcp.transport.http_streamable_transport import HTTPStreamableTransport
 
 
 class TestHTTPStreamableTransport:
     """Test HTTPStreamableTransport class with consistent interface."""
-    
+
     @pytest.fixture
     def transport(self):
         """Create HTTPStreamableTransport instance with consistent parameters."""
@@ -21,27 +23,24 @@ class TestHTTPStreamableTransport:
             connection_timeout=30.0,
             default_timeout=30.0,
             session_id="test-session",
-            enable_metrics=True
+            enable_metrics=True,
         )
-    
+
     @pytest.fixture
     def transport_no_metrics(self):
         """Create HTTPStreamableTransport instance with metrics disabled."""
-        return HTTPStreamableTransport(
-            "http://test.com",
-            enable_metrics=False
-        )
+        return HTTPStreamableTransport("http://test.com", enable_metrics=False)
 
     def test_init_url_normalization(self):
         """Test URL normalization to /mcp endpoint."""
         # URL without /mcp gets it added
         transport = HTTPStreamableTransport("http://test.com")
         assert transport.url == "http://test.com/mcp"
-        
+
         # URL with /mcp is preserved
         transport = HTTPStreamableTransport("http://test.com/mcp")
         assert transport.url == "http://test.com/mcp"
-        
+
         # URL with trailing slash handled correctly
         transport = HTTPStreamableTransport("http://test.com/")
         assert transport.url == "http://test.com/mcp"
@@ -60,50 +59,58 @@ class TestHTTPStreamableTransport:
         """Test successful HTTP Streamable transport initialization with metrics tracking."""
         mock_context = AsyncMock()
         mock_streams = (Mock(), Mock())  # (read_stream, write_stream)
-        
-        with patch('chuk_tool_processor.mcp.transport.http_streamable_transport.http_client', return_value=mock_context):
-            with patch('chuk_tool_processor.mcp.transport.http_streamable_transport.send_ping', AsyncMock(return_value=True)):
-                mock_context.__aenter__.return_value = mock_streams
-                
-                result = await transport.initialize()
-                
-                assert result is True
-                assert transport._initialized is True
-                assert transport._read_stream == mock_streams[0]
-                assert transport._write_stream == mock_streams[1]
-                
-                # Check metrics were updated
-                metrics = transport.get_metrics()
-                assert metrics["initialization_time"] > 0
-                assert metrics["last_ping_time"] > 0
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.http_client", return_value=mock_context
+        ), patch(
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.send_ping", AsyncMock(return_value=True)
+        ):
+            mock_context.__aenter__.return_value = mock_streams
+
+            result = await transport.initialize()
+
+            assert result is True
+            assert transport._initialized is True
+            assert transport._read_stream == mock_streams[0]
+            assert transport._write_stream == mock_streams[1]
+
+            # Check metrics were updated
+            metrics = transport.get_metrics()
+            assert metrics["initialization_time"] > 0
+            assert metrics["last_ping_time"] > 0
 
     @pytest.mark.asyncio
     async def test_initialize_ping_fails(self, transport):
         """Test HTTP Streamable initialization when ping fails but connection succeeds."""
         mock_context = AsyncMock()
         mock_streams = (Mock(), Mock())
-        
-        with patch('chuk_tool_processor.mcp.transport.http_streamable_transport.http_client', return_value=mock_context):
-            with patch('chuk_tool_processor.mcp.transport.http_streamable_transport.send_ping', AsyncMock(return_value=False)):
-                mock_context.__aenter__.return_value = mock_streams
-                
-                result = await transport.initialize()
-                
-                # Still considered initialized even if ping fails
-                assert result is True
-                assert transport._initialized is True
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.http_client", return_value=mock_context
+        ), patch(
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.send_ping", AsyncMock(return_value=False)
+        ):
+            mock_context.__aenter__.return_value = mock_streams
+
+            result = await transport.initialize()
+
+            # Still considered initialized even if ping fails
+            assert result is True
+            assert transport._initialized is True
 
     @pytest.mark.asyncio
     async def test_initialize_timeout(self, transport):
         """Test HTTP Streamable transport initialization timeout."""
         mock_context = AsyncMock()
-        
-        with patch('chuk_tool_processor.mcp.transport.http_streamable_transport.http_client', return_value=mock_context):
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.http_client", return_value=mock_context
+        ):
             # Simulate timeout during context entry
-            mock_context.__aenter__.side_effect = asyncio.TimeoutError()
-            
+            mock_context.__aenter__.side_effect = TimeoutError()
+
             result = await transport.initialize()
-            
+
             assert result is False
             assert transport._initialized is False
 
@@ -113,11 +120,13 @@ class TestHTTPStreamableTransport:
         transport._initialized = True
         transport._read_stream = Mock()
         transport._write_stream = Mock()
-        
-        with patch('chuk_tool_processor.mcp.transport.http_streamable_transport.send_ping', AsyncMock(return_value=True)):
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.send_ping", AsyncMock(return_value=True)
+        ):
             result = await transport.send_ping()
             assert result is True
-            
+
             # Check ping metrics were updated
             metrics = transport.get_metrics()
             assert metrics["last_ping_time"] > 0
@@ -135,12 +144,14 @@ class TestHTTPStreamableTransport:
         transport._initialized = True
         transport._read_stream = Mock()
         transport._write_stream = Mock()
-        
-        with patch('chuk_tool_processor.mcp.transport.http_streamable_transport.send_ping', 
-                  AsyncMock(side_effect=Exception("Stream error"))):
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.send_ping",
+            AsyncMock(side_effect=Exception("Stream error")),
+        ):
             result = await transport.send_ping()
             assert result is False
-            
+
             # Check stream error metrics
             metrics = transport.get_metrics()
             assert metrics["stream_errors"] == 1
@@ -163,11 +174,13 @@ class TestHTTPStreamableTransport:
         transport._initialized = True
         transport._read_stream = Mock()
         transport._write_stream = Mock()
-        
+
         expected_tools = [{"name": "search"}, {"name": "research"}]
-        
-        with patch('chuk_tool_processor.mcp.transport.http_streamable_transport.send_tools_list', 
-                  AsyncMock(return_value={"tools": expected_tools})):
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.send_tools_list",
+            AsyncMock(return_value={"tools": expected_tools}),
+        ):
             tools = await transport.get_tools()
             assert tools == expected_tools
 
@@ -177,11 +190,13 @@ class TestHTTPStreamableTransport:
         transport._initialized = True
         transport._read_stream = Mock()
         transport._write_stream = Mock()
-        
+
         expected_tools = [{"name": "search"}]
-        
-        with patch('chuk_tool_processor.mcp.transport.http_streamable_transport.send_tools_list', 
-                  AsyncMock(return_value=expected_tools)):
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.send_tools_list",
+            AsyncMock(return_value=expected_tools),
+        ):
             tools = await transport.get_tools()
             assert tools == expected_tools
 
@@ -198,15 +213,17 @@ class TestHTTPStreamableTransport:
         transport._initialized = True
         transport._read_stream = Mock()
         transport._write_stream = Mock()
-        
+
         response = {"result": {"content": [{"type": "text", "text": '{"answer": "success"}'}]}}
-        
-        with patch('chuk_tool_processor.mcp.transport.http_streamable_transport.send_tools_call', 
-                  AsyncMock(return_value=response)):
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.send_tools_call",
+            AsyncMock(return_value=response),
+        ):
             result = await transport.call_tool("search", {"query": "test"})
             assert result["isError"] is False
             assert result["content"]["answer"] == "success"
-            
+
             # Check metrics were updated
             metrics = transport.get_metrics()
             assert metrics["total_calls"] == 1
@@ -219,14 +236,16 @@ class TestHTTPStreamableTransport:
         transport._initialized = True
         transport._read_stream = Mock()
         transport._write_stream = Mock()
-        
+
         response = {"result": {"content": "success"}}
-        
-        with patch('chuk_tool_processor.mcp.transport.http_streamable_transport.send_tools_call', 
-                  AsyncMock(return_value=response)) as mock_send:
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.send_tools_call",
+            AsyncMock(return_value=response),
+        ) as mock_send:
             result = await transport.call_tool("search", {"query": "test"}, timeout=15.0)
             assert result["isError"] is False
-            
+
             # Verify the call was made with correct parameters
             mock_send.assert_called_once()
 
@@ -244,13 +263,15 @@ class TestHTTPStreamableTransport:
         transport._initialized = True
         transport._read_stream = Mock()
         transport._write_stream = Mock()
-        
-        with patch('chuk_tool_processor.mcp.transport.http_streamable_transport.send_tools_call', 
-                  AsyncMock(side_effect=asyncio.TimeoutError)):
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.send_tools_call",
+            AsyncMock(side_effect=asyncio.TimeoutError),
+        ):
             result = await transport.call_tool("search", {}, timeout=1.0)
             assert result["isError"] is True
             assert "timed out after 1.0s" in result["error"]
-            
+
             # Check timeout failure metrics
             metrics = transport.get_metrics()
             assert metrics["total_calls"] == 1
@@ -262,13 +283,15 @@ class TestHTTPStreamableTransport:
         transport._initialized = True
         transport._read_stream = Mock()
         transport._write_stream = Mock()
-        
-        with patch('chuk_tool_processor.mcp.transport.http_streamable_transport.send_tools_call', 
-                  AsyncMock(side_effect=Exception("Stream broken"))):
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.send_tools_call",
+            AsyncMock(side_effect=Exception("Stream broken")),
+        ):
             result = await transport.call_tool("search", {})
             assert result["isError"] is True
             assert "Stream broken" in result["error"]
-            
+
             # Check failure metrics including stream error
             metrics = transport.get_metrics()
             assert metrics["total_calls"] == 1
@@ -285,21 +308,21 @@ class TestHTTPStreamableTransport:
         assert metrics["failed_calls"] == 0
         assert metrics["avg_response_time"] == 0.0
         assert metrics["stream_errors"] == 0
-        
+
         # Manually increment total_calls first to prevent division by zero
         transport._metrics["total_calls"] = 1
         transport._update_metrics(0.5, True)  # Success
-        
+
         transport._metrics["total_calls"] = 2  # Increment again
         transport._update_metrics(1.0, False)  # Failure
-        
+
         metrics = transport.get_metrics()
         assert metrics["total_calls"] == 2
         assert metrics["successful_calls"] == 1
         assert metrics["failed_calls"] == 1
         assert metrics["total_time"] == 1.5
         assert metrics["avg_response_time"] == 0.75
-        
+
         # Test reset
         transport.reset_metrics()
         metrics = transport.get_metrics()
@@ -314,7 +337,7 @@ class TestHTTPStreamableTransport:
         transport_no_metrics._initialized = True
         transport_no_metrics._read_stream = Mock()
         transport_no_metrics._write_stream = Mock()
-        
+
         # Metrics should still be available but not actively updated during operations
         assert transport_no_metrics.enable_metrics is False
         metrics = transport_no_metrics.get_metrics()
@@ -326,11 +349,13 @@ class TestHTTPStreamableTransport:
         transport._initialized = True
         transport._read_stream = Mock()
         transport._write_stream = Mock()
-        
+
         expected_resources = {"resources": [{"name": "resource1"}]}
-        
-        with patch('chuk_tool_processor.mcp.transport.http_streamable_transport.send_resources_list', 
-                  AsyncMock(return_value=expected_resources)):
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.send_resources_list",
+            AsyncMock(return_value=expected_resources),
+        ):
             result = await transport.list_resources()
             assert result == expected_resources
 
@@ -347,11 +372,13 @@ class TestHTTPStreamableTransport:
         transport._initialized = True
         transport._read_stream = Mock()
         transport._write_stream = Mock()
-        
+
         expected_prompts = {"prompts": [{"name": "prompt1"}]}
-        
-        with patch('chuk_tool_processor.mcp.transport.http_streamable_transport.send_prompts_list', 
-                  AsyncMock(return_value=expected_prompts)):
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.send_prompts_list",
+            AsyncMock(return_value=expected_prompts),
+        ):
             result = await transport.list_prompts()
             assert result == expected_prompts
 
@@ -363,12 +390,12 @@ class TestHTTPStreamableTransport:
         transport._metrics["total_calls"] = 5
         transport._metrics["successful_calls"] = 4
         transport._metrics["failed_calls"] = 1
-        
+
         mock_context = AsyncMock()
         transport._http_context = mock_context
-        
+
         await transport.close()
-        
+
         assert transport._initialized is False
         assert transport._http_context is None
         assert transport._read_stream is None
@@ -386,7 +413,7 @@ class TestHTTPStreamableTransport:
         """Test getting streams for backward compatibility."""
         # No streams when not initialized
         assert transport.get_streams() == []
-        
+
         # Streams available when initialized
         transport._initialized = True
         transport._read_stream = Mock()
@@ -398,8 +425,8 @@ class TestHTTPStreamableTransport:
     @pytest.mark.asyncio
     async def test_context_manager_success(self, transport):
         """Test using transport as context manager."""
-        with patch.object(transport, 'initialize', AsyncMock(return_value=True)):
-            with patch.object(transport, 'close', AsyncMock()):
+        with patch.object(transport, "initialize", AsyncMock(return_value=True)):
+            with patch.object(transport, "close", AsyncMock()):
                 async with transport as t:
                     assert t is transport
                 transport.initialize.assert_called_once()
@@ -408,7 +435,7 @@ class TestHTTPStreamableTransport:
     @pytest.mark.asyncio
     async def test_context_manager_init_failure(self, transport):
         """Test context manager when initialization fails."""
-        with patch.object(transport, 'initialize', AsyncMock(return_value=False)):
+        with patch.object(transport, "initialize", AsyncMock(return_value=False)):
             with pytest.raises(RuntimeError, match="Failed to initialize HTTPStreamableTransport"):
                 async with transport:
                     pass
@@ -425,7 +452,7 @@ class TestHTTPStreamableTransport:
         transport._initialized = True
         transport._metrics["total_calls"] = 10
         transport._metrics["successful_calls"] = 8
-        
+
         repr_str = repr(transport)
         assert "status=initialized" in repr_str
         assert "calls: 10" in repr_str
@@ -437,35 +464,31 @@ class TestHTTPStreamableTransport:
         transport._initialized = True
         transport._read_stream = Mock()
         transport._write_stream = Mock()
-        
+
         # Test various response formats using base class normalization
         test_cases = [
             # Standard MCP content format
             {
                 "result": {"content": [{"type": "text", "text": '{"result": "success"}'}]},
-                "expected": {"isError": False, "content": {"result": "success"}}
+                "expected": {"isError": False, "content": {"result": "success"}},
             },
             # Plain text content
             {
                 "result": {"content": [{"type": "text", "text": "plain text"}]},
-                "expected": {"isError": False, "content": "plain text"}
+                "expected": {"isError": False, "content": "plain text"},
             },
             # Direct result
-            {
-                "result": {"value": 42},
-                "expected": {"isError": False, "content": {"value": 42}}
-            },
+            {"result": {"value": 42}, "expected": {"isError": False, "content": {"value": 42}}},
             # Error response
-            {
-                "error": {"message": "Tool failed"},
-                "expected": {"isError": True, "error": "Tool failed"}
-            }
+            {"error": {"message": "Tool failed"}, "expected": {"isError": True, "error": "Tool failed"}},
         ]
-        
+
         for case in test_cases:
             # FIXED: Use correct path without slash
-            with patch('chuk_tool_processor.mcp.transport.http_streamable_transport.send_tools_call', 
-                      AsyncMock(return_value=case)):
+            with patch(
+                "chuk_tool_processor.mcp.transport.http_streamable_transport.send_tools_call",
+                AsyncMock(return_value=case),
+            ):
                 result = await transport.call_tool("test", {})
                 assert result == case["expected"]
 

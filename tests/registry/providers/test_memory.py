@@ -1,15 +1,16 @@
 # tests/tool_processor/registry/providers/test_memory.py
-import pytest
-import inspect
 import asyncio
 
-from chuk_tool_processor.registry.providers.memory import InMemoryToolRegistry
+import pytest
+
 from chuk_tool_processor.core.exceptions import ToolNotFoundError
 from chuk_tool_processor.registry.metadata import ToolMetadata
+from chuk_tool_processor.registry.providers.memory import InMemoryToolRegistry
 
 
 class AsyncTool:
     """Asynchronously adds two numbers."""
+
     async def execute(self, x: int, y: int) -> int:
         await asyncio.sleep(0)
         return x + y
@@ -17,6 +18,7 @@ class AsyncTool:
 
 class AsyncMulTool:
     """Asynchronously multiplies two numbers."""
+
     async def execute(self, x: int, y: int) -> int:
         await asyncio.sleep(0)
         return x * y
@@ -24,6 +26,7 @@ class AsyncMulTool:
 
 class NoDocTool:
     """Tool without documentation."""
+
     async def execute(self):
         return "nodoc"
 
@@ -101,17 +104,17 @@ async def test_list_tools_and_namespaces(registry):
     # Register in default and custom namespace
     await registry.register_tool(AsyncTool)
     await registry.register_tool(NoDocTool, namespace="other")
-    
+
     # List all
     all_tools = set(await registry.list_tools())
     assert all_tools == {("default", "AsyncTool"), ("other", "NoDocTool")}
-    
+
     # List just default
     assert await registry.list_tools(namespace="default") == [("default", "AsyncTool")]
-    
+
     # List unknown namespace -> empty
     assert await registry.list_tools(namespace="missing") == []
-    
+
     # List namespaces
     names = await registry.list_namespaces()
     assert set(names) == {"default", "other"}
@@ -127,7 +130,7 @@ async def test_metadata_override_fields(registry):
     }
     await registry.register_tool(AsyncTool, metadata=custom_meta)
     meta = await registry.get_metadata("AsyncTool")
-    
+
     # Overrides applied
     assert meta.version == "9.9"
     assert meta.tags == {"a", "b"}

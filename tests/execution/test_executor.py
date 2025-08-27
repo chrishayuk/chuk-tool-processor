@@ -1,13 +1,15 @@
 """
 Unit tests for the ToolExecutor class.
 """
+
 from __future__ import annotations
 
 import asyncio
-from typing import Dict, List, Any, Optional, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import pytest
-from unittest.mock import patch, AsyncMock
 
 from chuk_tool_processor.execution.tool_executor import ToolExecutor
 from chuk_tool_processor.models.execution_strategy import ExecutionStrategy
@@ -21,18 +23,18 @@ from chuk_tool_processor.models.tool_result import ToolResult
 class MockRegistry:
     """Very small async-compatible registry stub."""
 
-    def __init__(self, tools: Dict[str, Any] | None = None):
+    def __init__(self, tools: dict[str, Any] | None = None):
         self._tools = tools or {}
 
-    async def get_tool(self, name: str, namespace: str = "default") -> Optional[Any]:
+    async def get_tool(self, name: str, namespace: str = "default") -> Any | None:
         return self._tools.get(name)
 
-    async def get_metadata(self, name: str, namespace: str = "default") -> Optional[Any]:
+    async def get_metadata(self, name: str, namespace: str = "default") -> Any | None:
         if name in self._tools:
             return {"description": f"mock meta {name}", "supports_streaming": False}
         return None
 
-    async def list_tools(self, namespace: Optional[str] = None) -> list:
+    async def list_tools(self, namespace: str | None = None) -> list:
         return [(namespace or "default", n) for n in self._tools]
 
 
@@ -49,13 +51,8 @@ class DummyStrategy(ExecutionStrategy):
         self._args = args
         self._kwargs = kwargs
 
-    async def run(
-        self, calls: List[ToolCall], timeout: Optional[float] = None
-    ) -> List[ToolResult]:
-        return [
-            ToolResult(tool=c.tool, result=f"Result for {c.tool}", error=None)
-            for c in calls
-        ]
+    async def run(self, calls: list[ToolCall], timeout: float | None = None) -> list[ToolResult]:
+        return [ToolResult(tool=c.tool, result=f"Result for {c.tool}", error=None) for c in calls]
 
     @property
     def supports_streaming(self) -> bool:  # noqa: D401
@@ -65,9 +62,7 @@ class DummyStrategy(ExecutionStrategy):
 class StreamingStrategy(DummyStrategy):
     """Same as DummyStrategy but with stream support."""
 
-    async def stream_run(
-        self, calls: List[ToolCall], timeout: Optional[float] = None
-    ) -> AsyncIterator[ToolResult]:
+    async def stream_run(self, calls: list[ToolCall], timeout: float | None = None) -> AsyncIterator[ToolResult]:
         for c in calls:
             yield ToolResult(tool=c.tool, result=f"Streamed {c.tool}", error=None)
             await asyncio.sleep(0.01)
@@ -80,12 +75,8 @@ class StreamingStrategy(DummyStrategy):
 class ErrorStrategy(DummyStrategy):
     """Always returns an error."""
 
-    async def run(
-        self, calls: List[ToolCall], timeout: Optional[float] = None
-    ) -> List[ToolResult]:
-        return [
-            ToolResult(tool=c.tool, result=None, error=f"error {c.tool}") for c in calls
-        ]
+    async def run(self, calls: list[ToolCall], timeout: float | None = None) -> list[ToolResult]:
+        return [ToolResult(tool=c.tool, result=None, error=f"error {c.tool}") for c in calls]
 
 
 # --------------------------------------------------------------------------- #
@@ -122,9 +113,7 @@ async def test_executor_initialisation_creates_inprocess_strategy(registry):
     If *strategy* is omitted, ``ToolExecutor`` should import and instantiate
     ``InProcessStrategy`` - we monkey-patch that class at the real import path.
     """
-    patch_target = (
-        "chuk_tool_processor.execution.strategies.inprocess_strategy.InProcessStrategy"
-    )
+    patch_target = "chuk_tool_processor.execution.strategies.inprocess_strategy.InProcessStrategy"
     with patch(patch_target) as mock_cls:
         mock_cls.return_value = DummyStrategy()  # what ToolExecutor gets back
 
@@ -134,9 +123,7 @@ async def test_executor_initialisation_creates_inprocess_strategy(registry):
             strategy_kwargs={"max_concurrency": 5, "hello": "world"},
         )
 
-        mock_cls.assert_called_once_with(
-            registry, default_timeout=9, max_concurrency=5, hello="world"
-        )
+        mock_cls.assert_called_once_with(registry, default_timeout=9, max_concurrency=5, hello="world")
         assert isinstance(ex.strategy, DummyStrategy)
 
 
@@ -166,9 +153,7 @@ async def test_stream_execute_with_streaming_strategy(registry, streaming_strate
 
 
 @pytest.mark.asyncio
-async def test_stream_execute_falls_back_for_non_streaming_strategy(
-    registry, dummy_strategy
-):
+async def test_stream_execute_falls_back_for_non_streaming_strategy(registry, dummy_strategy):
     ex = ToolExecutor(registry=registry, strategy=dummy_strategy)
     calls = [ToolCall(tool="a"), ToolCall(tool="b")]
     collected = []

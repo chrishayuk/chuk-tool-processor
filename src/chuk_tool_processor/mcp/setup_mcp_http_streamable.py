@@ -17,8 +17,6 @@ It:
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple
-
 from chuk_tool_processor.core.processor import ToolProcessor
 from chuk_tool_processor.logging import get_logger
 from chuk_tool_processor.mcp.register_mcp_tools import register_mcp_tools
@@ -32,29 +30,29 @@ logger = get_logger("chuk_tool_processor.mcp.setup_http_streamable")
 # --------------------------------------------------------------------------- #
 async def setup_mcp_http_streamable(
     *,
-    servers: List[Dict[str, str]],
-    server_names: Optional[Dict[int, str]] = None,
+    servers: list[dict[str, str]],
+    server_names: dict[int, str] | None = None,
     connection_timeout: float = 30.0,
     default_timeout: float = 30.0,
-    max_concurrency: Optional[int] = None,
+    max_concurrency: int | None = None,
     enable_caching: bool = True,
     cache_ttl: int = 300,
     enable_rate_limiting: bool = False,
-    global_rate_limit: Optional[int] = None,
-    tool_rate_limits: Optional[Dict[str, tuple]] = None,
+    global_rate_limit: int | None = None,
+    tool_rate_limits: dict[str, tuple] | None = None,
     enable_retries: bool = True,
     max_retries: int = 3,
     namespace: str = "http",
-) -> Tuple[ToolProcessor, StreamManager]:
+) -> tuple[ToolProcessor, StreamManager]:
     """
     Initialize HTTP Streamable transport MCP + a :class:`ToolProcessor`.
 
     This uses the modern HTTP Streamable transport (spec 2025-03-26) which
     provides better infrastructure compatibility and more flexible response
     handling compared to the deprecated SSE transport.
-    
+
     Call with ``await`` from your async context.
-    
+
     Args:
         servers: List of server configurations with 'name', 'url', and optionally 'api_key' keys
         server_names: Optional mapping of server indices to names
@@ -69,10 +67,10 @@ async def setup_mcp_http_streamable(
         enable_retries: Whether to enable automatic retries
         max_retries: Maximum retry attempts
         namespace: Namespace for registered tools
-        
+
     Returns:
         Tuple of (ToolProcessor, StreamManager)
-        
+
     Example:
         >>> servers = [
         ...     {

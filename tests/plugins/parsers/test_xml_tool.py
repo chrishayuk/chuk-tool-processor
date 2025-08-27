@@ -14,11 +14,8 @@ They cover:
 
 from __future__ import annotations
 
-import importlib
 from typing import Any
 from unittest import mock
-
-import pytest
 
 from chuk_tool_processor.plugins.discovery import (
     PluginDiscovery,
@@ -39,6 +36,7 @@ except ModuleNotFoundError:  # pragma: no cover - optional feature genuinely abs
     ParserPlugin = None  # ­type: ignore[assignment]
 
 from chuk_tool_processor.models.execution_strategy import ExecutionStrategy
+
 
 # --------------------------------------------------------------------------- #
 # Registry basics

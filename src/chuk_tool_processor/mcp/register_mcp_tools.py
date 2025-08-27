@@ -8,7 +8,7 @@ CLEAN & SIMPLE: Just the essentials - create MCPTool wrappers for remote tools.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from chuk_tool_processor.logging import get_logger
 from chuk_tool_processor.mcp.mcp_tool import MCPTool, RecoveryConfig
@@ -25,8 +25,8 @@ async def register_mcp_tools(
     # Optional resilience configuration
     default_timeout: float = 30.0,
     enable_resilience: bool = True,
-    recovery_config: Optional[RecoveryConfig] = None,
-) -> List[str]:
+    recovery_config: RecoveryConfig | None = None,
+) -> list[str]:
     """
     Pull the remote tool catalogue and create local MCPTool wrappers.
 
@@ -49,10 +49,10 @@ async def register_mcp_tools(
         The tool names that were registered.
     """
     registry = await ToolRegistryProvider.get_registry()
-    registered: List[str] = []
+    registered: list[str] = []
 
     # Get the remote tool catalogue
-    mcp_tools: List[Dict[str, Any]] = stream_manager.get_all_tools()
+    mcp_tools: list[dict[str, Any]] = stream_manager.get_all_tools()
 
     for tool_def in mcp_tools:
         tool_name = tool_def.get("name")
@@ -61,7 +61,7 @@ async def register_mcp_tools(
             continue
 
         description = tool_def.get("description") or f"MCP tool • {tool_name}"
-        meta: Dict[str, Any] = {
+        meta: dict[str, Any] = {
             "description": description,
             "is_async": True,
             "tags": {"mcp", "remote"},
@@ -101,20 +101,20 @@ async def register_mcp_tools(
 
 async def update_mcp_tools_stream_manager(
     namespace: str,
-    new_stream_manager: Optional[StreamManager],
+    new_stream_manager: StreamManager | None,
 ) -> int:
     """
     Update the StreamManager reference for all MCP tools in a namespace.
-    
+
     Useful for reconnecting tools after StreamManager recovery at the service level.
-    
+
     Parameters
     ----------
     namespace
         The namespace containing MCP tools to update
     new_stream_manager
         The new StreamManager to use, or None to disconnect
-        
+
     Returns
     -------
     int
@@ -122,26 +122,26 @@ async def update_mcp_tools_stream_manager(
     """
     registry = await ToolRegistryProvider.get_registry()
     updated_count = 0
-    
+
     try:
         # List all tools in the namespace
         all_tools = await registry.list_tools()
         namespace_tools = [name for ns, name in all_tools if ns == namespace]
-        
+
         for tool_name in namespace_tools:
             try:
                 tool = await registry.get_tool(tool_name, namespace)
-                if tool and hasattr(tool, 'set_stream_manager'):
+                if tool and hasattr(tool, "set_stream_manager"):
                     tool.set_stream_manager(new_stream_manager)
                     updated_count += 1
                     logger.debug("Updated StreamManager for tool '%s:%s'", namespace, tool_name)
             except Exception as e:
                 logger.warning("Failed to update StreamManager for tool '%s:%s': %s", namespace, tool_name, e)
-        
+
         action = "connected" if new_stream_manager else "disconnected"
         logger.debug("StreamManager %s for %d tools in namespace '%s'", action, updated_count, namespace)
-        
+
     except Exception as e:
         logger.error("Failed to update tools in namespace '%s': %s", namespace, e)
-    
+
     return updated_count

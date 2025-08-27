@@ -15,21 +15,23 @@ Usage
 -----
 $ uv run python examples/mcp_stdio_resources_demo.py
 """
+
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
-from colorama import Fore, Style, init as colorama_init
+from colorama import Fore, Style
+from colorama import init as colorama_init
 
 # --------------------------------------------------------------------------- #
 #  Colour output setup                                                        #
 # --------------------------------------------------------------------------- #
 colorama_init(autoreset=True)
+
 
 def c(text: str, colour: str) -> str:
     return f"{colour}{text}{Style.RESET_ALL}"
@@ -41,9 +43,9 @@ def c(text: str, colour: str) -> str:
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from chuk_tool_processor.logging import get_logger            # noqa: E402
-from chuk_tool_processor.mcp.setup_mcp_stdio import setup_mcp_stdio   # noqa: E402
-from chuk_tool_processor.mcp.stream_manager import StreamManager      # noqa: E402
+from chuk_tool_processor.logging import get_logger  # noqa: E402
+from chuk_tool_processor.mcp.setup_mcp_stdio import setup_mcp_stdio  # noqa: E402
+from chuk_tool_processor.mcp.stream_manager import StreamManager  # noqa: E402
 
 logger = get_logger("mcp-resources-demo")
 
@@ -99,9 +101,9 @@ def show_resources(payload: Any) -> None:
     like {"resources":[...], ...}.  Handle both.
     """
     resources = (
-        payload.get("resources", [])            # dict shape
+        payload.get("resources", [])  # dict shape
         if isinstance(payload, dict)
-        else payload                            # plain list
+        else payload  # plain list
     )
     print(f"Received {len(resources)} resources")
     for r in resources:
@@ -111,9 +113,9 @@ def show_resources(payload: Any) -> None:
 def show_prompts(payload: Any) -> None:
     """Pretty-print the reply from `prompts/list`."""
     prompts = (
-        payload.get("prompts", [])              # dict shape
+        payload.get("prompts", [])  # dict shape
         if isinstance(payload, dict)
-        else payload                            # plain list
+        else payload  # plain list
     )
     print(f"Received {len(prompts)} prompts")
     for p in prompts:
@@ -137,12 +139,12 @@ async def run_demo() -> None:
 
     # ── resources/list ────────────────────────────────────────────────────
     hdr("resources/list")
-    resources_payload = await sm.list_resources()             # type: ignore[attr-defined]
+    resources_payload = await sm.list_resources()  # type: ignore[attr-defined]
     show_resources(resources_payload)
 
     # ── prompts/list ──────────────────────────────────────────────────────
     hdr("prompts/list")
-    prompts_payload = await sm.list_prompts()                 # type: ignore[attr-defined]
+    prompts_payload = await sm.list_prompts()  # type: ignore[attr-defined]
     show_prompts(prompts_payload)
 
     # ── tidy up ───────────────────────────────────────────────────────────
@@ -156,9 +158,7 @@ if __name__ == "__main__":
     import logging
 
     # honour LOGLEVEL env-var for quick debugging
-    logging.getLogger("chuk_tool_processor").setLevel(
-        getattr(logging, os.environ.get("LOGLEVEL", "INFO").upper())
-    )
+    logging.getLogger("chuk_tool_processor").setLevel(getattr(logging, os.environ.get("LOGLEVEL", "INFO").upper()))
 
     try:
         asyncio.run(run_demo())

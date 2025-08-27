@@ -2,50 +2,42 @@
 """
 Tests for StdioTransport class with consistent interface.
 """
+
 import asyncio
-import json
+from unittest.mock import AsyncMock, Mock, patch
+
 import pytest
-from unittest.mock import Mock, AsyncMock, patch
+from chuk_mcp.transports.stdio.parameters import StdioParameters
 
 from chuk_tool_processor.mcp.transport.stdio_transport import StdioTransport
-from chuk_mcp.transports.stdio.parameters import StdioParameters
 
 
 class TestStdioTransport:
     """Test StdioTransport class with consistent interface."""
-    
+
     @pytest.fixture
     def transport(self):
         """Create StdioTransport instance with consistent parameters."""
-        server_params = {
-            'command': 'python',
-            'args': ['-m', 'test_server'],
-            'env': {'TEST': 'true'}
-        }
-        return StdioTransport(
-            server_params,
-            connection_timeout=30.0,
-            default_timeout=30.0,
-            enable_metrics=True
-        )
-    
+        server_params = {"command": "python", "args": ["-m", "test_server"], "env": {"TEST": "true"}}
+        return StdioTransport(server_params, connection_timeout=30.0, default_timeout=30.0, enable_metrics=True)
+
     @pytest.fixture
     def transport_no_metrics(self):
         """Create StdioTransport instance with metrics disabled."""
-        server_params = {'command': 'python', 'args': ['-m', 'test_server']}
+        server_params = {"command": "python", "args": ["-m", "test_server"]}
         return StdioTransport(server_params, enable_metrics=False)
 
     def test_init_with_dict_params(self, transport):
         """Test initialization with dictionary parameters."""
         assert isinstance(transport.server_params, StdioParameters)
-        assert transport.server_params.command == 'python'
-        assert transport.server_params.args == ['-m', 'test_server']
+        assert transport.server_params.command == "python"
+        assert transport.server_params.args == ["-m", "test_server"]
         assert transport.enable_metrics is True
         assert transport.default_timeout == 30.0
 
     def test_init_with_stdio_parameters(self):
         """Test initialization with StdioParameters object."""
-        params = StdioParameters(command='test', args=['arg1'])
+        params = StdioParameters(command="test", args=["arg1"])
         transport = StdioTransport(params)
         assert transport.server_params is params
         assert transport.enable_metrics is True  # default
@@ -55,17 +47,19 @@ class TestStdioTransport:
         """Test successful STDIO transport initialization with metrics tracking."""
         mock_context = AsyncMock()
         mock_streams = (Mock(), Mock())  # (read_stream, write_stream)
-        
-        with patch('chuk_tool_processor.mcp.transport.stdio_transport.stdio_client', return_value=mock_context):
-            with patch('chuk_tool_processor.mcp.transport.stdio_transport.send_initialize', AsyncMock(return_value=True)):
+
+        with patch("chuk_tool_processor.mcp.transport.stdio_transport.stdio_client", return_value=mock_context):
+            with patch(
+                "chuk_tool_processor.mcp.transport.stdio_transport.send_initialize", AsyncMock(return_value=True)
+            ):
                 mock_context.__aenter__.return_value = mock_streams
-                
+
                 result = await transport.initialize()
-                
+
                 assert result is True
                 assert transport._initialized is True
                 assert transport._streams == mock_streams
-                
+
                 # Check metrics were updated
                 metrics = transport.get_metrics()
                 assert metrics["initialization_time"] > 0
@@ -74,13 +68,13 @@ class TestStdioTransport:
     async def test_initialize_timeout(self, transport):
         """Test STDIO transport initialization timeout."""
         mock_context = AsyncMock()
-        
-        with patch('chuk_tool_processor.mcp.transport.stdio_transport.stdio_client', return_value=mock_context):
+
+        with patch("chuk_tool_processor.mcp.transport.stdio_transport.stdio_client", return_value=mock_context):
             # Simulate timeout during context entry
-            mock_context.__aenter__.side_effect = asyncio.TimeoutError()
-            
+            mock_context.__aenter__.side_effect = TimeoutError()
+
             result = await transport.initialize()
-            
+
             assert result is False
             assert transport._initialized is False
 
@@ -89,13 +83,15 @@ class TestStdioTransport:
         """Test STDIO transport initialization when send_initialize fails."""
         mock_context = AsyncMock()
         mock_streams = (Mock(), Mock())
-        
-        with patch('chuk_tool_processor.mcp.transport.stdio_transport.stdio_client', return_value=mock_context):
-            with patch('chuk_tool_processor.mcp.transport.stdio_transport.send_initialize', AsyncMock(return_value=False)):
+
+        with patch("chuk_tool_processor.mcp.transport.stdio_transport.stdio_client", return_value=mock_context):
+            with patch(
+                "chuk_tool_processor.mcp.transport.stdio_transport.send_initialize", AsyncMock(return_value=False)
+            ):
                 mock_context.__aenter__.return_value = mock_streams
-                
+
                 result = await transport.initialize()
-                
+
                 assert result is False
                 assert transport._initialized is False
 
@@ -104,11 +100,11 @@ class TestStdioTransport:
         """Test STDIO ping when initialized with metrics tracking."""
         transport._initialized = True
         transport._streams = (Mock(), Mock())
-        
-        with patch('chuk_tool_processor.mcp.transport.stdio_transport.send_ping', AsyncMock(return_value=True)):
+
+        with patch("chuk_tool_processor.mcp.transport.stdio_transport.send_ping", AsyncMock(return_value=True)):
             result = await transport.send_ping()
             assert result is True
-            
+
             # Check ping metrics were updated
             metrics = transport.get_metrics()
             assert metrics["last_ping_time"] > 0
@@ -125,11 +121,14 @@ class TestStdioTransport:
         """Test STDIO ping with exception and metrics tracking."""
         transport._initialized = True
         transport._streams = (Mock(), Mock())
-        
-        with patch('chuk_tool_processor.mcp.transport.stdio_transport.send_ping', AsyncMock(side_effect=Exception("Pipe error"))):
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.stdio_transport.send_ping",
+            AsyncMock(side_effect=Exception("Pipe error")),
+        ):
             result = await transport.send_ping()
             assert result is False
-            
+
             # Check pipe error metrics
             metrics = transport.get_metrics()
             assert metrics["pipe_errors"] == 1
@@ -151,11 +150,13 @@ class TestStdioTransport:
         """Test STDIO get tools when initialized with performance tracking."""
         transport._initialized = True
         transport._streams = (Mock(), Mock())
-        
+
         expected_tools = [{"name": "search"}, {"name": "research"}]
-        
-        with patch('chuk_tool_processor.mcp.transport.stdio_transport.send_tools_list', 
-                  AsyncMock(return_value={"tools": expected_tools})):
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.stdio_transport.send_tools_list",
+            AsyncMock(return_value={"tools": expected_tools}),
+        ):
             tools = await transport.get_tools()
             assert tools == expected_tools
 
@@ -164,11 +165,12 @@ class TestStdioTransport:
         """Test STDIO get tools when response is a list."""
         transport._initialized = True
         transport._streams = (Mock(), Mock())
-        
+
         expected_tools = [{"name": "search"}]
-        
-        with patch('chuk_tool_processor.mcp.transport.stdio_transport.send_tools_list', 
-                  AsyncMock(return_value=expected_tools)):
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.stdio_transport.send_tools_list", AsyncMock(return_value=expected_tools)
+        ):
             tools = await transport.get_tools()
             assert tools == expected_tools
 
@@ -184,16 +186,17 @@ class TestStdioTransport:
         """Test STDIO call tool when initialized with metrics tracking."""
         transport._initialized = True
         transport._streams = (Mock(), Mock())
-        
+
         # Test the STDIO-specific string preservation behavior
         response = {"result": {"content": [{"type": "text", "text": "42"}]}}
-        
-        with patch('chuk_tool_processor.mcp.transport.stdio_transport.send_tools_call', 
-                  AsyncMock(return_value=response)):
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.stdio_transport.send_tools_call", AsyncMock(return_value=response)
+        ):
             result = await transport.call_tool("search", {"query": "test"})
             assert result["isError"] is False
             assert result["content"] == "42"  # String preserved for STDIO
-            
+
             # Check metrics were updated
             metrics = transport.get_metrics()
             assert metrics["total_calls"] == 1
@@ -205,14 +208,15 @@ class TestStdioTransport:
         """Test STDIO call tool with custom timeout parameter."""
         transport._initialized = True
         transport._streams = (Mock(), Mock())
-        
+
         response = {"result": {"content": "success"}}
-        
-        with patch('chuk_tool_processor.mcp.transport.stdio_transport.send_tools_call', 
-                  AsyncMock(return_value=response)) as mock_send:
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.stdio_transport.send_tools_call", AsyncMock(return_value=response)
+        ) as mock_send:
             result = await transport.call_tool("search", {"query": "test"}, timeout=15.0)
             assert result["isError"] is False
-            
+
             # Verify the call was made with correct parameters
             mock_send.assert_called_once()
 
@@ -229,13 +233,15 @@ class TestStdioTransport:
         """Test STDIO call tool with timeout and metrics tracking."""
         transport._initialized = True
         transport._streams = (Mock(), Mock())
-        
-        with patch('chuk_tool_processor.mcp.transport.stdio_transport.send_tools_call', 
-                  AsyncMock(side_effect=asyncio.TimeoutError)):
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.stdio_transport.send_tools_call",
+            AsyncMock(side_effect=asyncio.TimeoutError),
+        ):
             result = await transport.call_tool("search", {}, timeout=1.0)
             assert result["isError"] is True
             assert "timed out after 1.0s" in result["error"]
-            
+
             # Check timeout failure metrics
             metrics = transport.get_metrics()
             assert metrics["total_calls"] == 1
@@ -246,13 +252,15 @@ class TestStdioTransport:
         """Test STDIO call tool with exception and metrics tracking."""
         transport._initialized = True
         transport._streams = (Mock(), Mock())
-        
-        with patch('chuk_tool_processor.mcp.transport.stdio_transport.send_tools_call', 
-                  AsyncMock(side_effect=Exception("Pipe broken"))):
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.stdio_transport.send_tools_call",
+            AsyncMock(side_effect=Exception("Pipe broken")),
+        ):
             result = await transport.call_tool("search", {})
             assert result["isError"] is True
             assert "Pipe broken" in result["error"]
-            
+
             # Check failure metrics including pipe error
             metrics = transport.get_metrics()
             assert metrics["total_calls"] == 1
@@ -269,27 +277,31 @@ class TestStdioTransport:
         assert metrics["failed_calls"] == 0
         assert metrics["avg_response_time"] == 0.0
         assert metrics["pipe_errors"] == 0
-        
+
         # FIXED: Simulate actual tool calls to test metrics
         transport._initialized = True
         transport._streams = (Mock(), Mock())
-        
+
         # Simulate successful call
-        with patch('chuk_tool_processor.mcp.transport.stdio_transport.send_tools_call', 
-                  AsyncMock(return_value={"result": {"content": "success"}})):
+        with patch(
+            "chuk_tool_processor.mcp.transport.stdio_transport.send_tools_call",
+            AsyncMock(return_value={"result": {"content": "success"}}),
+        ):
             await transport.call_tool("test", {})
-        
+
         # Simulate failed call
-        with patch('chuk_tool_processor.mcp.transport.stdio_transport.send_tools_call', 
-                  AsyncMock(side_effect=Exception("error"))):
+        with patch(
+            "chuk_tool_processor.mcp.transport.stdio_transport.send_tools_call",
+            AsyncMock(side_effect=Exception("error")),
+        ):
             await transport.call_tool("test", {})
-        
+
         metrics = transport.get_metrics()
         assert metrics["total_calls"] == 2
         assert metrics["successful_calls"] == 1
         assert metrics["failed_calls"] == 1
         assert metrics["avg_response_time"] > 0
-        
+
         # Test reset
         transport.reset_metrics()
         metrics = transport.get_metrics()
@@ -303,7 +315,7 @@ class TestStdioTransport:
         """Test transport behavior with metrics disabled."""
         transport_no_metrics._initialized = True
         transport_no_metrics._streams = (Mock(), Mock())
-        
+
         # Metrics should still be available but not actively updated during operations
         assert transport_no_metrics.enable_metrics is False
         metrics = transport_no_metrics.get_metrics()
@@ -315,17 +327,17 @@ class TestStdioTransport:
         content = [{"type": "text", "text": "42"}]
         result = transport._extract_stdio_content(content)
         assert result == "42"  # Preserved as string
-        
+
         # Test decimal string preservation
         content = [{"type": "text", "text": "3.14"}]
         result = transport._extract_stdio_content(content)
         assert result == "3.14"  # Preserved as string
-        
+
         # Test JSON object parsing
         content = [{"type": "text", "text": '{"key": "value"}'}]
         result = transport._extract_stdio_content(content)
         assert result == {"key": "value"}  # Parsed as JSON
-        
+
         # Test non-numeric string
         content = [{"type": "text", "text": "hello"}]
         result = transport._extract_stdio_content(content)
@@ -336,11 +348,13 @@ class TestStdioTransport:
         """Test listing resources when initialized."""
         transport._initialized = True
         transport._streams = (Mock(), Mock())
-        
+
         expected_resources = {"resources": [{"name": "resource1"}]}
-        
-        with patch('chuk_tool_processor.mcp.transport.stdio_transport.send_resources_list', 
-                  AsyncMock(return_value=expected_resources)):
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.stdio_transport.send_resources_list",
+            AsyncMock(return_value=expected_resources),
+        ):
             result = await transport.list_resources()
             assert result == expected_resources
 
@@ -356,11 +370,13 @@ class TestStdioTransport:
         """Test listing prompts when initialized."""
         transport._initialized = True
         transport._streams = (Mock(), Mock())
-        
+
         expected_prompts = {"prompts": [{"name": "prompt1"}]}
-        
-        with patch('chuk_tool_processor.mcp.transport.stdio_transport.send_prompts_list', 
-                  AsyncMock(return_value=expected_prompts)):
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.stdio_transport.send_prompts_list",
+            AsyncMock(return_value=expected_prompts),
+        ):
             result = await transport.list_prompts()
             assert result == expected_prompts
 
@@ -369,11 +385,13 @@ class TestStdioTransport:
         """Test reading a specific resource."""
         transport._initialized = True
         transport._streams = (Mock(), Mock())
-        
+
         expected_resource = {"content": "resource data"}
-        
-        with patch('chuk_tool_processor.mcp.transport.stdio_transport.send_resources_read', 
-                  AsyncMock(return_value=expected_resource)):
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.stdio_transport.send_resources_read",
+            AsyncMock(return_value=expected_resource),
+        ):
             result = await transport.read_resource("test://resource")
             assert result == expected_resource
 
@@ -382,11 +400,13 @@ class TestStdioTransport:
         """Test getting a specific prompt."""
         transport._initialized = True
         transport._streams = (Mock(), Mock())
-        
+
         expected_prompt = {"messages": [{"role": "user", "content": "test"}]}
-        
-        with patch('chuk_tool_processor.mcp.transport.stdio_transport.send_prompts_get', 
-                  AsyncMock(return_value=expected_prompt)):
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.stdio_transport.send_prompts_get",
+            AsyncMock(return_value=expected_prompt),
+        ):
             result = await transport.get_prompt("test_prompt", {"arg": "value"})
             assert result == expected_prompt
 
@@ -398,12 +418,12 @@ class TestStdioTransport:
         transport._metrics["total_calls"] = 5
         transport._metrics["successful_calls"] = 4
         transport._metrics["failed_calls"] = 1
-        
+
         mock_context = AsyncMock()
         transport._context = mock_context
-        
+
         await transport.close()
-        
+
         assert transport._initialized is False
         assert transport._context is None
         assert transport._streams is None
@@ -420,7 +440,7 @@ class TestStdioTransport:
         """Test getting streams for backward compatibility."""
         # No streams when not initialized
         assert transport.get_streams() == []
-        
+
         # Streams available when initialized
         mock_streams = (Mock(), Mock())
         transport._streams = mock_streams
@@ -429,8 +449,8 @@ class TestStdioTransport:
     @pytest.mark.asyncio
     async def test_context_manager_success(self, transport):
         """Test using transport as context manager."""
-        with patch.object(transport, 'initialize', AsyncMock(return_value=True)):
-            with patch.object(transport, 'close', AsyncMock()):
+        with patch.object(transport, "initialize", AsyncMock(return_value=True)):
+            with patch.object(transport, "close", AsyncMock()):
                 async with transport as t:
                     assert t is transport
                 transport.initialize.assert_called_once()
@@ -439,7 +459,7 @@ class TestStdioTransport:
     @pytest.mark.asyncio
     async def test_context_manager_init_failure(self, transport):
         """Test context manager when initialization fails."""
-        with patch.object(transport, 'initialize', AsyncMock(return_value=False)):
+        with patch.object(transport, "initialize", AsyncMock(return_value=False)):
             with pytest.raises(RuntimeError, match="Failed to initialize StdioTransport"):
                 async with transport:
                     pass
@@ -456,7 +476,7 @@ class TestStdioTransport:
         transport._initialized = True
         transport._metrics["total_calls"] = 10
         transport._metrics["successful_calls"] = 8
-        
+
         repr_str = repr(transport)
         assert "status=initialized" in repr_str
         assert "calls: 10" in repr_str

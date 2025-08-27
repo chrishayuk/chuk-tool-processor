@@ -5,14 +5,15 @@ Demo: expose a LangChain `BaseTool` as an async-native chuk-tool.
 """
 
 from __future__ import annotations
+
 import asyncio
 from typing import Any, ClassVar
 
 from langchain.tools.base import BaseTool
 
-from chuk_tool_processor.registry import initialize, register_tool
 from chuk_tool_processor.execution.tool_executor import ToolExecutor
 from chuk_tool_processor.models.tool_call import ToolCall
+from chuk_tool_processor.registry import initialize, register_tool
 
 
 # ----------------------------------------------------------------------

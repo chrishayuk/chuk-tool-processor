@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, List
+from typing import Any
 
 from pydantic import ValidationError
 
@@ -19,6 +19,7 @@ logger = get_logger(__name__)
 
 class PluginMeta:
     """Optional self-description consumed by the plugin-discovery subsystem."""
+
     name: str = "json_tool_calls"
     description: str = "Parses a JSON object containing a `tool_calls` array."
     version: str = "1.0.0"
@@ -28,7 +29,7 @@ class PluginMeta:
 class JsonToolPlugin(ParserPlugin):
     """Extracts a *list* of :class:`ToolCall` objects from a `tool_calls` array."""
 
-    async def try_parse(self, raw: str | Any) -> List[ToolCall]:  # noqa: D401
+    async def try_parse(self, raw: str | Any) -> list[ToolCall]:  # noqa: D401
         # Decode JSON if we were given a string
         try:
             data = json.loads(raw) if isinstance(raw, str) else raw
@@ -39,7 +40,7 @@ class JsonToolPlugin(ParserPlugin):
         if not isinstance(data, dict):
             return []
 
-        calls: List[ToolCall] = []
+        calls: list[ToolCall] = []
         for entry in data.get("tool_calls", []):
             try:
                 calls.append(ToolCall(**entry))

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Dict, List
+from typing import Any
 
 from pydantic import ValidationError
 
@@ -26,8 +26,7 @@ class PluginMeta:
 
     name: str = "function_call"
     description: str = (
-        "Parses a single OpenAI-style `function_call` JSON object (including "
-        "strings that embed such an object)."
+        "Parses a single OpenAI-style `function_call` JSON object (including strings that embed such an object)."
     )
     version: str = "1.0.0"
     author: str = "chuk_tool_processor"
@@ -40,8 +39,8 @@ class FunctionCallPlugin(ParserPlugin):
     # Public API
     # --------------------------------------------------------------------- #
 
-    async def try_parse(self, raw: str | Dict[str, Any]) -> List[ToolCall]:
-        payload: Dict[str, Any] | None
+    async def try_parse(self, raw: str | dict[str, Any]) -> list[ToolCall]:
+        payload: dict[str, Any] | None
 
         # 1️⃣  Primary path ─ whole payload is JSON
         if isinstance(raw, dict):
@@ -52,7 +51,7 @@ class FunctionCallPlugin(ParserPlugin):
             except json.JSONDecodeError:
                 payload = None
 
-        calls: List[ToolCall] = []
+        calls: list[ToolCall] = []
 
         if isinstance(payload, dict):
             calls.extend(self._extract_from_payload(payload))
@@ -72,7 +71,7 @@ class FunctionCallPlugin(ParserPlugin):
     # Helpers
     # ------------------------------------------------------------------ #
 
-    def _extract_from_payload(self, payload: Dict[str, Any]) -> List[ToolCall]:
+    def _extract_from_payload(self, payload: dict[str, Any]) -> list[ToolCall]:
         fc = payload.get("function_call")
         if not isinstance(fc, dict):
             return []

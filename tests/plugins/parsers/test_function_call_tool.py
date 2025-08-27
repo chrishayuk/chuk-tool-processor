@@ -2,11 +2,12 @@
 """
 Async parser for an OpenAI-style **single** ``function_call`` object.
 """
+
 from __future__ import annotations
 
 import json
 import re
-from typing import Any, Dict, List
+from typing import Any
 
 from pydantic import ValidationError
 
@@ -23,8 +24,8 @@ _JSON_OBJECT = re.compile(r"\{(?:[^{}]|(?:\{[^{}]*\}))*\}")
 class FunctionCallPlugin(ParserPlugin):
     """Parse strings or dicts that contain exactly one ``function_call`` entry."""
 
-    async def try_parse(self, raw: str | Dict[str, Any]) -> List[ToolCall]:  # noqa: D401
-        payload: Dict[str, Any] | None
+    async def try_parse(self, raw: str | dict[str, Any]) -> list[ToolCall]:  # noqa: D401
+        payload: dict[str, Any] | None
 
         # ──────────────────────────────────────────────────────────
         # 1) primary path — whole payload is (or parses as) JSON
@@ -37,7 +38,7 @@ class FunctionCallPlugin(ParserPlugin):
             except json.JSONDecodeError:
                 payload = None
 
-        calls: List[ToolCall] = []
+        calls: list[ToolCall] = []
         if isinstance(payload, dict):
             calls.extend(self._extract_from_payload(payload))
 
@@ -57,7 +58,7 @@ class FunctionCallPlugin(ParserPlugin):
     # ------------------------------------------------------------
     # helpers
     # ------------------------------------------------------------
-    def _extract_from_payload(self, payload: Dict[str, Any]) -> List[ToolCall]:
+    def _extract_from_payload(self, payload: dict[str, Any]) -> list[ToolCall]:
         fc = payload.get("function_call")
         if not isinstance(fc, dict):
             return []

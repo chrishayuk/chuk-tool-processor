@@ -10,10 +10,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import sys
 from pathlib import Path
-from typing import Dict, List
 
 # --------------------------------------------------------------------- #
 #  allow "poetry run python examples/…" style execution                 #
@@ -24,9 +22,9 @@ sys.path.insert(0, str(PROJECT_ROOT))
 # --------------------------------------------------------------------- #
 #  CHUK imports                                                         #
 # --------------------------------------------------------------------- #
+from chuk_tool_processor.logging import get_logger
 from chuk_tool_processor.mcp.setup_mcp_stdio import setup_mcp_stdio
 from chuk_tool_processor.registry.provider import ToolRegistryProvider
-from chuk_tool_processor.logging import get_logger
 
 logger = get_logger("mcp_stdio_example")
 
@@ -53,20 +51,20 @@ async def dump_namespace(namespace: str) -> None:
 async def safer_cleanup(stream_manager):
     """
     Safer cleanup that handles cancel scope issues during event loop shutdown.
-    
+
     This version uses very short timeouts and graceful error handling to avoid
     the cancel scope error that was occurring in the original version.
     """
     if not stream_manager:
         return
-        
+
     try:
-        # CRITICAL FIX: Use very short timeout (0.1s) to avoid blocking 
+        # CRITICAL FIX: Use very short timeout (0.1s) to avoid blocking
         # event loop shutdown which causes cancel scope conflicts
         await asyncio.wait_for(stream_manager.close(), timeout=0.1)
         logger.debug("Stream manager closed successfully")
-    except asyncio.TimeoutError:
-        # Timeout during shutdown is normal and expected - the important 
+    except TimeoutError:
+        # Timeout during shutdown is normal and expected - the important
         # resources are cleaned up even if we don't wait for full completion
         logger.debug("Stream manager close timed out during shutdown (normal)")
     except asyncio.CancelledError:
@@ -128,7 +126,7 @@ async def main() -> None:
             try:
                 res = await wrapper.execute(timezone="America/New_York")
                 print("\nResult:")
-                if isinstance(res, (dict, list)):
+                if isinstance(res, dict | list):
                     print(json.dumps(res, indent=2))
                 else:
                     print(res)

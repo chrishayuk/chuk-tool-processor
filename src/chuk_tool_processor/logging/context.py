@@ -15,21 +15,20 @@ This module provides:
 from __future__ import annotations
 
 import asyncio
+import atexit
 import contextvars
 import logging
+import threading
 import uuid
 import warnings
-import threading
-import atexit
+from collections.abc import AsyncGenerator
 from typing import (
     Any,
     AsyncContextManager,
-    AsyncGenerator,
-    Dict,
-    Optional,
 )
 
 __all__ = ["LogContext", "log_context", "StructuredAdapter", "get_logger"]
+
 
 # --------------------------------------------------------------------------- #
 # Production-quality shutdown error handling
@@ -37,12 +36,12 @@ __all__ = ["LogContext", "log_context", "StructuredAdapter", "get_logger"]
 class LibraryShutdownFilter(logging.Filter):
     """
     Production filter for suppressing known harmless shutdown messages.
-    
+
     This filter ensures clean library shutdown by suppressing specific
     error messages that occur during normal asyncio/anyio cleanup and
     do not indicate actual problems.
     """
-    
+
     # Known harmless shutdown patterns
     SUPPRESSED_PATTERNS = [
         # Primary anyio error that this fixes
@@ -55,55 +54,56 @@ class LibraryShutdownFilter(logging.Filter):
         ("WARNING", "task was destroyed but it is pending"),
         ("ERROR", "event loop is closed"),
     ]
-    
+
     def filter(self, record: logging.LogRecord) -> bool:
         """Filter out known harmless shutdown messages."""
         message = record.getMessage().lower()
         level = record.levelname
-        
+
         for pattern_level, *pattern_phrases in self.SUPPRESSED_PATTERNS:
             if level == pattern_level and all(phrase.lower() in message for phrase in pattern_phrases):
                 return False
-        
+
         return True
+
 
 class LibraryLoggingManager:
     """
     Clean manager for library-wide logging concerns.
-    
+
     Handles initialization and configuration of logging behavior
     in a centralized, maintainable way.
     """
-    
+
     def __init__(self):
         self._initialized = False
         self._lock = threading.Lock()
-    
+
     def initialize(self):
         """Initialize clean shutdown behavior for the library."""
         if self._initialized:
             return
-            
+
         with self._lock:
             if self._initialized:
                 return
-            
+
             self._setup_shutdown_handling()
             self._setup_warning_filters()
             self._initialized = True
-    
+
     def _setup_shutdown_handling(self):
         """Set up clean shutdown message handling."""
         root_logger = logging.getLogger()
-        
+
         # Check if our filter is already present
         for existing_filter in root_logger.filters:
             if isinstance(existing_filter, LibraryShutdownFilter):
                 return
-        
+
         # Add our production-quality filter
         root_logger.addFilter(LibraryShutdownFilter())
-    
+
     def _setup_warning_filters(self):
         """Set up Python warnings filters for clean shutdown."""
         # Suppress specific asyncio/anyio warnings during shutdown
@@ -112,10 +112,11 @@ class LibraryLoggingManager:
             ".*coroutine was never awaited.*",
             ".*Task was destroyed but it is pending.*",
         ]
-        
+
         for pattern in warning_patterns:
             warnings.filterwarnings("ignore", message=pattern, category=RuntimeWarning)
             warnings.filterwarnings("ignore", message=pattern, category=ResourceWarning)
+
 
 # Global manager instance
 _logging_manager = LibraryLoggingManager()
@@ -130,9 +131,7 @@ atexit.register(lambda: None)
 # Per-task context storage
 # --------------------------------------------------------------------------- #
 
-_context_var: contextvars.ContextVar[Dict[str, Any]] = contextvars.ContextVar(
-    "log_context", default={}
-)
+_context_var: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("log_context", default={})
 
 
 # --------------------------------------------------------------------------- #
@@ -189,17 +188,17 @@ class LogContext:
     # Public API
     # ------------------------------------------------------------------ #
     @property
-    def context(self) -> Dict[str, Any]:
+    def context(self) -> dict[str, Any]:
         """Return the current context dict (task-local)."""
         return _context_var.get()
 
     @property
-    def request_id(self) -> Optional[str]:
+    def request_id(self) -> str | None:
         """Convenience accessor for the current request ID (if any)."""
         return self.context.get("request_id")
 
     # -- simple helpers ------------------------------------------------- #
-    def update(self, kv: Dict[str, Any]) -> None:
+    def update(self, kv: dict[str, Any]) -> None:
         """Merge *kv* into the current context."""
         ctx = self.context.copy()
         ctx.update(kv)
@@ -209,12 +208,12 @@ class LogContext:
         """Drop **all** contextual data."""
         _context_var.set({})
 
-    def get_copy(self) -> Dict[str, Any]:
+    def get_copy(self) -> dict[str, Any]:
         """Return a **copy** of the current context."""
         return self.context.copy()
 
     # -- request helpers ------------------------------------------------ #
-    def start_request(self, request_id: Optional[str] = None) -> str:
+    def start_request(self, request_id: str | None = None) -> str:
         """
         Start a new *request* scope.
 
@@ -233,9 +232,7 @@ class LogContext:
     # ------------------------------------------------------------------ #
     # Async context helpers
     # ------------------------------------------------------------------ #
-    async def _context_scope_gen(
-        self, **kwargs: Any
-    ) -> AsyncGenerator[Dict[str, Any], None]:
+    async def _context_scope_gen(self, **kwargs: Any) -> AsyncGenerator[dict[str, Any], None]:
         prev_ctx = self.get_copy()
         try:
             self.update(kwargs)
@@ -256,9 +253,7 @@ class LogContext:
         """
         return AsyncContextManagerWrapper(self._context_scope_gen(**kwargs))
 
-    async def _request_scope_gen(
-        self, request_id: Optional[str] = None
-    ) -> AsyncGenerator[str, None]:
+    async def _request_scope_gen(self, request_id: str | None = None) -> AsyncGenerator[str, None]:
         prev_ctx = self.get_copy()
         try:
             rid = self.start_request(request_id)
@@ -267,7 +262,7 @@ class LogContext:
         finally:
             _context_var.set(prev_ctx)
 
-    def request_scope(self, request_id: Optional[str] = None) -> AsyncContextManager:
+    def request_scope(self, request_id: str | None = None) -> AsyncContextManager:
         """
         Manage a full request lifecycle::
 
@@ -279,6 +274,7 @@ class LogContext:
 
 # A convenient global instance that most code can just import and use.
 log_context = LogContext()
+
 
 # --------------------------------------------------------------------------- #
 # StructuredAdapter
@@ -337,10 +333,10 @@ class StructuredAdapter(logging.LoggerAdapter):
 def get_logger(name: str) -> StructuredAdapter:
     """
     Return a :class:`StructuredAdapter` wrapping ``logging.getLogger(name)``.
-    
+
     Includes automatic initialization of clean shutdown behavior.
     """
     # Ensure clean shutdown behavior is initialized
     _logging_manager.initialize()
-    
+
     return StructuredAdapter(logging.getLogger(name), {})

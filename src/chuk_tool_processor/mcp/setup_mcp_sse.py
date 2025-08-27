@@ -13,8 +13,6 @@ It:
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple
-
 from chuk_tool_processor.core.processor import ToolProcessor
 from chuk_tool_processor.logging import get_logger
 from chuk_tool_processor.mcp.register_mcp_tools import register_mcp_tools
@@ -28,25 +26,25 @@ logger = get_logger("chuk_tool_processor.mcp.setup_sse")
 # --------------------------------------------------------------------------- #
 async def setup_mcp_sse(  # noqa: C901 - long but just a config facade
     *,
-    servers: List[Dict[str, str]],
-    server_names: Optional[Dict[int, str]] = None,
+    servers: list[dict[str, str]],
+    server_names: dict[int, str] | None = None,
     connection_timeout: float = 30.0,  # 🔧 INCREASED DEFAULT: was 10.0
-    default_timeout: float = 30.0,     # 🔧 INCREASED DEFAULT: was 10.0
-    max_concurrency: Optional[int] = None,
+    default_timeout: float = 30.0,  # 🔧 INCREASED DEFAULT: was 10.0
+    max_concurrency: int | None = None,
     enable_caching: bool = True,
     cache_ttl: int = 300,
     enable_rate_limiting: bool = False,
-    global_rate_limit: Optional[int] = None,
-    tool_rate_limits: Optional[Dict[str, tuple]] = None,
+    global_rate_limit: int | None = None,
+    tool_rate_limits: dict[str, tuple] | None = None,
     enable_retries: bool = True,
     max_retries: int = 3,
     namespace: str = "sse",
-) -> Tuple[ToolProcessor, StreamManager]:
+) -> tuple[ToolProcessor, StreamManager]:
     """
     Initialise SSE-transport MCP + a :class:`ToolProcessor`.
 
     Call with ``await`` from your async context.
-    
+
     Args:
         servers: List of server configurations with 'name' and 'url' keys
         server_names: Optional mapping of server indices to names
@@ -61,7 +59,7 @@ async def setup_mcp_sse(  # noqa: C901 - long but just a config facade
         enable_retries: Whether to enable automatic retries
         max_retries: Maximum retry attempts
         namespace: Namespace for registered tools
-        
+
     Returns:
         Tuple of (ToolProcessor, StreamManager)
     """
@@ -70,7 +68,7 @@ async def setup_mcp_sse(  # noqa: C901 - long but just a config facade
         servers=servers,
         server_names=server_names,
         connection_timeout=connection_timeout,  # 🔧 ADD THIS LINE
-        default_timeout=default_timeout,        # 🔧 ADD THIS LINE
+        default_timeout=default_timeout,  # 🔧 ADD THIS LINE
     )
 
     # 2️⃣  pull the remote tool list and register each one locally

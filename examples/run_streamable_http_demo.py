@@ -15,8 +15,10 @@ import asyncio
 import subprocess
 import sys
 import time
-import requests
 from pathlib import Path
+
+import requests
+
 
 def check_server_ready(url: str, max_attempts: int = 10) -> bool:
     """Check if the server is ready to accept connections."""
@@ -27,17 +29,17 @@ def check_server_ready(url: str, max_attempts: int = 10) -> bool:
                 return True
         except requests.RequestException:
             pass
-        
+
         print(f"⏳ Waiting for server... (attempt {attempt + 1}/{max_attempts})")
         time.sleep(1)
-    
+
     return False
 
 
 async def run_demo():
     """Run the complete HTTP Streamable demo."""
     server_url = "http://localhost:8000"
-    
+
     # Get the correct project root (parent of the script location)
     script_path = Path(__file__).resolve()
     if script_path.parent.name == "examples":
@@ -46,26 +48,26 @@ async def run_demo():
     else:
         # If script is in project root
         project_root = script_path.parent
-    
+
     print(f"📁 Project root: {project_root}")
-    
+
     # Start the mock server
     print("🚀 Starting mock HTTP Streamable server...")
     server_script = project_root / "examples" / "mcp_streamable_http_server.py"
     client_script = project_root / "examples" / "mcp_streamable_http_example_calling_usage.py"
-    
+
     print(f"🖥️  Server script: {server_script}")
     print(f"🎯 Client script: {client_script}")
-    
+
     if not server_script.exists():
         print(f"❌ Server script not found: {server_script}")
         print("Please save the mcp_streamable_http_server.py to the examples/ directory")
         return
-    
+
     if not client_script.exists():
         print(f"❌ Client script not found: {client_script}")
         print("Creating client script...")
-        
+
         # Create the client script
         # Create the client script with proper escaping
         client_code = """#!/usr/bin/env python
@@ -141,11 +143,11 @@ async def bootstrap_mcp() -> None:
             server_names={0: SERVER_NAME},
             namespace=NAMESPACE,
         )
-        
+
         # keep for shutdown
         bootstrap_mcp.stream_manager = sm  # type: ignore[attr-defined]
         print("✅ Connected to mock server successfully!")
-        
+
     except Exception as e:
         logger.error(f"Failed to bootstrap MCP HTTP Streamable: {e}")
         print(f"❌ Could not connect to mock HTTP server at {HTTP_SERVER_URL}")
@@ -292,14 +294,14 @@ async def run_demo() -> None:
 
     # test error handling -----------------------------------------------------
     banner("Error Handling Test")
-    
+
     error_calls = [
         ToolCall(
             tool=f"{NAMESPACE}.nonexistent_tool",
             arguments={"query": "This should fail"},
         )
     ]
-    
+
     try:
         error_results = await executor.execute(error_calls)
         show_results("Error Handling", error_calls, error_results)
@@ -308,18 +310,18 @@ async def run_demo() -> None:
 
     # Streaming demonstration ------------------------------------
     banner("Streaming Features Test")
-    
+
     streaming_calls = [
         ToolCall(
             tool=f"{NAMESPACE}.slow_operation",
             arguments={"duration": 3},
         )
     ]
-    
+
     try:
         streaming_results = await executor.execute(streaming_calls)
         show_results("Slow Operation (potential streaming)", streaming_calls, streaming_results)
-        
+
     except Exception as e:
         print(f"❌ Streaming demonstration failed: {e}")
 
@@ -348,41 +350,35 @@ if __name__ == "__main__":
 
     asyncio.run(run_demo())
 """
-        
+
         client_script.write_text(client_code)
         print(f"✅ Created client script: {client_script}")
-    
-    server_process = subprocess.Popen([
-        sys.executable, 
-        str(server_script)
-    ])
-    
+
+    server_process = subprocess.Popen([sys.executable, str(server_script)])
+
     try:
         # Wait for server to be ready
         if not check_server_ready(server_url):
             print("❌ Server failed to start within timeout")
             return
-        
+
         print("✅ Server is ready!")
         print("🔄 Running client demo...")
-        
+
         # Run the client demo
-        client_process = subprocess.run([
-            sys.executable,
-            str(client_script)
-        ])
-        
+        client_process = subprocess.run([sys.executable, str(client_script)])
+
         if client_process.returncode == 0:
             print("✅ Demo completed successfully!")
         else:
             print(f"❌ Demo failed with exit code: {client_process.returncode}")
-    
+
     except KeyboardInterrupt:
         print("\\n🛑 Demo interrupted by user")
-    
+
     except Exception as e:
         print(f"❌ Demo error: {e}")
-    
+
     finally:
         # Clean up server
         print("🧹 Cleaning up server...")
@@ -397,7 +393,7 @@ if __name__ == "__main__":
 if __name__ == "__main__":
     print("🌐 HTTP Streamable Demo Runner")
     print("=" * 50)
-    
+
     try:
         asyncio.run(run_demo())
     except KeyboardInterrupt:

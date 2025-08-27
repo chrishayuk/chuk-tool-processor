@@ -1,7 +1,7 @@
 # tests/tool_processor/registry/test_tool_metadata.py
-import pytest
-import asyncio
 from datetime import datetime, timedelta
+
+import pytest
 from pydantic import ValidationError
 
 from chuk_tool_processor.registry.metadata import ToolMetadata
@@ -97,14 +97,14 @@ async def test_str_reflects_overrides():
 async def test_with_updated_timestamp():
     tm = ToolMetadata(name="test")
     initial_timestamp = tm.updated_at
-    
+
     # Use a small time delay to ensure timestamp will be different
     # Create a new timestamp slightly in the future rather than using sleep
-    new_time = datetime.utcnow() + timedelta(milliseconds=100)
-    
+    datetime.utcnow() + timedelta(milliseconds=100)
+
     # Create an updated copy
     updated = tm.with_updated_timestamp()
-    
+
     # Check that the timestamp was updated
     assert updated.updated_at > initial_timestamp
     assert updated.name == tm.name  # Should preserve other properties
@@ -113,16 +113,12 @@ async def test_with_updated_timestamp():
 @pytest.mark.asyncio
 async def test_streaming_metadata():
     from chuk_tool_processor.registry.metadata import StreamingToolMetadata
-    
+
     tm = StreamingToolMetadata(name="stream_tool")
     assert tm.supports_streaming is True
     assert tm.name == "stream_tool"
-    
+
     # Test with chunk size and content type
-    tm2 = StreamingToolMetadata(
-        name="stream_tool2",
-        chunk_size=1024,
-        content_type="text/plain"
-    )
+    tm2 = StreamingToolMetadata(name="stream_tool2", chunk_size=1024, content_type="text/plain")
     assert tm2.chunk_size == 1024
     assert tm2.content_type == "text/plain"

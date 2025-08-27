@@ -10,31 +10,43 @@ ValidatedTool *must* expose a synchronous `_execute()` that returns a
 plain `dict`; `run()` wraps that in the validated `Result` model.
 An optional `arun()` is provided for “await tool(args)” convenience.
 """
+
 from __future__ import annotations
 
 import asyncio
-from typing import Dict, Tuple
 
 import httpx
 from geopy.geocoders import Nominatim
-from chuk_tool_processor.registry.decorators import register_tool
+
 from chuk_tool_processor.models.validated_tool import ValidatedTool
+from chuk_tool_processor.registry.decorators import register_tool
 
 # ─────────────────────────── helpers ────────────────────────────────
 _GEOCODER = Nominatim(user_agent="a2a_demo_weather", timeout=5)
 
 _OM_CODE_MAP: dict[int, str] = {
-    0: "Clear", 1: "Mainly clear", 2: "Partly cloudy", 3: "Overcast",
-    45: "Fog", 48: "Depositing rime fog",
-    51: "Light drizzle", 53: "Drizzle", 55: "Dense drizzle",
-    56: "Freezing drizzle", 57: "Dense freezing drizzle",
-    61: "Light rain", 63: "Rain", 65: "Heavy rain",
-    71: "Light snow", 73: "Snow", 75: "Heavy snow",
+    0: "Clear",
+    1: "Mainly clear",
+    2: "Partly cloudy",
+    3: "Overcast",
+    45: "Fog",
+    48: "Depositing rime fog",
+    51: "Light drizzle",
+    53: "Drizzle",
+    55: "Dense drizzle",
+    56: "Freezing drizzle",
+    57: "Dense freezing drizzle",
+    61: "Light rain",
+    63: "Rain",
+    65: "Heavy rain",
+    71: "Light snow",
+    73: "Snow",
+    75: "Heavy snow",
     95: "Thunderstorm",
 }
 
 
-def _geocode_sync(location: str) -> Tuple[float, float]:
+def _geocode_sync(location: str) -> tuple[float, float]:
     """Return (lat, lon) for *location* or raise ValueError."""
     geo = _GEOCODER.geocode(location)
     if not geo:
@@ -42,7 +54,7 @@ def _geocode_sync(location: str) -> Tuple[float, float]:
     return geo.latitude, geo.longitude
 
 
-def _fetch_weather_sync(lat: float, lon: float, units: str) -> Dict:
+def _fetch_weather_sync(lat: float, lon: float, units: str) -> dict:
     """Call Open-Meteo and return canonical keys (blocking)."""
     params = {
         "latitude": lat,
@@ -58,18 +70,17 @@ def _fetch_weather_sync(lat: float, lon: float, units: str) -> Dict:
     return {
         "temperature": cur["temperature_2m"],
         "humidity": cur["relative_humidity_2m"],
-        "conditions": _OM_CODE_MAP.get(int(cur["weather_code"]),
-                                       f"Code {cur['weather_code']}"),
+        "conditions": _OM_CODE_MAP.get(int(cur["weather_code"]), f"Code {cur['weather_code']}"),
     }
 
 
 # Async wrappers for concurrency-friendly usage
-async def _geocode_async(location: str) -> Tuple[float, float]:
+async def _geocode_async(location: str) -> tuple[float, float]:
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _geocode_sync, location)
 
 
-async def _fetch_weather_async(lat: float, lon: float, units: str) -> Dict:
+async def _fetch_weather_async(lat: float, lon: float, units: str) -> dict:
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _fetch_weather_sync, lat, lon, units)
 
@@ -82,7 +93,7 @@ class WeatherTool(ValidatedTool):
     # ---------- validated schemas ------------------------------------
     class Arguments(ValidatedTool.Arguments):
         location: str
-        units: str = "metric"   # "metric" (°C) or "imperial" (°F)
+        units: str = "metric"  # "metric" (°C) or "imperial" (°F)
 
     class Result(ValidatedTool.Result):
         temperature: float
@@ -91,18 +102,18 @@ class WeatherTool(ValidatedTool):
         location: str
 
     # ---------- REQUIRED sync implementation -------------------------
-    def _execute(self, *, location: str, units: str) -> Dict:
-        lat, lon = _geocode_sync(location)           # may raise
+    def _execute(self, *, location: str, units: str) -> dict:
+        lat, lon = _geocode_sync(location)  # may raise
         data = _fetch_weather_sync(lat, lon, units)  # may raise
         data["location"] = location
         return data
 
-    def run(self, **kwargs) -> Dict:
+    def run(self, **kwargs) -> dict:
         args = self.Arguments(**kwargs)
         return self.Result(**self._execute(**args.model_dump())).model_dump()
 
     # ---------- Optional async façade --------------------------------
-    async def arun(self, **kwargs) -> Dict:
+    async def arun(self, **kwargs) -> dict:
         args = self.Arguments(**kwargs)
         lat, lon = await _geocode_async(args.location)
         data = await _fetch_weather_async(lat, lon, args.units)

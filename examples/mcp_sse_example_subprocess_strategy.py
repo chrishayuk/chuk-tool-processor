@@ -19,9 +19,10 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, List, Tuple
+from typing import Any
 
-from colorama import Fore, Style, init as colorama_init
+from colorama import Fore, Style
+from colorama import init as colorama_init
 
 colorama_init(autoreset=True)
 
@@ -29,32 +30,31 @@ colorama_init(autoreset=True)
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from chuk_tool_processor.logging import get_logger                                  # noqa: E402
-from chuk_tool_processor.registry.provider import ToolRegistryProvider             # noqa: E402
-from chuk_tool_processor.mcp.setup_mcp_sse import setup_mcp_sse                    # noqa: E402
-
-# parsers
-from chuk_tool_processor.plugins.parsers.json_tool import JsonToolPlugin           # noqa: E402
-from chuk_tool_processor.plugins.parsers.xml_tool import XmlToolPlugin             # noqa: E402
-from chuk_tool_processor.plugins.parsers.function_call_tool import (               # noqa: E402
-    FunctionCallPlugin,
-)
-
-# executor
-from chuk_tool_processor.execution.tool_executor import ToolExecutor               # noqa: E402
-from chuk_tool_processor.execution.strategies.inprocess_strategy import (          # noqa: E402
+from chuk_tool_processor.execution.strategies.inprocess_strategy import (  # noqa: E402
     InProcessStrategy,
 )
 
-from chuk_tool_processor.models.tool_call import ToolCall                          # noqa: E402
-from chuk_tool_processor.models.tool_result import ToolResult                      # noqa: E402
+# executor
+from chuk_tool_processor.execution.tool_executor import ToolExecutor  # noqa: E402
+from chuk_tool_processor.logging import get_logger  # noqa: E402
+from chuk_tool_processor.mcp.setup_mcp_sse import setup_mcp_sse  # noqa: E402
+from chuk_tool_processor.models.tool_call import ToolCall  # noqa: E402
+from chuk_tool_processor.models.tool_result import ToolResult  # noqa: E402
+from chuk_tool_processor.plugins.parsers.function_call_tool import (  # noqa: E402
+    FunctionCallPlugin,
+)
+
+# parsers
+from chuk_tool_processor.plugins.parsers.json_tool import JsonToolPlugin  # noqa: E402
+from chuk_tool_processor.plugins.parsers.xml_tool import XmlToolPlugin  # noqa: E402
+from chuk_tool_processor.registry.provider import ToolRegistryProvider  # noqa: E402
 
 logger = get_logger("mcp-mock-sse-demo")
 
 # ─── config / bootstrap ─────────────────────────────────────────────────────
 SSE_SERVER_URL = "http://localhost:8000"
 SERVER_NAME = "mock_perplexity_server"
-NAMESPACE = "sse"          # where remote tools will be registered
+NAMESPACE = "sse"  # where remote tools will be registered
 
 
 async def bootstrap_mcp() -> None:
@@ -71,11 +71,11 @@ async def bootstrap_mcp() -> None:
             server_names={0: SERVER_NAME},
             namespace=NAMESPACE,
         )
-        
+
         # keep for shutdown
         bootstrap_mcp.stream_manager = sm  # type: ignore[attr-defined]
         print("✅ Connected to mock server successfully!")
-        
+
     except Exception as e:
         logger.error(f"Failed to bootstrap MCP SSE: {e}")
         print(f"❌ Could not connect to mock SSE server at {SSE_SERVER_URL}")
@@ -85,7 +85,7 @@ async def bootstrap_mcp() -> None:
 
 
 # ─── payloads & parsers (all call mock perplexity tools) ─────────────────────
-PLUGINS: List[Tuple[str, Any, str]] = [
+PLUGINS: list[tuple[str, Any, str]] = [
     (
         "JSON Plugin",
         JsonToolPlugin(),
@@ -126,9 +126,9 @@ def banner(text: str, colour: str = Fore.CYAN) -> None:
     print(colour + f"\n=== {text} ===" + Style.RESET_ALL)
 
 
-def show_results(title: str, calls: List[ToolCall], results: List[ToolResult]) -> None:
+def show_results(title: str, calls: list[ToolCall], results: list[ToolResult]) -> None:
     banner(title)
-    for call, res in zip(calls, results):
+    for call, res in zip(calls, results, strict=False):
         ok = res.error is None
         head_colour = Fore.GREEN if ok else Fore.RED
         duration = (res.end_time - res.start_time).total_seconds()
@@ -165,7 +165,7 @@ async def run_demo() -> None:
         strategy=InProcessStrategy(
             registry,
             default_timeout=2.0,  # 2 second timeout - will be enforced consistently
-            max_concurrency=2,    # Reduce concurrency for stability
+            max_concurrency=2,  # Reduce concurrency for stability
         ),
     )
 
@@ -212,7 +212,7 @@ async def run_demo() -> None:
         ToolCall(
             tool=f"{NAMESPACE}.perplexity_search",
             arguments={"query": "Latest space exploration achievements"},
-        )
+        ),
     ]
 
     try:
@@ -223,14 +223,14 @@ async def run_demo() -> None:
 
     # test error handling -----------------------------------------------------
     banner("Error Handling Test")
-    
+
     error_calls = [
         ToolCall(
             tool=f"{NAMESPACE}.nonexistent_tool",
             arguments={"query": "This should fail"},
         )
     ]
-    
+
     try:
         error_results = await executor.execute(error_calls)
         show_results("Error Handling", error_calls, error_results)
@@ -239,31 +239,31 @@ async def run_demo() -> None:
 
     # Tool-specific feature demonstration ------------------------------------
     banner("Tool-Specific Features")
-    
+
     feature_calls = [
         ToolCall(
             tool=f"{NAMESPACE}.perplexity_search",
             arguments={"query": "artificial intelligence applications"},
         ),
         ToolCall(
-            tool=f"{NAMESPACE}.perplexity_deep_research", 
+            tool=f"{NAMESPACE}.perplexity_deep_research",
             arguments={"query": "artificial intelligence applications"},
         ),
         ToolCall(
             tool=f"{NAMESPACE}.perplexity_quick_fact",
             arguments={"query": "artificial intelligence applications"},
-        )
+        ),
     ]
-    
+
     try:
         feature_results = await executor.execute(feature_calls)
         show_results("Different Tool Types (same query)", feature_calls, feature_results)
-        
+
         print(Fore.CYAN + "\nNotice how each tool type returns different response formats:" + Style.RESET_ALL)
         print("  • perplexity_search: Standard conversational response")
         print("  • perplexity_deep_research: Detailed analysis with citations")
         print("  • perplexity_quick_fact: Concise factual answer")
-        
+
     except Exception as e:
         print(f"❌ Feature demonstration failed: {e}")
 
@@ -285,8 +285,6 @@ async def run_demo() -> None:
 if __name__ == "__main__":
     import logging
 
-    logging.getLogger("chuk_tool_processor").setLevel(
-        getattr(logging, os.environ.get("LOGLEVEL", "INFO").upper())
-    )
+    logging.getLogger("chuk_tool_processor").setLevel(getattr(logging, os.environ.get("LOGLEVEL", "INFO").upper()))
 
     asyncio.run(run_demo())

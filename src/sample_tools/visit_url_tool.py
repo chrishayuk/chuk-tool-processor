@@ -6,16 +6,16 @@ VisitURL - sync **and** async.
 • `run()`  - blocking httpx.Client (what ToolProcessor uses)
 • `arun()` - non-blocking httpx.AsyncClient
 """
+
 from __future__ import annotations
 
-import re
 import urllib.parse
-from typing import Dict, List
 
 import httpx
-from bs4 import BeautifulSoup     # pip install beautifulsoup4
-from chuk_tool_processor.registry.decorators import register_tool
+from bs4 import BeautifulSoup  # pip install beautifulsoup4
+
 from chuk_tool_processor.models.validated_tool import ValidatedTool
+from chuk_tool_processor.registry.decorators import register_tool
 
 
 # ── helpers ────────────────────────────────────────────────────────
@@ -51,7 +51,7 @@ class VisitURL(ValidatedTool):
         status: int
 
     # -------- sync --------------------------------------------------
-    def run(self, **kwargs) -> Dict:
+    def run(self, **kwargs) -> dict:
         args = self.Arguments(**kwargs)
         real = _unwrap_ddg(args.url)
         if not real.startswith(("http://", "https://")):
@@ -62,7 +62,7 @@ class VisitURL(ValidatedTool):
                 rsp = http.get(real, headers={"User-Agent": "a2a_visit_url/2.1"})
             status = rsp.status_code
             html = rsp.text if status == 200 else ""
-        except Exception as exc:          # network/TLS errors
+        except Exception as exc:  # network/TLS errors
             return self.Result(title=real, first_200_chars=f"Error: {exc}", url=real, status=0).model_dump()
 
         if status == 200:
@@ -77,7 +77,7 @@ class VisitURL(ValidatedTool):
         return self.Result(title=title, first_200_chars=preview, url=real, status=status).model_dump()
 
     # -------- async -------------------------------------------------
-    async def arun(self, **kwargs) -> Dict:
+    async def arun(self, **kwargs) -> dict:
         args = self.Arguments(**kwargs)
         real = _unwrap_ddg(args.url)
         if not real.startswith(("http://", "https://")):

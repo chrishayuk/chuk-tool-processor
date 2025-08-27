@@ -6,12 +6,12 @@ register it, and use it alongside the built-in ones.
 
 Run with:  uv run examples/plugins_custom_parser_demo.py
 """
+
 from __future__ import annotations
 
 import asyncio
 import json
 import re
-from typing import List
 
 from chuk_tool_processor.logging import get_logger
 from chuk_tool_processor.models.tool_call import ToolCall
@@ -35,7 +35,7 @@ class AngleParser:
 
     _COMMAND = re.compile(r"!!(?P<name>\w+)\s+(?P<args>.+)")
 
-    async def try_parse(self, raw: str | object) -> List[ToolCall]:
+    async def try_parse(self, raw: str | object) -> list[ToolCall]:
         if not isinstance(raw, str):
             return []
 
@@ -44,10 +44,8 @@ class AngleParser:
             return []
 
         name = m.group("name")
-        arg_pairs = [
-            p.split("=", 1) for p in m.group("args").split() if "=" in p
-        ]
-        args = {k: v for k, v in arg_pairs}
+        arg_pairs = [p.split("=", 1) for p in m.group("args").split() if "=" in p]
+        args = dict(arg_pairs)
 
         try:
             call = ToolCall(tool=name, arguments=args)

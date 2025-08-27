@@ -2,10 +2,8 @@
 """
 Metrics logging for tool execution.
 """
-from __future__ import annotations
 
-import asyncio
-from typing import Dict, Any, Optional
+from __future__ import annotations
 
 # Import directly from context to avoid circular imports
 from .context import get_logger
@@ -16,11 +14,11 @@ __all__ = ["metrics", "MetricsLogger"]
 class MetricsLogger:
     """
     Logger for collecting and reporting metrics about tool execution.
-    
+
     Provides methods to log tool execution metrics and parser metrics
     in a structured format.
     """
-    
+
     def __init__(self):
         """Initialize with logger."""
         self.logger = get_logger("chuk_tool_processor.metrics")
@@ -32,13 +30,13 @@ class MetricsLogger:
         success: bool,
         duration: float,
         *,
-        error: Optional[str] = None,
+        error: str | None = None,
         cached: bool = False,
         attempts: int = 1,
     ) -> None:
         """
         Log metrics for a tool execution.
-        
+
         Args:
             tool: Name of the tool
             success: Whether execution was successful
@@ -71,7 +69,7 @@ class MetricsLogger:
     ) -> None:
         """
         Log metrics for a parser.
-        
+
         Args:
             parser: Name of the parser
             success: Whether parsing was successful
@@ -90,18 +88,18 @@ class MetricsLogger:
                 }
             },
         )
-        
+
     async def log_registry_metric(
         self,
         operation: str,
         success: bool,
         duration: float,
-        tool: Optional[str] = None,
-        namespace: Optional[str] = None,
+        tool: str | None = None,
+        namespace: str | None = None,
     ) -> None:
         """
         Log metrics for registry operations.
-        
+
         Args:
             operation: Type of registry operation
             success: Whether operation was successful

@@ -3,14 +3,15 @@
 Tests for the async-native JsonToolPlugin that extracts ToolCall objects
 from generic JSON payloads containing a ``tool_calls`` array.
 """
+
 from __future__ import annotations
 
 import json
 
 import pytest
 
-from chuk_tool_processor.plugins.parsers.json_tool import JsonToolPlugin
 from chuk_tool_processor.models.tool_call import ToolCall
+from chuk_tool_processor.plugins.parsers.json_tool import JsonToolPlugin
 
 
 @pytest.fixture
@@ -24,9 +25,7 @@ def plugin() -> JsonToolPlugin:
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 async def test_try_parse_valid_json_single_call(plugin: JsonToolPlugin) -> None:
-    raw = json.dumps(
-        {"tool_calls": [{"tool": "search", "arguments": {"q": "test"}}]}
-    )
+    raw = json.dumps({"tool_calls": [{"tool": "search", "arguments": {"q": "test"}}]})
     calls = await plugin.try_parse(raw)
 
     assert len(calls) == 1

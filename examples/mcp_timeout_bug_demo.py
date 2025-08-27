@@ -2,7 +2,7 @@
 """
 examples/mcp_timeout_bug_demo.py (cleaned)
 
-Minimal demo that verifies the MCP timeout / retry behaviour 
+Minimal demo that verifies the MCP timeout / retry behaviour
 without the heavy-weight tracing that was needed during the bug hunt.
 
 Run it with
@@ -20,7 +20,7 @@ import sys
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Dict, List, Any
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Local imports - add project root so `python examples/...` works everywhere.
@@ -35,6 +35,7 @@ from chuk_tool_processor.models.tool_call import ToolCall
 # A minimal mock "hanging" SSE server/transport.
 # ---------------------------------------------------------------------------
 
+
 class _MockTransport:
     """Transport that *never* responds within the caller-supplied timeout."""
 
@@ -47,7 +48,7 @@ class _MockTransport:
     async def send_ping(self) -> bool:  # keep StreamManager happy
         return True
 
-    async def get_tools(self) -> List[Dict[str, Any]]:
+    async def get_tools(self) -> list[dict[str, Any]]:
         return [
             {
                 "name": "hanging_tool",
@@ -59,7 +60,7 @@ class _MockTransport:
             }
         ]
 
-    async def call_tool(self, _tool: str, _args: Dict[str, Any]):
+    async def call_tool(self, _tool: str, _args: dict[str, Any]):
         print("      ↪ MockTransport.call_tool → sleeping 20s (simulating hang)")
         await asyncio.sleep(20)
         return {"isError": False, "content": "should never get here"}
@@ -77,9 +78,7 @@ async def _patched_stream_manager():
         mgr = StreamManager()
         transport = _MockTransport()
         mgr.transports = {"hanging_server": transport}
-        mgr.server_info = [
-            {"id": 0, "name": "hanging_server", "tools": 1, "status": "Up"}
-        ]
+        mgr.server_info = [{"id": 0, "name": "hanging_server", "tools": 1, "status": "Up"}]
         mgr.tool_to_server_map = {"hanging_tool": "hanging_server"}
         mgr.all_tools = await transport.get_tools()
         return mgr
@@ -95,6 +94,7 @@ async def _patched_stream_manager():
 # ---------------------------------------------------------------------------
 # Demo runner
 # ---------------------------------------------------------------------------
+
 
 def _pretty(t: float) -> str:
     return f"{t:.3f}s"
@@ -118,7 +118,7 @@ async def _run_demo() -> None:
         print("\n1️⃣  processor.process() - expect ~3s timeout")
         start = time.perf_counter()
         result = await processor.process(
-            '<tool name="mcp.hanging_tool" args="{\"message\": \"hello\"}"/>',
+            '<tool name="mcp.hanging_tool" args="{"message": "hello"}"/>',
             timeout=3.0,
         )
         elapsed = time.perf_counter() - start
@@ -139,9 +139,7 @@ async def _run_demo() -> None:
         # -------------------------------------------------------------------
         print("\n3️⃣  stream_manager.call_tool() - expect ~2s timeout")
         start = time.perf_counter()
-        sm_result = await stream_manager.call_tool(
-            "hanging_tool", {"message": "hi"}, timeout=2.0
-        )
+        sm_result = await stream_manager.call_tool("hanging_tool", {"message": "hi"}, timeout=2.0)
         elapsed = time.perf_counter() - start
         _report(sm_result["error"], elapsed, expect=2.0)
 
@@ -152,11 +150,12 @@ async def _run_demo() -> None:
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _report(err: str | None, elapsed: float, *, expect: float) -> None:
     """Pretty-print outcome and highlight if expectation wasn’t met."""
 
     status = "✅ OK" if err and abs(elapsed - expect) < 0.5 else "⚠️  ISSUE"
-    print(f"   · elapsed {_pretty(elapsed)} → {status}; error=\"{err}\"")
+    print(f'   · elapsed {_pretty(elapsed)} → {status}; error="{err}"')
 
 
 if __name__ == "__main__":

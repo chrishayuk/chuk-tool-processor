@@ -8,13 +8,10 @@ These tests exercise:
 * direct `_maybe_register()` calls
 * the full recursive discovery path with mocked import machinery
 """
+
 from __future__ import annotations
 
-import importlib
-from typing import Any, Dict, List
 from unittest import mock
-
-import pytest
 
 from chuk_tool_processor.plugins.discovery import (
     PluginDiscovery,
@@ -31,7 +28,7 @@ from chuk_tool_processor.plugins.discovery import (
 try:
     from chuk_tool_processor.plugins.parsers.base import ParserPlugin
 except ModuleNotFoundError:
-    ParserPlugin = None        # pragma: no cover - optional feature
+    ParserPlugin = None  # pragma: no cover - optional feature
 
 from chuk_tool_processor.models.execution_strategy import ExecutionStrategy
 
@@ -82,7 +79,6 @@ if ParserPlugin:
             return []
 
 else:
-
     # Fallback when the parser subsystem isn't available (very unlikely in tests)
     class DummyParser:  # pragma: no cover
         async def try_parse(self, raw: str | object):  # noqa: D401
@@ -108,7 +104,7 @@ class TestPluginDiscovery:
     def _single_discovery(self, cls):
         reg = PluginRegistry()
         disc = PluginDiscovery(reg)
-        disc._maybe_register(cls)          # internal helper, still public
+        disc._maybe_register(cls)  # internal helper, still public
         return reg
 
     def test_register_parser(self):
@@ -128,7 +124,7 @@ class TestPluginDiscovery:
             pass
 
         reg = self._single_discovery(Bogus)
-        assert not reg.list_plugins()      # nothing registered
+        assert not reg.list_plugins()  # nothing registered
 
 
 # ---------------------------------------------------------------------------

@@ -6,13 +6,14 @@ Adds exponential-back-off retry logic and *deadline-aware* timeout handling so a
 `timeout=` passed by callers is treated as the **total wall-clock budget** for
 all attempts of a single tool call.
 """
+
 from __future__ import annotations
 
 import asyncio
 import random
 import time
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Type
+from datetime import UTC, datetime
+from typing import Any
 
 from chuk_tool_processor.logging import get_logger
 from chuk_tool_processor.models.tool_call import ToolCall
@@ -33,8 +34,8 @@ class RetryConfig:
         base_delay: float = 1.0,
         max_delay: float = 60.0,
         jitter: bool = True,
-        retry_on_exceptions: Optional[List[Type[Exception]]] = None,
-        retry_on_error_substrings: Optional[List[str]] = None,
+        retry_on_exceptions: list[type[Exception]] | None = None,
+        retry_on_error_substrings: list[str] | None = None,
     ):
         if max_retries < 0:
             raise ValueError("max_retries cannot be negative")
@@ -52,8 +53,8 @@ class RetryConfig:
         self,
         attempt: int,
         *,
-        error: Optional[Exception] = None,
-        error_str: Optional[str] = None,
+        error: Exception | None = None,
+        error_str: str | None = None,
     ) -> bool:
         """Return *True* iff another retry is allowed for this attempt."""
         if attempt >= self.max_retries:
@@ -66,17 +67,14 @@ class RetryConfig:
         if error is not None and any(isinstance(error, exc) for exc in self.retry_on_exceptions):
             return True
 
-        if error_str and any(substr in error_str for substr in self.retry_on_error_substrings):
-            return True
-
-        return False
+        return bool(error_str and any(substr in error_str for substr in self.retry_on_error_substrings))
 
     # --------------------------------------------------------------------- #
     # Back-off
     # --------------------------------------------------------------------- #
     def get_delay(self, attempt: int) -> float:
         """Exponential back-off delay for *attempt* (0-based)."""
-        delay = min(self.base_delay * (2 ** attempt), self.max_delay)
+        delay = min(self.base_delay * (2**attempt), self.max_delay)
         if self.jitter:
             delay *= 0.5 + random.random()  # jitter in [0.5, 1.5)
         return delay
@@ -94,8 +92,8 @@ class RetryableToolExecutor:
         self,
         executor: Any,
         *,
-        default_config: Optional[RetryConfig] = None,
-        tool_configs: Optional[Dict[str, RetryConfig]] = None,
+        default_config: RetryConfig | None = None,
+        tool_configs: dict[str, RetryConfig] | None = None,
     ):
         self.executor = executor
         self.default_config = default_config or RetryConfig()
@@ -109,15 +107,15 @@ class RetryableToolExecutor:
 
     async def execute(
         self,
-        calls: List[ToolCall],
+        calls: list[ToolCall],
         *,
-        timeout: Optional[float] = None,
+        timeout: float | None = None,
         use_cache: bool = True,
-    ) -> List[ToolResult]:
+    ) -> list[ToolResult]:
         if not calls:
             return []
 
-        out: List[ToolResult] = []
+        out: list[ToolResult] = []
         for call in calls:
             cfg = self._config_for(call.tool)
             out.append(await self._execute_single(call, cfg, timeout, use_cache))
@@ -130,11 +128,11 @@ class RetryableToolExecutor:
         self,
         call: ToolCall,
         cfg: RetryConfig,
-        timeout: Optional[float],
+        timeout: float | None,
         use_cache: bool,
     ) -> ToolResult:
         attempt = 0
-        last_error: Optional[str] = None
+        last_error: str | None = None
         pid = 0
         machine = "unknown"
 
@@ -156,8 +154,8 @@ class RetryableToolExecutor:
                         tool=call.tool,
                         result=None,
                         error=f"Timeout after {timeout}s",
-                        start_time=datetime.now(timezone.utc),
-                        end_time=datetime.now(timezone.utc),
+                        start_time=datetime.now(UTC),
+                        end_time=datetime.now(UTC),
                         machine=machine,
                         pid=pid,
                         attempts=attempt,
@@ -168,7 +166,7 @@ class RetryableToolExecutor:
             # ---------------------------------------------------------------- #
             # Execute one attempt
             # ---------------------------------------------------------------- #
-            start_time = datetime.now(timezone.utc)
+            start_time = datetime.now(UTC)
             try:
                 kwargs = {"timeout": remaining} if remaining is not None else {}
                 if hasattr(self.executor, "use_cache"):
@@ -215,7 +213,7 @@ class RetryableToolExecutor:
                     attempt += 1
                     continue
 
-                end_time = datetime.now(timezone.utc)
+                end_time = datetime.now(UTC)
                 return ToolResult(
                     tool=call.tool,
                     result=None,
@@ -246,8 +244,8 @@ def retryable(
     base_delay: float = 1.0,
     max_delay: float = 60.0,
     jitter: bool = True,
-    retry_on_exceptions: Optional[List[Type[Exception]]] = None,
-    retry_on_error_substrings: Optional[List[str]] = None,
+    retry_on_exceptions: list[type[Exception]] | None = None,
+    retry_on_error_substrings: list[str] | None = None,
 ):
     """
     Class decorator that attaches a :class:`RetryConfig` to a *tool* class.

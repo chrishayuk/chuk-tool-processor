@@ -12,13 +12,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import sys
-import logging
 from pathlib import Path
-from typing import Any, List, Tuple
+from typing import Any
 
-from colorama import Fore, Style, init as colorama_init
+from colorama import Fore, Style
+from colorama import init as colorama_init
 
 colorama_init(autoreset=True)
 
@@ -26,17 +27,19 @@ colorama_init(autoreset=True)
 # Fix for CancelledError during asyncio shutdown
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def setup_asyncio_cleanup():
     """Setup proper asyncio cleanup to prevent CancelledError warnings."""
+
     def handle_exception(loop, context):
-        exception = context.get('exception')
+        exception = context.get("exception")
         if isinstance(exception, asyncio.CancelledError):
             # Silently ignore CancelledError during shutdown
             return
-        
+
         # Log other exceptions normally
         loop.default_exception_handler(context)
-    
+
     # Set the exception handler for the current event loop
     try:
         loop = asyncio.get_running_loop()
@@ -45,42 +48,42 @@ def setup_asyncio_cleanup():
         # No running loop yet, will set later
         pass
 
+
 # Apply the fix
 setup_asyncio_cleanup()
 
 # Also suppress asyncio logger for CancelledError
-logging.getLogger('asyncio').setLevel(logging.CRITICAL)
+logging.getLogger("asyncio").setLevel(logging.CRITICAL)
 
 # ─── local-package bootstrap ───────────────────────────────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from chuk_tool_processor.logging import get_logger                                  # noqa: E402
-from chuk_tool_processor.registry.provider import ToolRegistryProvider             # noqa: E402
-from chuk_tool_processor.mcp.setup_mcp_stdio import setup_mcp_stdio                # noqa: E402
-
-# parsers
-from chuk_tool_processor.plugins.parsers.json_tool import JsonToolPlugin           # noqa: E402
-from chuk_tool_processor.plugins.parsers.xml_tool import XmlToolPlugin             # noqa: E402
-from chuk_tool_processor.plugins.parsers.function_call_tool import (               # noqa: E402
-    FunctionCallPlugin,
-)
-
-# executor
-from chuk_tool_processor.execution.tool_executor import ToolExecutor               # noqa: E402
-from chuk_tool_processor.execution.strategies.inprocess_strategy import (          # noqa: E402
+from chuk_tool_processor.execution.strategies.inprocess_strategy import (  # noqa: E402
     InProcessStrategy,
 )
 
-from chuk_tool_processor.models.tool_call import ToolCall                          # noqa: E402
-from chuk_tool_processor.models.tool_result import ToolResult                      # noqa: E402
+# executor
+from chuk_tool_processor.execution.tool_executor import ToolExecutor  # noqa: E402
+from chuk_tool_processor.logging import get_logger  # noqa: E402
+from chuk_tool_processor.mcp.setup_mcp_stdio import setup_mcp_stdio  # noqa: E402
+from chuk_tool_processor.models.tool_call import ToolCall  # noqa: E402
+from chuk_tool_processor.models.tool_result import ToolResult  # noqa: E402
+from chuk_tool_processor.plugins.parsers.function_call_tool import (  # noqa: E402
+    FunctionCallPlugin,
+)
+
+# parsers
+from chuk_tool_processor.plugins.parsers.json_tool import JsonToolPlugin  # noqa: E402
+from chuk_tool_processor.plugins.parsers.xml_tool import XmlToolPlugin  # noqa: E402
+from chuk_tool_processor.registry.provider import ToolRegistryProvider  # noqa: E402
 
 logger = get_logger("mcp-time-demo")
 
 # ─── config / bootstrap ─────────────────────────────────────────────────────
 CONFIG_FILE = PROJECT_ROOT / "server_config.json"
 TIME_SERVER = "time"
-NAMESPACE = "stdio"          # where remote tools will be registered
+NAMESPACE = "stdio"  # where remote tools will be registered
 
 
 async def bootstrap_mcp() -> None:
@@ -109,7 +112,7 @@ async def bootstrap_mcp() -> None:
 
 
 # ─── payloads & parsers (all call get_current_time) ─────────────────────────
-PLUGINS: List[Tuple[str, Any, str]] = [
+PLUGINS: list[tuple[str, Any, str]] = [
     (
         "JSON Plugin",
         JsonToolPlugin(),
@@ -127,8 +130,7 @@ PLUGINS: List[Tuple[str, Any, str]] = [
     (
         "XML Plugin",
         XmlToolPlugin(),
-        f'<tool name="{NAMESPACE}.get_current_time" '
-        'args=\'{"timezone": "Asia/Tokyo"}\'/>',
+        f'<tool name="{NAMESPACE}.get_current_time" args=\'{{"timezone": "Asia/Tokyo"}}\'/>',
     ),
     (
         "FunctionCall Plugin",
@@ -150,9 +152,9 @@ def banner(text: str, colour: str = Fore.CYAN) -> None:
     print(colour + f"\n=== {text} ===" + Style.RESET_ALL)
 
 
-def show_results(title: str, calls: List[ToolCall], results: List[ToolResult]) -> None:
+def show_results(title: str, calls: list[ToolCall], results: list[ToolResult]) -> None:
     banner(title)
-    for call, res in zip(calls, results):
+    for call, res in zip(calls, results, strict=False):
         ok = res.error is None
         head_colour = Fore.GREEN if ok else Fore.RED
         duration = (res.end_time - res.start_time).total_seconds()
@@ -169,7 +171,7 @@ async def graceful_shutdown():
     """Perform graceful shutdown of all async tasks."""
     try:
         # Close the stream manager if it exists
-        if hasattr(bootstrap_mcp, 'stream_manager'):
+        if hasattr(bootstrap_mcp, "stream_manager"):
             try:
                 await bootstrap_mcp.stream_manager.close()
                 logger.debug("Stream manager closed successfully")
@@ -177,10 +179,10 @@ async def graceful_shutdown():
                 logger.debug("Stream manager close cancelled during shutdown")
             except Exception as e:
                 logger.error(f"Error closing stream manager: {e}")
-        
+
         # Don't wait or cancel tasks during shutdown - let asyncio.run() handle it
         logger.debug("Graceful shutdown completed")
-    
+
     except Exception as e:
         logger.error(f"Error during graceful shutdown: {e}")
 
@@ -191,13 +193,13 @@ async def run_demo() -> None:
 
     # Setup asyncio exception handler for this loop
     loop = asyncio.get_running_loop()
-    
+
     def handle_exception(loop, context):
-        exception = context.get('exception')
+        exception = context.get("exception")
         if isinstance(exception, asyncio.CancelledError):
             return  # Ignore CancelledError
         loop.default_exception_handler(context)
-    
+
     loop.set_exception_handler(handle_exception)
 
     try:
@@ -248,18 +250,16 @@ async def run_demo() -> None:
 def main():
     """Main entry point with proper error handling."""
     # Set up logging
-    logging.getLogger("chuk_tool_processor").setLevel(
-        getattr(logging, os.environ.get("LOGLEVEL", "INFO").upper())
-    )
-    
+    logging.getLogger("chuk_tool_processor").setLevel(getattr(logging, os.environ.get("LOGLEVEL", "INFO").upper()))
+
     try:
         # Run the demo with proper cleanup
         asyncio.run(run_demo())
         print(Fore.GREEN + "\n✅ Demo completed successfully!" + Style.RESET_ALL)
-    
+
     except KeyboardInterrupt:
         print(Fore.YELLOW + "\n👋 Demo interrupted by user. Goodbye!" + Style.RESET_ALL)
-    
+
     except Exception as e:
         print(Fore.RED + f"\n❌ Demo failed: {e}" + Style.RESET_ALL)
         logger.error(f"Demo failed: {e}", exc_info=True)

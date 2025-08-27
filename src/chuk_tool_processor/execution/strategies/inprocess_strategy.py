@@ -8,29 +8,31 @@ It has special support for streaming tools, accessing their stream_execute metho
 directly to enable true item-by-item streaming.
 
 Enhanced tool name resolution that properly handles:
-- Simple names: "get_current_time" 
+- Simple names: "get_current_time"
 - Namespaced names: "diagnostic_test.get_current_time"
 - Cross-namespace fallback searching
 
 Ensures consistent timeout handling across all execution paths.
 ENHANCED: Clean shutdown handling to prevent anyio cancel scope errors.
 """
+
 from __future__ import annotations
 
 import asyncio
+import builtins
 import inspect
 import os
 import platform
-from contextlib import asynccontextmanager
-from datetime import datetime, timezone
-from typing import Any, List, Optional, AsyncIterator, Set, Tuple
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager, suppress
+from datetime import UTC, datetime
+from typing import Any
 
-from chuk_tool_processor.core.exceptions import ToolExecutionError
+from chuk_tool_processor.logging import get_logger, log_context_span
 from chuk_tool_processor.models.execution_strategy import ExecutionStrategy
 from chuk_tool_processor.models.tool_call import ToolCall
 from chuk_tool_processor.models.tool_result import ToolResult
 from chuk_tool_processor.registry.interface import ToolRegistryInterface
-from chuk_tool_processor.logging import get_logger, log_context_span
 
 logger = get_logger("chuk_tool_processor.execution.inprocess_strategy")
 
@@ -50,12 +52,12 @@ class InProcessStrategy(ExecutionStrategy):
     def __init__(
         self,
         registry: ToolRegistryInterface,
-        default_timeout: Optional[float] = None,
-        max_concurrency: Optional[int] = None,
+        default_timeout: float | None = None,
+        max_concurrency: int | None = None,
     ) -> None:
         """
         Initialize the in-process execution strategy.
-        
+
         Args:
             registry: Tool registry to use for tool lookups
             default_timeout: Default timeout for tool execution
@@ -64,43 +66,46 @@ class InProcessStrategy(ExecutionStrategy):
         self.registry = registry
         self.default_timeout = default_timeout or 30.0  # Always have a default
         self._sem = asyncio.Semaphore(max_concurrency) if max_concurrency else None
-        
+
         # Task tracking for cleanup
         self._active_tasks = set()
         self._shutting_down = False
         self._shutdown_event = asyncio.Event()
-        
+
         # Tracking for which calls are being handled directly by the executor
         # to prevent duplicate streaming results
         self._direct_streaming_calls = set()
-        
-        logger.debug("InProcessStrategy initialized with timeout: %ss, max_concurrency: %s", 
-                    self.default_timeout, max_concurrency)
+
+        logger.debug(
+            "InProcessStrategy initialized with timeout: %ss, max_concurrency: %s",
+            self.default_timeout,
+            max_concurrency,
+        )
 
     # ------------------------------------------------------------------ #
-    def mark_direct_streaming(self, call_ids: Set[str]) -> None:
+    def mark_direct_streaming(self, call_ids: set[str]) -> None:
         """
         Mark tool calls that are being handled directly by the executor.
-        
+
         Args:
             call_ids: Set of call IDs that should be skipped during streaming
                       because they're handled directly
         """
         self._direct_streaming_calls.update(call_ids)
-        
+
     def clear_direct_streaming(self) -> None:
         """Clear the list of direct streaming calls."""
         self._direct_streaming_calls.clear()
-        
+
     # ------------------------------------------------------------------ #
     #  🔌 legacy façade for older wrappers                                #
     # ------------------------------------------------------------------ #
     async def execute(
         self,
-        calls: List[ToolCall],
+        calls: list[ToolCall],
         *,
-        timeout: Optional[float] = None,
-    ) -> List[ToolResult]:
+        timeout: float | None = None,
+    ) -> list[ToolResult]:
         """
         Back-compat shim.
 
@@ -113,26 +118,26 @@ class InProcessStrategy(ExecutionStrategy):
     # ------------------------------------------------------------------ #
     async def run(
         self,
-        calls: List[ToolCall],
-        timeout: Optional[float] = None,
-    ) -> List[ToolResult]:
+        calls: list[ToolCall],
+        timeout: float | None = None,
+    ) -> list[ToolResult]:
         """
         Execute tool calls concurrently and preserve order.
-        
+
         Args:
             calls: List of tool calls to execute
             timeout: Optional timeout for execution
-            
+
         Returns:
             List of tool results in the same order as calls
         """
         if not calls:
             return []
-        
+
         # Use default_timeout if no timeout specified
         effective_timeout = timeout if timeout is not None else self.default_timeout
         logger.debug("Executing %d calls with %ss timeout each", len(calls), effective_timeout)
-            
+
         tasks = []
         for call in calls:
             task = asyncio.create_task(
@@ -141,15 +146,15 @@ class InProcessStrategy(ExecutionStrategy):
             self._active_tasks.add(task)
             task.add_done_callback(self._active_tasks.discard)
             tasks.append(task)
-            
+
         async with log_context_span("inprocess_execution", {"num_calls": len(calls)}):
             return await asyncio.gather(*tasks)
 
     # ------------------------------------------------------------------ #
     async def stream_run(
         self,
-        calls: List[ToolCall],
-        timeout: Optional[float] = None,
+        calls: list[ToolCall],
+        timeout: float | None = None,
     ) -> AsyncIterator[ToolResult]:
         """
         Execute tool calls concurrently and *yield* results as soon as they are
@@ -184,7 +189,6 @@ class InProcessStrategy(ExecutionStrategy):
             for t in done:
                 t.result()  # re-raise if a task crashed
 
-
     async def _stream_tool_call(
         self,
         call: ToolCall,
@@ -193,10 +197,10 @@ class InProcessStrategy(ExecutionStrategy):
     ) -> None:
         """
         Execute a tool call with streaming support.
-        
+
         This looks up the tool and if it's a streaming tool, it accesses
         stream_execute directly to get item-by-item streaming.
-        
+
         Args:
             call: The tool call to execute
             queue: Queue to put results into
@@ -205,10 +209,10 @@ class InProcessStrategy(ExecutionStrategy):
         # Skip if call is being handled directly by the executor
         if call.id in self._direct_streaming_calls:
             return
-            
+
         if self._shutting_down:
             # Early exit if shutting down
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             result = ToolResult(
                 tool=call.tool,
                 result=None,
@@ -220,13 +224,13 @@ class InProcessStrategy(ExecutionStrategy):
             )
             await queue.put(result)
             return
-            
+
         try:
             # Use enhanced tool resolution instead of direct lookup
             tool_impl, resolved_namespace = await self._resolve_tool_info(call.tool, call.namespace)
             if tool_impl is None:
                 # Tool not found
-                now = datetime.now(timezone.utc)
+                now = datetime.now(UTC)
                 result = ToolResult(
                     tool=call.tool,
                     result=None,
@@ -238,15 +242,15 @@ class InProcessStrategy(ExecutionStrategy):
                 )
                 await queue.put(result)
                 return
-                
+
             logger.debug(f"Resolved streaming tool '{call.tool}' to namespace '{resolved_namespace}'")
-                
+
             # Instantiate if class
             tool = tool_impl() if inspect.isclass(tool_impl) else tool_impl
-            
+
             # Use semaphore if available
             guard = self._sem if self._sem is not None else _noop_cm()
-            
+
             async with guard:
                 # Check if this is a streaming tool
                 if hasattr(tool, "supports_streaming") and tool.supports_streaming and hasattr(tool, "stream_execute"):
@@ -256,10 +260,10 @@ class InProcessStrategy(ExecutionStrategy):
                     # Use regular execution for non-streaming tools
                     result = await self._execute_single_call(call, timeout)
                     await queue.put(result)
-                    
+
         except asyncio.CancelledError:
             # Handle cancellation gracefully
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             result = ToolResult(
                 tool=call.tool,
                 result=None,
@@ -270,10 +274,10 @@ class InProcessStrategy(ExecutionStrategy):
                 pid=os.getpid(),
             )
             await queue.put(result)
-            
+
         except Exception as e:
             # Handle other errors
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             result = ToolResult(
                 tool=call.tool,
                 result=None,
@@ -284,38 +288,38 @@ class InProcessStrategy(ExecutionStrategy):
                 pid=os.getpid(),
             )
             await queue.put(result)
-            
+
     async def _stream_with_timeout(
-        self, 
-        tool: Any, 
-        call: ToolCall, 
-        queue: asyncio.Queue, 
+        self,
+        tool: Any,
+        call: ToolCall,
+        queue: asyncio.Queue,
         timeout: float,  # Make timeout required
     ) -> None:
         """
         Stream results from a streaming tool with timeout support.
-        
+
         This method accesses the tool's stream_execute method directly
         and puts each yielded result into the queue.
-        
+
         Args:
             tool: The tool instance
             call: Tool call data
             queue: Queue to put results into
             timeout: Timeout in seconds (required)
         """
-        start_time = datetime.now(timezone.utc)
+        start_time = datetime.now(UTC)
         machine = platform.node()
         pid = os.getpid()
-        
+
         logger.debug("Streaming %s with %ss timeout", call.tool, timeout)
-        
+
         # Define the streaming task
         async def streamer():
             try:
                 async for result in tool.stream_execute(**call.arguments):
                     # Create a ToolResult for each streamed item
-                    now = datetime.now(timezone.utc)
+                    now = datetime.now(UTC)
                     tool_result = ToolResult(
                         tool=call.tool,
                         result=result,
@@ -328,7 +332,7 @@ class InProcessStrategy(ExecutionStrategy):
                     await queue.put(tool_result)
             except Exception as e:
                 # Handle errors during streaming
-                now = datetime.now(timezone.utc)
+                now = datetime.now(UTC)
                 error_result = ToolResult(
                     tool=call.tool,
                     result=None,
@@ -339,19 +343,18 @@ class InProcessStrategy(ExecutionStrategy):
                     pid=pid,
                 )
                 await queue.put(error_result)
-        
+
         try:
             # Always execute with timeout
             await asyncio.wait_for(streamer(), timeout)
             logger.debug("%s streaming completed within %ss", call.tool, timeout)
-                
-        except asyncio.TimeoutError:
+
+        except TimeoutError:
             # Handle timeout
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             actual_duration = (now - start_time).total_seconds()
-            logger.debug("%s streaming timed out after %.3fs (limit: %ss)", 
-                        call.tool, actual_duration, timeout)
-            
+            logger.debug("%s streaming timed out after %.3fs (limit: %ss)", call.tool, actual_duration, timeout)
+
             timeout_result = ToolResult(
                 tool=call.tool,
                 result=None,
@@ -362,12 +365,12 @@ class InProcessStrategy(ExecutionStrategy):
                 pid=pid,
             )
             await queue.put(timeout_result)
-            
+
         except Exception as e:
             # Handle other errors
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             logger.debug("%s streaming failed: %s", call.tool, e)
-            
+
             error_result = ToolResult(
                 tool=call.tool,
                 result=None,
@@ -389,7 +392,7 @@ class InProcessStrategy(ExecutionStrategy):
         # Skip if call is being handled directly by the executor
         if call.id in self._direct_streaming_calls:
             return
-            
+
         result = await self._execute_single_call(call, timeout)
         await queue.put(result)
 
@@ -404,20 +407,20 @@ class InProcessStrategy(ExecutionStrategy):
 
         The entire invocation - including argument validation - is wrapped
         by the semaphore to honour *max_concurrency*.
-        
+
         Args:
             call: Tool call to execute
             timeout: Timeout in seconds (required)
-            
+
         Returns:
             Tool execution result
         """
         pid = os.getpid()
         machine = platform.node()
-        start = datetime.now(timezone.utc)
-        
+        start = datetime.now(UTC)
+
         logger.debug("Executing %s with %ss timeout", call.tool, timeout)
-        
+
         # Early exit if shutting down
         if self._shutting_down:
             return ToolResult(
@@ -425,7 +428,7 @@ class InProcessStrategy(ExecutionStrategy):
                 result=None,
                 error="System is shutting down",
                 start_time=start,
-                end_time=datetime.now(timezone.utc),
+                end_time=datetime.now(UTC),
                 machine=machine,
                 pid=pid,
             )
@@ -439,7 +442,7 @@ class InProcessStrategy(ExecutionStrategy):
                     result=None,
                     error=f"Tool '{call.tool}' not found in any namespace",
                     start_time=start,
-                    end_time=datetime.now(timezone.utc),
+                    end_time=datetime.now(UTC),
                     machine=machine,
                     pid=pid,
                 )
@@ -448,15 +451,13 @@ class InProcessStrategy(ExecutionStrategy):
 
             # Instantiate if class
             tool = impl() if inspect.isclass(impl) else impl
-            
+
             # Use semaphore if available
             guard = self._sem if self._sem is not None else _noop_cm()
 
             try:
                 async with guard:
-                    return await self._run_with_timeout(
-                        tool, call, timeout, start, machine, pid
-                    )
+                    return await self._run_with_timeout(tool, call, timeout, start, machine, pid)
             except Exception as exc:
                 logger.exception("Unexpected error while executing %s", call.tool)
                 return ToolResult(
@@ -464,7 +465,7 @@ class InProcessStrategy(ExecutionStrategy):
                     result=None,
                     error=f"Unexpected error: {exc}",
                     start_time=start,
-                    end_time=datetime.now(timezone.utc),
+                    end_time=datetime.now(UTC),
                     machine=machine,
                     pid=pid,
                 )
@@ -475,7 +476,7 @@ class InProcessStrategy(ExecutionStrategy):
                 result=None,
                 error="Execution was cancelled",
                 start_time=start,
-                end_time=datetime.now(timezone.utc),
+                end_time=datetime.now(UTC),
                 machine=machine,
                 pid=pid,
             )
@@ -486,7 +487,7 @@ class InProcessStrategy(ExecutionStrategy):
                 result=None,
                 error=f"Setup error: {exc}",
                 start_time=start,
-                end_time=datetime.now(timezone.utc),
+                end_time=datetime.now(UTC),
                 machine=machine,
                 pid=pid,
             )
@@ -502,7 +503,7 @@ class InProcessStrategy(ExecutionStrategy):
     ) -> ToolResult:
         """
         Resolve the correct async entry-point and invoke it with a guaranteed timeout.
-        
+
         Args:
             tool: Tool instance
             call: Tool call data
@@ -510,28 +511,23 @@ class InProcessStrategy(ExecutionStrategy):
             start: Start time for the execution
             machine: Machine name
             pid: Process ID
-            
+
         Returns:
             Tool execution result
         """
-        if hasattr(tool, "_aexecute") and inspect.iscoroutinefunction(
-            getattr(type(tool), "_aexecute", None)
-        ):
+        if hasattr(tool, "_aexecute") and inspect.iscoroutinefunction(getattr(type(tool), "_aexecute", None)):
             fn = tool._aexecute
-        elif hasattr(tool, "execute") and inspect.iscoroutinefunction(
-            getattr(tool, "execute", None)
-        ):
+        elif hasattr(tool, "execute") and inspect.iscoroutinefunction(getattr(tool, "execute", None)):
             fn = tool.execute
         else:
             return ToolResult(
                 tool=call.tool,
                 result=None,
                 error=(
-                    "Tool must implement *async* '_aexecute' or 'execute'. "
-                    "Synchronous entry-points are not supported."
+                    "Tool must implement *async* '_aexecute' or 'execute'. Synchronous entry-points are not supported."
                 ),
                 start_time=start,
-                end_time=datetime.now(timezone.utc),
+                end_time=datetime.now(UTC),
                 machine=machine,
                 pid=pid,
             )
@@ -539,15 +535,14 @@ class InProcessStrategy(ExecutionStrategy):
         try:
             # Always apply timeout
             logger.debug("Applying %ss timeout to %s", timeout, call.tool)
-            
+
             try:
                 result_val = await asyncio.wait_for(fn(**call.arguments), timeout=timeout)
-                
-                end_time = datetime.now(timezone.utc)
+
+                end_time = datetime.now(UTC)
                 actual_duration = (end_time - start).total_seconds()
-                logger.debug("%s completed in %.3fs (limit: %ss)", 
-                           call.tool, actual_duration, timeout)
-                
+                logger.debug("%s completed in %.3fs (limit: %ss)", call.tool, actual_duration, timeout)
+
                 return ToolResult(
                     tool=call.tool,
                     result=result_val,
@@ -557,13 +552,12 @@ class InProcessStrategy(ExecutionStrategy):
                     machine=machine,
                     pid=pid,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Handle timeout
-                end_time = datetime.now(timezone.utc)
+                end_time = datetime.now(UTC)
                 actual_duration = (end_time - start).total_seconds()
-                logger.debug("%s timed out after %.3fs (limit: %ss)", 
-                           call.tool, actual_duration, timeout)
-                
+                logger.debug("%s timed out after %.3fs (limit: %ss)", call.tool, actual_duration, timeout)
+
                 return ToolResult(
                     tool=call.tool,
                     result=None,
@@ -573,7 +567,7 @@ class InProcessStrategy(ExecutionStrategy):
                     machine=machine,
                     pid=pid,
                 )
-                
+
         except asyncio.CancelledError:
             # Handle cancellation explicitly
             logger.debug("%s was cancelled", call.tool)
@@ -582,16 +576,16 @@ class InProcessStrategy(ExecutionStrategy):
                 result=None,
                 error="Execution was cancelled",
                 start_time=start,
-                end_time=datetime.now(timezone.utc),
+                end_time=datetime.now(UTC),
                 machine=machine,
                 pid=pid,
             )
         except Exception as exc:
             logger.exception("Error executing %s: %s", call.tool, exc)
-            end_time = datetime.now(timezone.utc)
+            end_time = datetime.now(UTC)
             actual_duration = (end_time - start).total_seconds()
             logger.debug("%s failed after %.3fs: %s", call.tool, actual_duration, exc)
-            
+
             return ToolResult(
                 tool=call.tool,
                 result=None,
@@ -602,32 +596,34 @@ class InProcessStrategy(ExecutionStrategy):
                 pid=pid,
             )
 
-    async def _resolve_tool_info(self, tool_name: str, preferred_namespace: str = "default") -> Tuple[Optional[Any], Optional[str]]:
+    async def _resolve_tool_info(
+        self, tool_name: str, preferred_namespace: str = "default"
+    ) -> tuple[Any | None, str | None]:
         """
         Enhanced tool name resolution with comprehensive fallback logic.
-        
+
         This method handles:
         1. Simple names: "get_current_time" -> search in specified namespace first, then all namespaces
         2. Namespaced names: "diagnostic_test.get_current_time" -> extract namespace and tool name
         3. Fallback searching across all namespaces when not found in default
-        
+
         Args:
             tool_name: Name of the tool to resolve
             preferred_namespace: Preferred namespace to search first
-        
+
         Returns:
             Tuple of (tool_object, resolved_namespace) or (None, None) if not found
         """
         logger.debug(f"Resolving tool: '{tool_name}' (preferred namespace: '{preferred_namespace}')")
-        
+
         # Strategy 1: Handle namespaced tool names (namespace.tool_name format)
-        if '.' in tool_name:
-            parts = tool_name.split('.', 1)  # Split on first dot only
+        if "." in tool_name:
+            parts = tool_name.split(".", 1)  # Split on first dot only
             namespace = parts[0]
             actual_tool_name = parts[1]
-            
+
             logger.debug(f"Namespaced lookup: namespace='{namespace}', tool='{actual_tool_name}'")
-            
+
             tool = await self.registry.get_tool(actual_tool_name, namespace)
             if tool is not None:
                 logger.debug(f"Found tool '{actual_tool_name}' in namespace '{namespace}'")
@@ -635,7 +631,7 @@ class InProcessStrategy(ExecutionStrategy):
             else:
                 logger.debug(f"Tool '{actual_tool_name}' not found in namespace '{namespace}'")
                 return None, None
-        
+
         # Strategy 2: Simple tool name - try preferred namespace first
         if preferred_namespace:
             logger.debug(f"Simple tool lookup: trying preferred namespace '{preferred_namespace}' for '{tool_name}'")
@@ -643,7 +639,7 @@ class InProcessStrategy(ExecutionStrategy):
             if tool is not None:
                 logger.debug(f"Found tool '{tool_name}' in preferred namespace '{preferred_namespace}'")
                 return tool, preferred_namespace
-        
+
         # Strategy 3: Try default namespace if different from preferred
         if preferred_namespace != "default":
             logger.debug(f"Simple tool lookup: trying default namespace for '{tool_name}'")
@@ -651,30 +647,30 @@ class InProcessStrategy(ExecutionStrategy):
             if tool is not None:
                 logger.debug(f"Found tool '{tool_name}' in default namespace")
                 return tool, "default"
-        
+
         # Strategy 4: Search all namespaces as fallback
         logger.debug(f"Tool '{tool_name}' not in preferred/default namespace, searching all namespaces...")
-        
+
         try:
             # Get all available namespaces
             namespaces = await self.registry.list_namespaces()
             logger.debug(f"Available namespaces: {namespaces}")
-            
+
             # Search each namespace
             for namespace in namespaces:
                 if namespace in [preferred_namespace, "default"]:
                     continue  # Already tried these
-                    
+
                 logger.debug(f"Searching namespace '{namespace}' for tool '{tool_name}'")
                 tool = await self.registry.get_tool(tool_name, namespace)
                 if tool is not None:
                     logger.debug(f"Found tool '{tool_name}' in namespace '{namespace}'")
                     return tool, namespace
-            
+
             # Strategy 5: Final fallback - list all tools and do fuzzy matching
             logger.debug(f"Tool '{tool_name}' not found in any namespace, trying fuzzy matching...")
             all_tools = await self.registry.list_tools()
-            
+
             # Look for exact matches in tool name (ignoring namespace)
             for namespace, registered_name in all_tools:
                 if registered_name == tool_name:
@@ -682,40 +678,40 @@ class InProcessStrategy(ExecutionStrategy):
                     tool = await self.registry.get_tool(registered_name, namespace)
                     if tool is not None:
                         return tool, namespace
-            
+
             # Log all available tools for debugging
             logger.debug(f"Available tools: {all_tools}")
-            
+
         except Exception as e:
             logger.error(f"Error during namespace search: {e}")
-        
+
         logger.warning(f"Tool '{tool_name}' not found in any namespace")
         return None, None
-            
+
     @property
     def supports_streaming(self) -> bool:
         """Check if this strategy supports streaming execution."""
         return True
-        
+
     async def shutdown(self) -> None:
         """
         Enhanced shutdown with clean task management.
-        
+
         This version prevents anyio cancel scope errors by handling
         task cancellation more gracefully with individual error handling
         and reasonable timeouts.
         """
         if self._shutting_down:
             return
-            
+
         self._shutting_down = True
         self._shutdown_event.set()
-        
+
         # Manage active tasks cleanly
         active_tasks = list(self._active_tasks)
         if active_tasks:
             logger.debug(f"Completing {len(active_tasks)} in-process operations")
-            
+
             # Handle each task individually with brief delays
             for task in active_tasks:
                 try:
@@ -724,17 +720,12 @@ class InProcessStrategy(ExecutionStrategy):
                 except Exception:
                     pass
                 # Small delay between cancellations to avoid overwhelming the event loop
-                try:
+                with suppress(builtins.BaseException):
                     await asyncio.sleep(0.001)
-                except:
-                    pass
-            
+
             # Allow reasonable time for completion with timeout
             try:
-                await asyncio.wait_for(
-                    asyncio.gather(*active_tasks, return_exceptions=True),
-                    timeout=2.0
-                )
+                await asyncio.wait_for(asyncio.gather(*active_tasks, return_exceptions=True), timeout=2.0)
             except Exception:
                 # Suppress all errors during shutdown to prevent cancel scope issues
                 logger.debug("In-process operations completed within expected parameters")

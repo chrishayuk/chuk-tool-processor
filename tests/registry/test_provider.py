@@ -1,10 +1,12 @@
 # tests/tool_processor/registry/test_provider.py
+import asyncio
+
 import pytest
 import pytest_asyncio
-import asyncio
+
 from chuk_tool_processor.registry import provider as provider_module
-from chuk_tool_processor.registry.provider import ToolRegistryProvider
 from chuk_tool_processor.registry.interface import ToolRegistryInterface
+from chuk_tool_processor.registry.provider import ToolRegistryProvider
 
 
 class DummyRegistry(ToolRegistryInterface):
@@ -28,7 +30,7 @@ class DummyRegistry(ToolRegistryInterface):
 
     async def list_namespaces(self):
         return []
-        
+
     async def list_metadata(self, namespace=None):
         return []
 
@@ -44,11 +46,11 @@ async def clear_registry():
 @pytest.mark.asyncio
 async def test_get_registry_calls_default_once(monkeypatch):
     calls = []
-    
+
     async def fake_default():
         calls.append(True)
         return DummyRegistry()
-        
+
     # Patch the async get_registry function
     monkeypatch.setattr(provider_module, "get_registry", fake_default)
 
@@ -66,13 +68,13 @@ async def test_set_registry_overrides(monkeypatch):
     # Make the default factory blow up if called
     async def failing_default():
         raise Exception("shouldn't call")
-        
+
     monkeypatch.setattr(provider_module, "get_registry", failing_default)
 
     # Set a custom registry
     custom = DummyRegistry()
     await ToolRegistryProvider.set_registry(custom)
-    
+
     # Verify it's used
     result = await ToolRegistryProvider.get_registry()
     assert result is custom
@@ -82,16 +84,16 @@ async def test_set_registry_overrides(monkeypatch):
 async def test_setting_none_resets_to_default(monkeypatch):
     calls = []
     dummy2 = DummyRegistry()
-    
+
     async def patched_default():
         calls.append(True)
         return dummy2
-        
+
     monkeypatch.setattr(provider_module, "get_registry", patched_default)
 
     # Reset registry to None
     await ToolRegistryProvider.set_registry(None)
-    
+
     # Should use the factory function
     r = await ToolRegistryProvider.get_registry()
     assert r is dummy2
@@ -117,20 +119,20 @@ async def test_thread_safety():
     """Test that concurrent access doesn't cause issues."""
     # Set up a slow registry factory
     calls = []
-    
+
     async def slow_factory():
         await asyncio.sleep(0.05)  # Short delay
         calls.append(True)
         return DummyRegistry()
-        
+
     # Clear and patch registry
     await ToolRegistryProvider.reset()
     provider_module._default_registry = slow_factory
-    
+
     # Create multiple concurrent requests
     tasks = [ToolRegistryProvider.get_registry() for _ in range(5)]
     results = await asyncio.gather(*tasks)
-    
+
     # All results should be the same instance
     assert all(r is results[0] for r in results)
     # Factory should only be called once

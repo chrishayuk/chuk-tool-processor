@@ -11,35 +11,38 @@ Key components:
 - Metrics collection for tools and parsers
 - Async-friendly context managers for spans and requests
 """
+
 from __future__ import annotations
 
 import logging
 import sys
+
 
 # Auto-initialize shutdown error suppression when logging package is imported
 def _initialize_shutdown_fixes():
     """Initialize shutdown error suppression when the package is imported."""
     try:
         from .context import _setup_shutdown_error_suppression
+
         _setup_shutdown_error_suppression()
     except ImportError:
         pass
+
 
 # Initialize when package is imported
 _initialize_shutdown_fixes()
 
 # Import internal modules in correct order to avoid circular imports
 # First, formatter has no internal dependencies
+# Second, context only depends on formatter
+from .context import LogContext, StructuredAdapter, get_logger, log_context
 from .formatter import StructuredFormatter
 
-# Second, context only depends on formatter
-from .context import LogContext, log_context, StructuredAdapter, get_logger
-
 # Third, helpers depend on context
-from .helpers import log_context_span, request_logging, log_tool_call
+from .helpers import log_context_span, log_tool_call, request_logging
 
 # Fourth, metrics depend on helpers and context
-from .metrics import metrics, MetricsLogger
+from .metrics import MetricsLogger, metrics
 
 __all__ = [
     "get_logger",
@@ -53,6 +56,7 @@ __all__ = [
     "setup_logging",
 ]
 
+
 # --------------------------------------------------------------------------- #
 # Setup function for configuring logging
 # --------------------------------------------------------------------------- #
@@ -63,7 +67,7 @@ async def setup_logging(
 ) -> None:
     """
     Set up the logging system.
-    
+
     Args:
         level: Logging level (default: INFO)
         structured: Whether to use structured JSON logging
@@ -72,39 +76,40 @@ async def setup_logging(
     # Get the root logger
     root_logger = logging.getLogger("chuk_tool_processor")
     root_logger.setLevel(level)
-    
+
     # Create formatter
-    formatter = StructuredFormatter() if structured else logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    formatter = (
+        StructuredFormatter()
+        if structured
+        else logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
     )
-    
+
     # Always add a dummy handler and remove it to satisfy test expectations
     dummy_handler = logging.StreamHandler()
     root_logger.addHandler(dummy_handler)
     root_logger.removeHandler(dummy_handler)
-    
+
     # Now clear any remaining handlers
     for handler in list(root_logger.handlers):
         root_logger.removeHandler(handler)
-    
+
     # Add console handler
     console_handler = logging.StreamHandler(sys.stderr)
     console_handler.setLevel(level)
     console_handler.setFormatter(formatter)
     root_logger.addHandler(console_handler)
-    
+
     # Add file handler if specified
     if log_file:
         file_handler = logging.FileHandler(log_file)
         file_handler.setLevel(level)
         file_handler.setFormatter(formatter)
         root_logger.addHandler(file_handler)
-    
+
     # Log startup with internal logger
     internal_logger = logging.getLogger("chuk_tool_processor.logging")
     internal_logger.info(
-        "Logging initialized",
-        extra={"context": {"level": logging.getLevelName(level), "structured": structured}}
+        "Logging initialized", extra={"context": {"level": logging.getLevelName(level), "structured": structured}}
     )
 
 

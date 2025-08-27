@@ -15,9 +15,9 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, List, Tuple
 
-from colorama import Fore, Style, init as colorama_init
+from colorama import Fore, Style
+from colorama import init as colorama_init
 
 colorama_init(autoreset=True)
 
@@ -25,23 +25,22 @@ colorama_init(autoreset=True)
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from chuk_tool_processor.execution.strategies.inprocess_strategy import InProcessStrategy
+
+# executor
+from chuk_tool_processor.execution.tool_executor import ToolExecutor
 from chuk_tool_processor.logging import get_logger
-from chuk_tool_processor.registry.provider import ToolRegistryProvider
 
 # Import the working setup function (we know this works from Context7 success)
 from chuk_tool_processor.mcp.setup_mcp_http_streamable import setup_mcp_http_streamable
+from chuk_tool_processor.models.tool_call import ToolCall
+from chuk_tool_processor.models.tool_result import ToolResult
+from chuk_tool_processor.plugins.parsers.function_call_tool import FunctionCallPlugin
 
 # parsers
 from chuk_tool_processor.plugins.parsers.json_tool import JsonToolPlugin
 from chuk_tool_processor.plugins.parsers.xml_tool import XmlToolPlugin
-from chuk_tool_processor.plugins.parsers.function_call_tool import FunctionCallPlugin
-
-# executor
-from chuk_tool_processor.execution.tool_executor import ToolExecutor
-from chuk_tool_processor.execution.strategies.inprocess_strategy import InProcessStrategy
-
-from chuk_tool_processor.models.tool_call import ToolCall
-from chuk_tool_processor.models.tool_result import ToolResult
+from chuk_tool_processor.registry.provider import ToolRegistryProvider
 
 logger = get_logger("mcp-http-streamable-demo")
 
@@ -55,7 +54,7 @@ async def bootstrap_mcp() -> None:
     """Start the HTTP Streamable transport and connect to the mock test server."""
     try:
         print("🔄 Connecting to mock MCP HTTP Streamable server...")
-        
+
         # Use the working setup function (proven to work with Context7)
         _, sm = await setup_mcp_http_streamable(
             servers=[
@@ -69,11 +68,11 @@ async def bootstrap_mcp() -> None:
             connection_timeout=10.0,
             default_timeout=30.0,
         )
-        
+
         # keep for shutdown
         bootstrap_mcp.stream_manager = sm
         print("✅ Connected to mock server successfully!")
-        
+
     except Exception as e:
         logger.error(f"Failed to bootstrap MCP HTTP Streamable: {e}")
         print(f"❌ Could not connect to mock HTTP server at {HTTP_SERVER_URL}")
@@ -91,27 +90,33 @@ def create_test_plugins():
         (
             "JSON Plugin",
             JsonToolPlugin(),
-            json.dumps({
-                "tool_calls": [{
-                    "tool": f"{NAMESPACE}.http_greet",
-                    "arguments": {"name": "Alice", "style": "formal"},
-                }]
-            }),
+            json.dumps(
+                {
+                    "tool_calls": [
+                        {
+                            "tool": f"{NAMESPACE}.http_greet",
+                            "arguments": {"name": "Alice", "style": "formal"},
+                        }
+                    ]
+                }
+            ),
         ),
         (
-            "XML Plugin", 
+            "XML Plugin",
             XmlToolPlugin(),
             f'<tool name="{NAMESPACE}.session_info" args="{{}}"/>',
         ),
         (
             "FunctionCall Plugin",
             FunctionCallPlugin(),
-            json.dumps({
-                "function_call": {
-                    "name": f"{NAMESPACE}.http_counter",
-                    "arguments": {"increment": 5},
+            json.dumps(
+                {
+                    "function_call": {
+                        "name": f"{NAMESPACE}.http_counter",
+                        "arguments": {"increment": 5},
+                    }
                 }
-            }),
+            ),
         ),
     ]
 
@@ -120,9 +125,9 @@ def banner(text: str, colour: str = Fore.CYAN) -> None:
     print(colour + f"\n=== {text} ===" + Style.RESET_ALL)
 
 
-def show_results(title: str, calls: List[ToolCall], results: List[ToolResult]) -> None:
+def show_results(title: str, calls: list[ToolCall], results: list[ToolResult]) -> None:
     banner(title)
-    for call, res in zip(calls, results):
+    for call, res in zip(calls, results, strict=False):
         ok = res.error is None
         head_colour = Fore.GREEN if ok else Fore.RED
         duration = (res.end_time - res.start_time).total_seconds()
@@ -144,10 +149,11 @@ async def run_demo() -> None:
     print(Fore.GREEN + "=== MCP HTTP Streamable Tool-Calling Demo ===" + Style.RESET_ALL)
     print("This demo uses chuk-mcp HTTP Streamable transport (spec 2025-03-26)")
     print("Modern replacement for deprecated SSE transport")
-    
+
     # Verify chuk-mcp is working (we know it is from Context7 success)
     try:
         import chuk_mcp
+
         print(f"✅ chuk-mcp detected: {chuk_mcp.__file__}")
     except ImportError:
         print("❌ chuk-mcp not available - but this shouldn't happen!")
@@ -176,7 +182,7 @@ async def run_demo() -> None:
         print("No tools were registered from the HTTP Streamable server.")
         print("Available namespaces:")
         all_tools = await registry.list_tools()
-        namespaces = set(ns for ns, _ in all_tools)
+        namespaces = {ns for ns, _ in all_tools}
         for ns in namespaces:
             print(f"  • {ns}")
         await bootstrap_mcp.stream_manager.close()
@@ -216,9 +222,9 @@ async def run_demo() -> None:
 
     # error handling test
     banner("Error Handling Test")
-    
+
     error_calls = [ToolCall(tool=f"{NAMESPACE}.nonexistent_tool", arguments={"query": "This should fail"})]
-    
+
     try:
         error_results = await executor.execute(error_calls)
         show_results("Error Handling", error_calls, error_results)
@@ -227,15 +233,15 @@ async def run_demo() -> None:
 
     # Test HTTP Streamable specific features
     banner("HTTP Streamable Features Test")
-    
+
     # Get transport metrics if available
     try:
         transport = None
-        for transport_name, transport_instance in bootstrap_mcp.stream_manager.transports.items():
-            if hasattr(transport_instance, 'get_metrics'):
+        for _transport_name, transport_instance in bootstrap_mcp.stream_manager.transports.items():
+            if hasattr(transport_instance, "get_metrics"):
                 transport = transport_instance
                 break
-        
+
         if transport:
             metrics = transport.get_metrics()
             print("📊 HTTP Streamable Transport Metrics:")
@@ -270,8 +276,6 @@ async def run_demo() -> None:
 if __name__ == "__main__":
     import logging
 
-    logging.getLogger("chuk_tool_processor").setLevel(
-        getattr(logging, os.environ.get("LOGLEVEL", "INFO").upper())
-    )
+    logging.getLogger("chuk_tool_processor").setLevel(getattr(logging, os.environ.get("LOGLEVEL", "INFO").upper()))
 
     asyncio.run(run_demo())

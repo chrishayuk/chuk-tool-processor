@@ -15,12 +15,13 @@ Subclass it like so:
         async def _execute(self, *, x: int, y: int) -> Result:
             return self.Result(sum=x + y)
 """
+
 from __future__ import annotations
 
 import html
 import inspect
 import json
-from typing import Any, Dict, TypeVar, Callable
+from typing import Any, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
@@ -48,7 +49,7 @@ class _ExportMixin:
         cls: type[T_Validated],
         *,
         registry_name: str | None = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Build the structure expected by `tools=[…]`.
 
@@ -75,7 +76,7 @@ class _ExportMixin:
     # Plain JSON schema (arguments only)
     # ------------------------------------------------------------------ #
     @classmethod
-    def to_json_schema(cls: type[T_Validated]) -> Dict[str, Any]:
+    def to_json_schema(cls: type[T_Validated]) -> dict[str, Any]:
         return cls.Arguments.model_json_schema()  # type: ignore[attr-defined]
 
     # ------------------------------------------------------------------ #
@@ -83,10 +84,7 @@ class _ExportMixin:
     # ------------------------------------------------------------------ #
     @classmethod
     def to_xml_tag(cls: type[T_Validated], **arguments: Any) -> str:
-        return (
-            f'<tool name="{html.escape(cls.__name__)}" '
-            f"args='{html.escape(json.dumps(arguments))}'/>"
-        )
+        return f"<tool name=\"{html.escape(cls.__name__)}\" args='{html.escape(json.dumps(arguments))}'/>"
 
 
 # --------------------------------------------------------------------------- #

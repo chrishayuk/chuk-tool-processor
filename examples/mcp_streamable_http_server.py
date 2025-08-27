@@ -13,40 +13,38 @@ import json
 import logging
 import uuid
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, Request, Response
-from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, StreamingResponse
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("mcp_streamable_http_server")
 
 app = FastAPI()
 
-# Enhanced CORS for MCP compatibility  
+# Enhanced CORS for MCP compatibility
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
-    expose_headers=["*"]
+    expose_headers=["*"],
 )
+
 
 # MCP server state
 class MCPServerState:
     def __init__(self):
         self.sessions = {}
-        self.server_info = {
-            "name": "mcp-streamable-http-demo-server",
-            "version": "1.0.0"
-        }
+        self.server_info = {"name": "mcp-streamable-http-demo-server", "version": "1.0.0"}
         self.capabilities = {
             "tools": {"listChanged": True},
             "resources": {"listChanged": True},
-            "prompts": {"listChanged": True}
+            "prompts": {"listChanged": True},
         }
         self.tools = [
             {
@@ -56,39 +54,39 @@ class MCPServerState:
                     "type": "object",
                     "properties": {
                         "name": {"type": "string", "description": "Name to greet"},
-                        "style": {"type": "string", "description": "Greeting style", "enum": ["formal", "casual"], "default": "casual"}
+                        "style": {
+                            "type": "string",
+                            "description": "Greeting style",
+                            "enum": ["formal", "casual"],
+                            "default": "casual",
+                        },
                     },
-                    "required": ["name"]
-                }
+                    "required": ["name"],
+                },
             },
             {
                 "name": "session_info",
                 "description": "Get current session information",
-                "inputSchema": {"type": "object", "properties": {}}
+                "inputSchema": {"type": "object", "properties": {}},
             },
             {
                 "name": "http_counter",
                 "description": "Increment session counter",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "increment": {"type": "integer", "default": 1}
-                    }
-                }
+                "inputSchema": {"type": "object", "properties": {"increment": {"type": "integer", "default": 1}}},
             },
             {
                 "name": "slow_operation",
                 "description": "A deliberately slow operation to demonstrate streaming",
                 "inputSchema": {
                     "type": "object",
-                    "properties": {
-                        "duration": {"type": "integer", "description": "Duration in seconds", "default": 3}
-                    }
-                }
-            }
+                    "properties": {"duration": {"type": "integer", "description": "Duration in seconds", "default": 3}},
+                },
+            },
         ]
 
+
 state = MCPServerState()
+
 
 @app.get("/")
 async def root():
@@ -97,26 +95,25 @@ async def root():
         "protocol": "MCP over Streamable HTTP",
         "version": "1.0.0",
         "spec_version": "2025-03-26",
-        "endpoints": {
-            "mcp": "/mcp"
-        },
+        "endpoints": {"mcp": "/mcp"},
         "features": [
             "Single endpoint simplicity",
-            "Better infrastructure compatibility", 
+            "Better infrastructure compatibility",
             "Stateless operation support",
-            "Optional streaming when needed"
-        ]
+            "Optional streaming when needed",
+        ],
     }
+
 
 @app.post("/mcp")
 @app.get("/mcp")
 async def mcp_endpoint(request: Request, response: Response):
     """
     Main MCP endpoint for Streamable HTTP transport.
-    
+
     FIXED: Now properly handles message ID matching for streaming responses.
     """
-    
+
     # Get or create session
     session_id = request.headers.get("mcp-session-id") or request.headers.get("x-session-id")
     if not session_id or session_id not in state.sessions:
@@ -126,15 +123,15 @@ async def mcp_endpoint(request: Request, response: Response):
             "created": datetime.now().isoformat(),
             "counter": 0,
             "messages": [],
-            "initialized": False
+            "initialized": False,
         }
         logger.info(f"Created new session: {session_id}")
-    
+
     # Set session ID in response
     response.headers["Mcp-Session-Id"] = session_id
-    
+
     session = state.sessions[session_id]
-    
+
     if request.method == "GET":
         # GET request - initiate streaming if requested
         accept_header = request.headers.get("accept", "")
@@ -145,9 +142,9 @@ async def mcp_endpoint(request: Request, response: Response):
                 media_type="text/event-stream",
                 headers={
                     "Cache-Control": "no-cache",
-                    "Connection": "keep-alive", 
+                    "Connection": "keep-alive",
                     "Access-Control-Allow-Origin": "*",
-                }
+                },
             )
         else:
             # Regular GET - return server info
@@ -155,26 +152,26 @@ async def mcp_endpoint(request: Request, response: Response):
                 "server": state.server_info,
                 "session": session_id,
                 "transport": "streamable_http",
-                "spec_version": "2025-03-26"
+                "spec_version": "2025-03-26",
             }
-    
+
     elif request.method == "POST":
         # POST request - handle MCP message
         try:
             message = await request.json()
             method = message.get("method")
             msg_id = message.get("id")
-            
+
             logger.info(f"Received: {method} (session: {session_id})")
-            
+
             # Check if client accepts streaming
             accept_header = request.headers.get("accept", "")
             supports_streaming = "text/event-stream" in accept_header
-            
+
             # FIXED: Use immediate JSON responses by default to avoid message ID issues
             # Only use streaming for operations that truly benefit from it
             use_streaming = supports_streaming and _should_use_streaming(method, message)
-            
+
             if use_streaming:
                 # Return streaming SSE response
                 logger.info(f"Using streaming response for {method}")
@@ -185,32 +182,33 @@ async def mcp_endpoint(request: Request, response: Response):
                         "Cache-Control": "no-cache",
                         "Connection": "keep-alive",
                         "Access-Control-Allow-Origin": "*",
-                    }
+                    },
                 )
             else:
                 # Return immediate JSON response (FIXED: This is now the default)
                 logger.info(f"Using immediate JSON response for {method}")
                 mcp_response = await handle_mcp_message(message, session)
-                
+
                 if mcp_response:
                     return JSONResponse(content=mcp_response)
                 else:
                     # Notification - no response content
                     return JSONResponse(content={"status": "accepted"}, status_code=202)
-                    
+
         except Exception as e:
             logger.error(f"Error handling MCP request: {e}")
             error_response = {
                 "jsonrpc": "2.0",
-                "id": message.get("id") if 'message' in locals() else None,
-                "error": {"code": -32603, "message": f"Internal error: {str(e)}"}
+                "id": message.get("id") if "message" in locals() else None,
+                "error": {"code": -32603, "message": f"Internal error: {str(e)}"},
             }
             return JSONResponse(content=error_response, status_code=500)
 
-def _should_use_streaming(method: str, message: Dict[str, Any]) -> bool:
+
+def _should_use_streaming(method: str, message: dict[str, Any]) -> bool:
     """
     FIXED: More conservative streaming decision.
-    
+
     Only use streaming for operations that truly benefit from it,
     to avoid message ID matching issues.
     """
@@ -221,133 +219,119 @@ def _should_use_streaming(method: str, message: Dict[str, Any]) -> bool:
         if tool_name == "slow_operation":
             duration = message.get("params", {}).get("arguments", {}).get("duration", 0)
             return duration > 2
-    
+
     # For all other operations, use immediate JSON responses
     return False
 
-async def _create_sse_stream(session: Dict[str, Any]):
+
+async def _create_sse_stream(session: dict[str, Any]):
     """Create an SSE stream for GET requests."""
     try:
         # Send welcome message
-        welcome = {
-            "type": "welcome",
-            "session_id": session["id"],
-            "timestamp": datetime.now().isoformat()
-        }
-        yield f"event: welcome\n"
+        welcome = {"type": "welcome", "session_id": session["id"], "timestamp": datetime.now().isoformat()}
+        yield "event: welcome\n"
         yield f"data: {json.dumps(welcome)}\n\n"
-        
+
         # Keep connection alive
         while True:
             await asyncio.sleep(30)
-            ping = {
-                "type": "ping",
-                "timestamp": datetime.now().isoformat()
-            }
-            yield f"event: ping\n"
+            ping = {"type": "ping", "timestamp": datetime.now().isoformat()}
+            yield "event: ping\n"
             yield f"data: {json.dumps(ping)}\n\n"
-            
+
     except Exception as e:
         logger.info(f"SSE stream ended: {e}")
 
-async def _create_streaming_response(message: Dict[str, Any], session: Dict[str, Any]):
+
+async def _create_streaming_response(message: dict[str, Any], session: dict[str, Any]):
     """
     FIXED: Create a properly formatted streaming SSE response.
-    
+
     This ensures the message ID is preserved correctly for chuk-mcp.
     """
-    
+
     try:
         msg_id = message.get("id")
-        
+
         # Process the message and get the response
         mcp_response = await handle_mcp_message(message, session)
-        
+
         if mcp_response:
             # FIXED: Send the complete JSON-RPC response with the original message ID
             # This ensures chuk-mcp can match the response to the request
-            yield f"event: message\n"
+            yield "event: message\n"
             yield f"data: {json.dumps(mcp_response)}\n\n"
-        
+
         # FIXED: Send completion event with the message ID for proper tracking
         completion_event = {
             "jsonrpc": "2.0",
             "id": msg_id,
             "result": {
-                "content": [{
-                    "type": "text", 
-                    "text": f"Streaming operation completed at {datetime.now().isoformat()}"
-                }]
-            }
+                "content": [{"type": "text", "text": f"Streaming operation completed at {datetime.now().isoformat()}"}]
+            },
         }
-        yield f"event: completion\n"
+        yield "event: completion\n"
         yield f"data: {json.dumps(completion_event)}\n\n"
-        
+
     except Exception as e:
         # Send error via SSE with proper message ID
         error_response = {
             "jsonrpc": "2.0",
             "id": message.get("id"),
-            "error": {"code": -32603, "message": f"Stream error: {str(e)}"}
+            "error": {"code": -32603, "message": f"Stream error: {str(e)}"},
         }
-        yield f"event: error\n"
+        yield "event: error\n"
         yield f"data: {json.dumps(error_response)}\n\n"
 
-async def handle_mcp_message(message: Dict[str, Any], session: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+
+async def handle_mcp_message(message: dict[str, Any], session: dict[str, Any]) -> dict[str, Any] | None:
     """Handle MCP protocol messages."""
-    
+
     method = message.get("method")
     msg_id = message.get("id")
     params = message.get("params", {})
-    
+
     try:
         if method == "initialize":
             session["initialized"] = True
             session["client_info"] = params.get("clientInfo", {})
-            
+
             return {
-                "jsonrpc": "2.0", "id": msg_id,
+                "jsonrpc": "2.0",
+                "id": msg_id,
                 "result": {
                     "protocolVersion": params.get("protocolVersion", "2025-03-26"),
                     "capabilities": state.capabilities,
                     "serverInfo": state.server_info,
-                    "instructions": f"Streamable HTTP MCP Server - Session: {session['id']}"
-                }
+                    "instructions": f"Streamable HTTP MCP Server - Session: {session['id']}",
+                },
             }
-        
+
         elif method == "notifications/initialized":
             logger.info(f"Client initialization complete for session {session['id']}")
             return None
-        
+
         elif method == "ping":
             return {"jsonrpc": "2.0", "id": msg_id, "result": {}}
-        
+
         elif method == "tools/list":
-            return {
-                "jsonrpc": "2.0", "id": msg_id,
-                "result": {"tools": state.tools}
-            }
-        
+            return {"jsonrpc": "2.0", "id": msg_id, "result": {"tools": state.tools}}
+
         elif method == "tools/call":
             tool_name = params.get("name")
             arguments = params.get("arguments", {})
-            
+
             if tool_name == "http_greet":
                 name = arguments.get("name", "Anonymous")
                 style = arguments.get("style", "casual")
-                
+
                 if style == "formal":
                     greeting = f"🌐 Good day, {name}. Welcome to our Streamable HTTP MCP server."
                 else:
                     greeting = f"🌐 Hey {name}! Welcome to the HTTP MCP server! 🚀"
-                
-                return {
-                    "jsonrpc": "2.0", "id": msg_id,
-                    "result": {
-                        "content": [{"type": "text", "text": greeting}]
-                    }
-                }
-            
+
+                return {"jsonrpc": "2.0", "id": msg_id, "result": {"content": [{"type": "text", "text": greeting}]}}
+
             elif tool_name == "session_info":
                 info = {
                     "session_id": session["id"],
@@ -356,58 +340,66 @@ async def handle_mcp_message(message: Dict[str, Any], session: Dict[str, Any]) -
                     "transport": "streamable_http",
                     "initialized": session["initialized"],
                     "total_sessions": len(state.sessions),
-                    "spec_version": "2025-03-26"
+                    "spec_version": "2025-03-26",
                 }
-                
+
                 return {
-                    "jsonrpc": "2.0", "id": msg_id,
-                    "result": {
-                        "content": [{"type": "text", "text": f"📊 Session Info: {json.dumps(info, indent=2)}"}]
-                    }
+                    "jsonrpc": "2.0",
+                    "id": msg_id,
+                    "result": {"content": [{"type": "text", "text": f"📊 Session Info: {json.dumps(info, indent=2)}"}]},
                 }
-            
+
             elif tool_name == "http_counter":
                 increment = arguments.get("increment", 1)
                 session["counter"] += increment
-                
+
                 return {
-                    "jsonrpc": "2.0", "id": msg_id,
+                    "jsonrpc": "2.0",
+                    "id": msg_id,
                     "result": {
                         "content": [{"type": "text", "text": f"🔢 HTTP Counter: {session['counter']} (+{increment})"}]
-                    }
+                    },
                 }
-            
+
             elif tool_name == "slow_operation":
                 duration = arguments.get("duration", 3)
-                
+
                 # Simulate slow operation
                 await asyncio.sleep(duration)
-                
+
                 return {
-                    "jsonrpc": "2.0", "id": msg_id,
+                    "jsonrpc": "2.0",
+                    "id": msg_id,
                     "result": {
-                        "content": [{"type": "text", "text": f"⏱️ Slow operation completed after {duration} seconds via HTTP transport"}]
-                    }
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": f"⏱️ Slow operation completed after {duration} seconds via HTTP transport",
+                            }
+                        ]
+                    },
                 }
-        
+
         elif method == "resources/list":
             return {
-                "jsonrpc": "2.0", "id": msg_id,
+                "jsonrpc": "2.0",
+                "id": msg_id,
                 "result": {
                     "resources": [
                         {
                             "uri": "http://server-status",
                             "name": "HTTP Server Status",
                             "description": "Current Streamable HTTP server status",
-                            "mimeType": "application/json"
+                            "mimeType": "application/json",
                         }
                     ]
-                }
+                },
             }
-        
+
         elif method == "prompts/list":
             return {
-                "jsonrpc": "2.0", "id": msg_id,
+                "jsonrpc": "2.0",
+                "id": msg_id,
                 "result": {
                     "prompts": [
                         {
@@ -415,23 +407,18 @@ async def handle_mcp_message(message: Dict[str, Any], session: Dict[str, Any]) -
                             "description": "Generate a Streamable HTTP status report",
                             "arguments": [
                                 {"name": "detail_level", "description": "Level of detail", "required": False}
-                            ]
+                            ],
                         }
                     ]
-                }
+                },
             }
-    
+
     except Exception as e:
         logger.error(f"Error in handle_mcp_message: {e}")
-        return {
-            "jsonrpc": "2.0", "id": msg_id,
-            "error": {"code": -32603, "message": f"Internal error: {str(e)}"}
-        }
-    
-    return {
-        "jsonrpc": "2.0", "id": msg_id,
-        "error": {"code": -32601, "message": f"Method not found: {method}"}
-    }
+        return {"jsonrpc": "2.0", "id": msg_id, "error": {"code": -32603, "message": f"Internal error: {str(e)}"}}
+
+    return {"jsonrpc": "2.0", "id": msg_id, "error": {"code": -32601, "message": f"Method not found: {method}"}}
+
 
 @app.get("/health")
 async def health():
@@ -439,8 +426,9 @@ async def health():
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
         "active_sessions": len(state.sessions),
-        "transport": "streamable_http"
+        "transport": "streamable_http",
     }
+
 
 if __name__ == "__main__":
     print("🌐 MCP Streamable HTTP Server (FIXED)")
@@ -451,7 +439,7 @@ if __name__ == "__main__":
     print("🚀 Replaces deprecated SSE transport")
     print("🔧 FIXED: Proper message ID handling for chuk-mcp compatibility")
     print("-" * 60)
-    print(f"🛠️  Tools available:")
+    print("🛠️  Tools available:")
     for tool in state.tools:
         print(f"   • {tool['name']}: {tool['description']}")
     print("-" * 60)
@@ -461,10 +449,5 @@ if __name__ == "__main__":
     print("   • Proper ID Matching: Eliminates chuk-mcp warnings")
     print("=" * 60)
     print("🚀 Starting server...\n")
-    
-    uvicorn.run(
-        app,
-        host="127.0.0.1",
-        port=8000,
-        log_level="info"
-    )
+
+    uvicorn.run(app, host="127.0.0.1", port=8000, log_level="info")

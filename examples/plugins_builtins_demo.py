@@ -20,7 +20,6 @@ from __future__ import annotations
 import asyncio
 import json
 import textwrap
-from typing import Dict, List
 
 from chuk_tool_processor.models.tool_call import ToolCall
 from chuk_tool_processor.plugins.discovery import discover_default_plugins, plugin_registry
@@ -29,7 +28,7 @@ from chuk_tool_processor.plugins.discovery import discover_default_plugins, plug
 # 1.  Prepare demo payloads keyed by plugin name
 # --------------------------------------------------------------------------- #
 
-DEMO_PAYLOADS: Dict[str, str] = {
+DEMO_PAYLOADS: dict[str, str] = {
     # ──────────────────────────────────────────────────────────────────────
     # FunctionCallPlugin
     # ──────────────────────────────────────────────────────────────────────
@@ -85,7 +84,7 @@ async def run_demo() -> None:
     discover_default_plugins()
 
     # Grab the *names* of registered parser plugins
-    parser_names: List[str] = plugin_registry.list_plugins("parser")["parser"]
+    parser_names: list[str] = plugin_registry.list_plugins("parser")["parser"]
     print("Registered parser plugins:")
     for n in parser_names:
         print(f"  • {n}")
@@ -101,7 +100,7 @@ async def run_demo() -> None:
             continue  # should not happen
 
         # Run the parser
-        calls: List[ToolCall] = await parser.try_parse(payload)
+        calls: list[ToolCall] = await parser.try_parse(payload)
 
         # Pretty-print
         snippet = textwrap.shorten(payload, width=80, placeholder="…")

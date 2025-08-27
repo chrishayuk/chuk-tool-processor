@@ -2,37 +2,31 @@
 """
 Tests for SSETransport class with updated consistent interface.
 """
+
 import asyncio
-import json
+import contextlib
+from unittest.mock import AsyncMock, Mock, patch
+
 import pytest
-from unittest.mock import Mock, AsyncMock, patch
 
 from chuk_tool_processor.mcp.transport.sse_transport import SSETransport
 
 
 class TestSSETransport:
     """Test SSETransport class with proper mocking and consistent interface."""
-    
+
     @pytest.fixture
     def transport(self):
         """Create SSETransport instance with consistent parameters."""
         return SSETransport(
-            "http://test.com", 
-            api_key="api_key",
-            connection_timeout=30.0,
-            default_timeout=30.0,
-            enable_metrics=True
+            "http://test.com", api_key="api_key", connection_timeout=30.0, default_timeout=30.0, enable_metrics=True
         )
-    
+
     @pytest.fixture
     def transport_no_metrics(self):
         """Create SSETransport instance with metrics disabled."""
-        return SSETransport(
-            "http://test.com", 
-            api_key="api_key",
-            enable_metrics=False
-        )
-    
+        return SSETransport("http://test.com", api_key="api_key", enable_metrics=False)
+
     @pytest.mark.asyncio
     async def test_initialize_success(self, transport):
         """Test successful SSE transport initialization with metrics tracking."""
@@ -45,7 +39,7 @@ class TestSSETransport:
         # Properly formatted SSE lines
         async def mock_aiter_lines():
             yield "data: /messages/session?session_id=test-session-123"
-            yield "data: {\"jsonrpc\": \"2.0\", \"id\": \"init-id\", \"result\": {\"protocolVersion\": \"2024-11-05\"}}"
+            yield 'data: {"jsonrpc": "2.0", "id": "init-id", "result": {"protocolVersion": "2024-11-05"}}'
             yield "data: ping"
 
         mock_sse_response = AsyncMock()
@@ -56,10 +50,10 @@ class TestSSETransport:
         class AsyncStreamContext:
             def __init__(self, response):
                 self.response = response
-                
+
             async def __aenter__(self):
                 return self.response
-                
+
             async def __aexit__(self, exc_type, exc, tb):
                 pass
 
@@ -72,14 +66,15 @@ class TestSSETransport:
         mock_post_response.status_code = 202
         mock_send_client.post.return_value = mock_post_response
 
-        with patch('httpx.AsyncClient', side_effect=[mock_stream_client, mock_send_client]):
+        with patch("httpx.AsyncClient", side_effect=[mock_stream_client, mock_send_client]):
+
             async def mock_send_request(method, params, timeout=None):
                 if method == "initialize":
                     return {"jsonrpc": "2.0", "id": "init-id", "result": {"protocolVersion": "2024-11-05"}}
                 return {"result": {}}
 
-            with patch.object(transport, '_send_request', side_effect=mock_send_request):
-                with patch.object(transport, '_send_notification', AsyncMock()):
+            with patch.object(transport, "_send_request", side_effect=mock_send_request):
+                with patch.object(transport, "_send_notification", AsyncMock()):
                     result = await transport.initialize()
                     # Give the background task time to extract session
                     await asyncio.sleep(0.2)
@@ -88,7 +83,7 @@ class TestSSETransport:
                     assert transport._initialized is True
                     assert transport.session_id == "test-session-123"
                     assert transport.message_url == "http://test.com/messages/session?session_id=test-session-123"
-                    
+
                     # Check metrics were updated
                     metrics = transport.get_metrics()
                     assert metrics["initialization_time"] > 0
@@ -101,23 +96,23 @@ class TestSSETransport:
         mock_send_client = AsyncMock()
         mock_stream_client.aclose = AsyncMock()
         mock_send_client.aclose = AsyncMock()
-        
+
         mock_sse_response = AsyncMock()
         mock_sse_response.status_code = 500
 
         class AsyncStreamContext:
             def __init__(self, response):
                 self.response = response
-                
+
             async def __aenter__(self):
                 return self.response
-                
+
             async def __aexit__(self, exc_type, exc, tb):
                 pass
 
         mock_stream_client.stream.return_value = AsyncStreamContext(mock_sse_response)
 
-        with patch('httpx.AsyncClient', side_effect=[mock_stream_client, mock_send_client]):
+        with patch("httpx.AsyncClient", side_effect=[mock_stream_client, mock_send_client]):
             result = await transport.initialize()
             assert result is False
             assert transport._initialized is False
@@ -141,16 +136,16 @@ class TestSSETransport:
         class AsyncStreamContext:
             def __init__(self, response):
                 self.response = response
-                
+
             async def __aenter__(self):
                 return self.response
-                
+
             async def __aexit__(self, exc_type, exc, tb):
                 pass
 
         mock_stream_client.stream.return_value = AsyncStreamContext(mock_sse_response)
 
-        with patch('httpx.AsyncClient', side_effect=[mock_stream_client, mock_send_client]):
+        with patch("httpx.AsyncClient", side_effect=[mock_stream_client, mock_send_client]):
             result = await transport.initialize()
             assert result is False
             assert transport._initialized is False
@@ -162,10 +157,10 @@ class TestSSETransport:
         transport.message_url = "http://test.com/messages/test"
         transport.send_client = AsyncMock()
 
-        with patch.object(transport, '_send_request', AsyncMock(return_value={"result": {"tools": []}})):
+        with patch.object(transport, "_send_request", AsyncMock(return_value={"result": {"tools": []}})):
             result = await transport.send_ping()
             assert result is True
-            
+
             # Check ping metrics were updated
             metrics = transport.get_metrics()
             assert metrics["last_ping_time"] > 0
@@ -197,7 +192,7 @@ class TestSSETransport:
         expected_tools = [{"name": "search"}, {"name": "research"}]
         response = {"result": {"tools": expected_tools}}
 
-        with patch.object(transport, '_send_request', AsyncMock(return_value=response)):
+        with patch.object(transport, "_send_request", AsyncMock(return_value=response)):
             tools = await transport.get_tools()
             assert tools == expected_tools
 
@@ -215,7 +210,7 @@ class TestSSETransport:
         transport.message_url = "http://test.com/messages/test"
         response = {"error": {"message": "Failed to get tools"}}
 
-        with patch.object(transport, '_send_request', AsyncMock(return_value=response)):
+        with patch.object(transport, "_send_request", AsyncMock(return_value=response)):
             tools = await transport.get_tools()
             assert tools == []
 
@@ -226,11 +221,11 @@ class TestSSETransport:
         transport.message_url = "http://test.com/messages/test"
         response = {"result": {"content": [{"type": "text", "text": '{"answer": "success"}'}]}}
 
-        with patch.object(transport, '_send_request', AsyncMock(return_value=response)):
+        with patch.object(transport, "_send_request", AsyncMock(return_value=response)):
             result = await transport.call_tool("search", {"query": "test"})
             assert result["isError"] is False
             assert result["content"]["answer"] == "success"
-            
+
             # Check metrics were updated
             metrics = transport.get_metrics()
             assert metrics["total_calls"] == 1
@@ -244,10 +239,10 @@ class TestSSETransport:
         transport.message_url = "http://test.com/messages/test"
         response = {"result": {"content": [{"type": "text", "text": "success"}]}}
 
-        with patch.object(transport, '_send_request', AsyncMock(return_value=response)) as mock_send:
+        with patch.object(transport, "_send_request", AsyncMock(return_value=response)) as mock_send:
             result = await transport.call_tool("search", {"query": "test"}, timeout=15.0)
             assert result["isError"] is False
-            
+
             # Verify timeout was passed to _send_request
             mock_send.assert_called_once()
             call_args = mock_send.call_args
@@ -268,11 +263,11 @@ class TestSSETransport:
         transport.message_url = "http://test.com/messages/test"
         response = {"error": {"message": "Tool failed"}}
 
-        with patch.object(transport, '_send_request', AsyncMock(return_value=response)):
+        with patch.object(transport, "_send_request", AsyncMock(return_value=response)):
             result = await transport.call_tool("search", {})
             assert result["isError"] is True
             assert result["error"] == "Tool failed"
-            
+
             # Check failure metrics were updated
             metrics = transport.get_metrics()
             assert metrics["total_calls"] == 1
@@ -284,11 +279,11 @@ class TestSSETransport:
         transport._initialized = True
         transport.message_url = "http://test.com/messages/test"
 
-        with patch.object(transport, '_send_request', AsyncMock(side_effect=asyncio.TimeoutError)):
+        with patch.object(transport, "_send_request", AsyncMock(side_effect=asyncio.TimeoutError)):
             result = await transport.call_tool("search", {}, timeout=1.0)
             assert result["isError"] is True
             assert "timed out" in result["error"].lower()
-            
+
             # Check timeout failure metrics
             metrics = transport.get_metrics()
             assert metrics["total_calls"] == 1
@@ -303,21 +298,21 @@ class TestSSETransport:
         assert metrics["successful_calls"] == 0
         assert metrics["failed_calls"] == 0
         assert metrics["avg_response_time"] == 0.0
-        
+
         # Manually increment total_calls first to prevent division by zero
         transport._metrics["total_calls"] = 1
         transport._update_metrics(0.5, True)  # Success
-        
+
         transport._metrics["total_calls"] = 2  # Increment again
         transport._update_metrics(1.0, False)  # Failure
-        
+
         metrics = transport.get_metrics()
         assert metrics["total_calls"] == 2
         assert metrics["successful_calls"] == 1
         assert metrics["failed_calls"] == 1
         assert metrics["total_time"] == 1.5
         assert metrics["avg_response_time"] == 0.75
-        
+
         # Test reset
         transport.reset_metrics()
         metrics = transport.get_metrics()
@@ -331,7 +326,7 @@ class TestSSETransport:
         """Test transport behavior with metrics disabled."""
         transport_no_metrics._initialized = True
         transport_no_metrics.message_url = "http://test.com/messages/test"
-        
+
         # Metrics should still be available but not actively updated during operations
         assert transport_no_metrics.enable_metrics is False
         metrics = transport_no_metrics.get_metrics()
@@ -406,10 +401,8 @@ class TestSSETransport:
         task = asyncio.create_task(transport._process_sse_stream())
         await asyncio.sleep(0.2)
         task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await task
-        except asyncio.CancelledError:
-            pass
 
         assert transport.session_id == "test-123"
         assert transport.message_url == "http://test.com/messages/session?session_id=test-123"
@@ -424,17 +417,17 @@ class TestSSETransport:
         transport._metrics["total_calls"] = 5
         transport._metrics["successful_calls"] = 4
         transport._metrics["failed_calls"] = 1
-        
+
         transport.sse_task = asyncio.create_task(asyncio.sleep(10))
         transport.sse_stream_context = AsyncMock()
         transport.sse_stream_context.__aexit__ = AsyncMock(return_value=None)
-        
+
         # Create mock clients and save references before calling close
         mock_stream_client = AsyncMock()
         mock_send_client = AsyncMock()
         mock_stream_client.aclose = AsyncMock()
         mock_send_client.aclose = AsyncMock()
-        
+
         transport.stream_client = mock_stream_client
         transport.send_client = mock_send_client
 
@@ -462,7 +455,7 @@ class TestSSETransport:
         transport.message_url = "http://test.com/messages/test"
         expected_resources = {"resources": [{"name": "resource1"}]}
 
-        with patch.object(transport, '_send_request', AsyncMock(return_value={"result": expected_resources})):
+        with patch.object(transport, "_send_request", AsyncMock(return_value={"result": expected_resources})):
             result = await transport.list_resources()
             assert result == expected_resources
 
@@ -480,7 +473,7 @@ class TestSSETransport:
         transport.message_url = "http://test.com/messages/test"
         expected_prompts = {"prompts": [{"name": "prompt1"}]}
 
-        with patch.object(transport, '_send_request', AsyncMock(return_value={"result": expected_prompts})):
+        with patch.object(transport, "_send_request", AsyncMock(return_value={"result": expected_prompts})):
             result = await transport.list_prompts()
             assert result == expected_prompts
 
@@ -498,8 +491,8 @@ class TestSSETransport:
     @pytest.mark.asyncio
     async def test_context_manager_success(self, transport):
         """Test using transport as context manager."""
-        with patch.object(transport, 'initialize', AsyncMock(return_value=True)):
-            with patch.object(transport, 'close', AsyncMock()):
+        with patch.object(transport, "initialize", AsyncMock(return_value=True)):
+            with patch.object(transport, "close", AsyncMock()):
                 async with transport as t:
                     assert t is transport
                 transport.initialize.assert_called_once()
@@ -508,7 +501,7 @@ class TestSSETransport:
     @pytest.mark.asyncio
     async def test_context_manager_init_failure(self, transport):
         """Test context manager when initialization fails."""
-        with patch.object(transport, 'initialize', AsyncMock(return_value=False)):
+        with patch.object(transport, "initialize", AsyncMock(return_value=False)):
             with pytest.raises(RuntimeError, match="Failed to initialize SSETransport"):
                 async with transport:
                     pass
@@ -526,7 +519,7 @@ class TestSSETransport:
         transport.session_id = "test-123"
         transport._metrics["total_calls"] = 10
         transport._metrics["successful_calls"] = 8
-        
+
         repr_str = repr(transport)
         assert "status=initialized" in repr_str
         assert "calls: 10" in repr_str
@@ -537,17 +530,16 @@ class TestSSETransport:
         # With API key
         headers = transport._get_headers()
         assert headers["Authorization"] == "Bearer api_key"
-        
+
         # With custom headers
         transport_custom = SSETransport(
-            "http://test.com", 
-            headers={"Custom-Header": "value", "Authorization": "old-auth"}
+            "http://test.com", headers={"Custom-Header": "value", "Authorization": "old-auth"}
         )
         headers = transport_custom._get_headers()
         assert headers["Custom-Header"] == "value"
         # API key should not override since none provided
         assert headers.get("Authorization") == "old-auth"
-        
+
         # Without API key
         transport_no_key = SSETransport("http://test.com")
         headers = transport_no_key._get_headers()
@@ -558,11 +550,11 @@ class TestSSETransport:
         # URL without /sse
         url = transport._construct_sse_url("http://test.com")
         assert url == "http://test.com/sse"
-        
+
         # URL already with /sse
         url = transport._construct_sse_url("http://test.com/sse")
         assert url == "http://test.com/sse"
-        
+
         # URL with trailing slash
         url = transport._construct_sse_url("http://test.com/")
         assert url == "http://test.com/sse"
@@ -572,27 +564,24 @@ class TestSSETransport:
         """Test that response normalization uses base class methods."""
         transport._initialized = True
         transport.message_url = "http://test.com/messages/test"
-        
+
         # Test various response formats
         test_cases = [
             # Standard MCP content format
             {
                 "input": {"result": {"content": [{"type": "text", "text": '{"result": "success"}'}]}},
-                "expected": {"isError": False, "content": {"result": "success"}}
+                "expected": {"isError": False, "content": {"result": "success"}},
             },
             # Plain text content
             {
                 "input": {"result": {"content": [{"type": "text", "text": "plain text"}]}},
-                "expected": {"isError": False, "content": "plain text"}
+                "expected": {"isError": False, "content": "plain text"},
             },
             # Direct result
-            {
-                "input": {"result": {"value": 42}},
-                "expected": {"isError": False, "content": {"value": 42}}
-            }
+            {"input": {"result": {"value": 42}}, "expected": {"isError": False, "content": {"value": 42}}},
         ]
-        
+
         for case in test_cases:
-            with patch.object(transport, '_send_request', AsyncMock(return_value=case["input"])):
+            with patch.object(transport, "_send_request", AsyncMock(return_value=case["input"])):
                 result = await transport.call_tool("test", {})
                 assert result == case["expected"]

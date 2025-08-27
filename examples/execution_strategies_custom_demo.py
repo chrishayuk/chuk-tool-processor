@@ -7,14 +7,13 @@ and returns immediately - no real work, but shows the plumbing.
 
 import asyncio
 import random
-from typing import List, Optional
 
+from chuk_tool_processor.execution.tool_executor import ToolExecutor
 from chuk_tool_processor.models.execution_strategy import ExecutionStrategy
 from chuk_tool_processor.models.tool_call import ToolCall
 from chuk_tool_processor.models.tool_result import ToolResult
 from chuk_tool_processor.plugins.discovery import plugin_registry
-from chuk_tool_processor.execution.tool_executor import ToolExecutor
-from chuk_tool_processor.registry import initialize        # default in-memory registry
+from chuk_tool_processor.registry import initialize  # default in-memory registry
 
 
 # ---------------------------------------------------------------------
@@ -25,9 +24,9 @@ class ShoutStrategy(ExecutionStrategy):
 
     async def run(
         self,
-        calls: List[ToolCall],
-        timeout: Optional[float] = None,
-    ) -> List[ToolResult]:
+        calls: list[ToolCall],
+        timeout: float | None = None,
+    ) -> list[ToolResult]:
         async def _one(call: ToolCall) -> ToolResult:
             await asyncio.sleep(random.uniform(0.05, 0.2))
             return ToolResult(tool=call.tool, result=call.tool.upper())
@@ -53,7 +52,7 @@ plugin_registry.register_plugin("execution_strategy", "ShoutStrategy", ShoutStra
 # Try it out
 # ---------------------------------------------------------------------
 async def main() -> None:
-    registry = await initialize()          # we don't need real tools for this demo
+    registry = await initialize()  # we don't need real tools for this demo
     calls = [ToolCall(tool="ping"), ToolCall(tool="echo")]
     executor = ToolExecutor(registry=registry, strategy=ShoutStrategy())
 

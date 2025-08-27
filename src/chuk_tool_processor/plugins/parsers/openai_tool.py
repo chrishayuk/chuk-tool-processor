@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, List
+from typing import Any
 
 from pydantic import ValidationError
 
@@ -19,6 +19,7 @@ logger = get_logger(__name__)
 
 class PluginMeta:
     """Optional descriptor consumed by the plugin-discovery system."""
+
     name: str = "openai_tool_calls"
     description: str = "Parses Chat-Completions responses containing `tool_calls`."
     version: str = "1.0.0"
@@ -43,7 +44,7 @@ class OpenAIToolPlugin(ParserPlugin):
         }
     """
 
-    async def try_parse(self, raw: str | Any) -> List[ToolCall]:  # noqa: D401
+    async def try_parse(self, raw: str | Any) -> list[ToolCall]:  # noqa: D401
         # ------------------------------------------------------------------ #
         # 1. Decode JSON when the input is a string
         # ------------------------------------------------------------------ #
@@ -59,7 +60,7 @@ class OpenAIToolPlugin(ParserPlugin):
         # ------------------------------------------------------------------ #
         # 2. Build ToolCall objects
         # ------------------------------------------------------------------ #
-        calls: List[ToolCall] = []
+        calls: list[ToolCall] = []
         for entry in data["tool_calls"]:
             fn = entry.get("function", {})
             name = fn.get("name")
@@ -76,9 +77,7 @@ class OpenAIToolPlugin(ParserPlugin):
                 continue
 
             try:
-                calls.append(
-                    ToolCall(tool=name, arguments=args if isinstance(args, dict) else {})
-                )
+                calls.append(ToolCall(tool=name, arguments=args if isinstance(args, dict) else {}))
             except ValidationError:
                 logger.debug(
                     "openai_tool_plugin: validation error while building ToolCall for %s",

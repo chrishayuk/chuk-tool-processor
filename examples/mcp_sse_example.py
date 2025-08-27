@@ -21,10 +21,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import sys
 from pathlib import Path
-from typing import Dict, List
 
 # --------------------------------------------------------------------- #
 #  allow "poetry run python examples/…" style execution                 #
@@ -53,6 +51,7 @@ async def dump_namespace(namespace: str) -> None:
         meta = await registry.get_metadata(name, ns)
         desc = meta.description if meta else "no description"
         print(f"  • {ns}.{name:<30} — {desc}")
+
 
 # --------------------------------------------------------------------- #
 #  main demo                                                            #
@@ -86,7 +85,7 @@ async def main() -> None:
     await dump_namespace("sse")
 
     # 3️⃣  test perplexity_search tool
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("Testing perplexity_search tool...")
     registry = await ToolRegistryProvider.get_registry()
     wrapper_cls = await registry.get_tool("perplexity_search", "sse")
@@ -95,7 +94,7 @@ async def main() -> None:
         print("❌ perplexity_search tool not found in registry")
         print("Available tools:")
         tools = await registry.list_tools("sse")
-        for ns, name in tools:
+        for _ns, name in tools:
             print(f"  - {name}")
         await stream_manager.close()
         return
@@ -105,12 +104,12 @@ async def main() -> None:
     try:
         query = "What are the latest developments in AI language models in 2025?"
         print(f"🔍 Searching for: {query}")
-        
+
         res = await wrapper.execute(query=query)
         print("\n📋 Result:")
         if isinstance(res, dict) and "answer" in res:
             print(res["answer"])
-        elif isinstance(res, (dict, list)):
+        elif isinstance(res, dict | list):
             print(json.dumps(res, indent=2))
         else:
             print(res)
@@ -118,46 +117,46 @@ async def main() -> None:
         print(f"❌ perplexity_search execution failed: {exc}")
 
     # 5️⃣  test multiple Perplexity tools if available
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("Testing all available Perplexity tools...")
-    
+
     test_scenarios = [
         {
             "tool": "perplexity_search",
             "query": "What is quantum computing and how does it work?",
-            "description": "Quick conversational search"
+            "description": "Quick conversational search",
         },
         {
-            "tool": "perplexity_deep_research", 
+            "tool": "perplexity_deep_research",
             "query": "Latest breakthroughs in renewable energy technology",
-            "description": "Deep research with citations"
+            "description": "Deep research with citations",
         },
         {
             "tool": "perplexity_quick_fact",
             "query": "Who is the current president of France?",
-            "description": "Quick fact checking"
-        }
+            "description": "Quick fact checking",
+        },
     ]
-    
+
     for i, scenario in enumerate(test_scenarios, 1):
         tool_name = scenario["tool"]
         query = scenario["query"]
         description = scenario["description"]
-        
+
         print(f"\n📝 Test {i}: {tool_name} - {description}")
         print(f"   Query: {query}")
-        
+
         # Get tool wrapper
         tool_wrapper_cls = await registry.get_tool(tool_name, "sse")
-        
+
         if tool_wrapper_cls is None:
             print(f"   ⚠️  Tool '{tool_name}' not available")
             continue
-            
+
         try:
             tool_wrapper = tool_wrapper_cls() if callable(tool_wrapper_cls) else tool_wrapper_cls
             res = await tool_wrapper.execute(query=query)
-            
+
             print("   ✅ Success!")
             if isinstance(res, dict) and "answer" in res:
                 # Truncate long answers for readability
@@ -165,16 +164,16 @@ async def main() -> None:
                 if len(answer) > 300:
                     answer = answer[:300] + "..."
                 print(f"   📋 Answer: {answer}")
-            elif isinstance(res, (dict, list)):
+            elif isinstance(res, dict | list):
                 print(f"   📋 Result: {json.dumps(res, indent=6)}")
             else:
                 print(f"   📋 Result: {res}")
-                
+
         except Exception as exc:
             print(f"   ❌ Failed: {exc}")
 
     # 6️⃣  show server capabilities
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("MCP Server Information:")
     print("✅ SSE transport with proper MCP initialization")
     print("✅ Async request/response handling")

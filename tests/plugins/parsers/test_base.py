@@ -3,14 +3,12 @@
 
 from __future__ import annotations
 
-import asyncio
 import inspect
-from typing import List
 
 import pytest
 
-from chuk_tool_processor.plugins.parsers.base import ParserPlugin
 from chuk_tool_processor.models.tool_call import ToolCall
+from chuk_tool_processor.plugins.parsers.base import ParserPlugin
 
 
 # --------------------------------------------------------------------------- #
@@ -39,7 +37,7 @@ async def test_dummy_subclass_works():
     """A minimal, correct implementation should instantiate and run."""
 
     class Good(ParserPlugin):
-        async def try_parse(self, raw) -> List[ToolCall]:  # type: ignore[override]
+        async def try_parse(self, raw) -> list[ToolCall]:  # type: ignore[override]
             # Just return empty list regardless of input
             return []
 

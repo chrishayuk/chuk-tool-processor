@@ -10,10 +10,10 @@ It accepts the same argument schema your demo already sends:
 
     {"operation": "multiply", "a": 235.5, "b": 18.75}
 """
+
 from __future__ import annotations
 
 import asyncio
-from typing import Dict
 
 from chuk_tool_processor.models.validated_tool import ValidatedTool
 from chuk_tool_processor.registry.decorators import register_tool
@@ -34,7 +34,7 @@ class CalculatorTool(ValidatedTool):
         operation: str
 
     # ── internal calculation (blocking)────────────────────────────
-    def _execute(self, operation: str, a: float, b: float) -> Dict:
+    def _execute(self, operation: str, a: float, b: float) -> dict:
         if operation == "add":
             result = a + b
         elif operation == "subtract":
@@ -51,13 +51,12 @@ class CalculatorTool(ValidatedTool):
         return {"result": result, "operation": operation}
 
     # ── sync entry-point (required by ValidatedTool) ───────────────
-    def run(self, **kwargs) -> Dict:
+    def run(self, **kwargs) -> dict:
         args = self.Arguments(**kwargs)
-        res  = self._execute(**args.model_dump())
+        res = self._execute(**args.model_dump())
         return self.Result(**res).model_dump()
 
     # ── async façade for “await tool(args)” style ──────────────────
-    async def arun(self, **kwargs) -> Dict:
+    async def arun(self, **kwargs) -> dict:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, lambda: self.run(**kwargs))
-

@@ -1,17 +1,18 @@
 # tests/mcp/test_register_mcp_tools.py
-import pytest
-from unittest.mock import Mock, patch, AsyncMock, MagicMock
+from unittest.mock import AsyncMock, Mock, patch
 
+import pytest
+
+from chuk_tool_processor.mcp.mcp_tool import MCPTool
 from chuk_tool_processor.mcp.register_mcp_tools import register_mcp_tools
 from chuk_tool_processor.mcp.stream_manager import StreamManager
-from chuk_tool_processor.mcp.mcp_tool import MCPTool
 from chuk_tool_processor.registry.interface import ToolRegistryInterface
 
 
 class TestRegisterMCPTools:
     """
     Tests for async-native MCP-tool registration.
-    
+
     Updated based on enhanced testing insights:
     - Registry allows tool name collisions within same namespace
     - Registration is to specified namespace only (not dual registration)
@@ -28,16 +29,11 @@ class TestRegisterMCPTools:
         reg = Mock(spec=ToolRegistryInterface)
         reg.register_tool = AsyncMock()
         reg.registered_tools = []  # Track what was registered for assertions
-        
+
         # Make register_tool track calls
         async def track_registration(tool, name=None, namespace="default", metadata=None):
-            reg.registered_tools.append({
-                "tool": tool,
-                "name": name,
-                "namespace": namespace,
-                "metadata": metadata
-            })
-        
+            reg.registered_tools.append({"tool": tool, "name": name, "namespace": namespace, "metadata": metadata})
+
         reg.register_tool.side_effect = track_registration
         return reg
 
@@ -48,26 +44,21 @@ class TestRegisterMCPTools:
         mgr.get_all_tools = Mock(
             return_value=[
                 {
-                    "name": "echo", 
+                    "name": "echo",
                     "description": "Echo tool for testing",
-                    "inputSchema": {
-                        "type": "object",
-                        "properties": {
-                            "message": {"type": "string"}
-                        }
-                    }
+                    "inputSchema": {"type": "object", "properties": {"message": {"type": "string"}}},
                 },
                 {
-                    "name": "calc", 
+                    "name": "calc",
                     "description": "Calculator tool",
                     "inputSchema": {
                         "type": "object",
                         "properties": {
                             "operation": {"type": "string"},
                             "a": {"type": "number"},
-                            "b": {"type": "number"}
-                        }
-                    }
+                            "b": {"type": "number"},
+                        },
+                    },
                 },
             ]
         )
@@ -80,7 +71,7 @@ class TestRegisterMCPTools:
             {
                 "name": f"tool_{i}",
                 "description": f"Test tool number {i}",
-                "inputSchema": {"type": "object", "properties": {}}
+                "inputSchema": {"type": "object", "properties": {}},
             }
             for i in range(50)  # 50 tools for performance testing
         ]
@@ -112,18 +103,18 @@ class TestRegisterMCPTools:
 
         # Should register exactly 2 tools (one per tool from stream manager)
         assert mock_registry.register_tool.call_count == 2
-        
+
         # Verify each registration
         registrations = mock_registry.registered_tools
         assert len(registrations) == 2
-        
+
         # Check first tool registration
         echo_reg = next(r for r in registrations if r["name"] == "echo")
         assert echo_reg["namespace"] == "test_ns"
         assert isinstance(echo_reg["tool"], MCPTool)
         assert echo_reg["metadata"]["description"] == "Echo tool for testing"
         assert "mcp" in echo_reg["metadata"]["tags"]
-        
+
         # Check second tool registration
         calc_reg = next(r for r in registrations if r["name"] == "calc")
         assert calc_reg["namespace"] == "test_ns"
@@ -137,7 +128,7 @@ class TestRegisterMCPTools:
             registered = await register_mcp_tools(mock_stream_manager)  # No namespace specified
 
         assert registered == ["echo", "calc"]
-        
+
         # All tools should be registered to default "mcp" namespace
         registrations = mock_registry.registered_tools
         for reg in registrations:
@@ -150,7 +141,7 @@ class TestRegisterMCPTools:
             await register_mcp_tools(mock_stream_manager, namespace="wrapper_test")
 
         registrations = mock_registry.registered_tools
-        
+
         for reg in registrations:
             tool = reg["tool"]
             assert isinstance(tool, MCPTool)
@@ -173,14 +164,14 @@ class TestRegisterMCPTools:
                 {"name": "valid_tool", "description": "This one should work"},
             ]
         )
-        
+
         with self._patch_registry(mock_registry):
             registered = await register_mcp_tools(mgr, namespace="invalid_test")
 
         # Only the valid tool should be registered
         assert registered == ["valid_tool"]
         assert mock_registry.register_tool.call_count == 1
-        
+
         # Verify the valid tool was registered correctly
         reg = mock_registry.registered_tools[0]
         assert reg["name"] == "valid_tool"
@@ -202,7 +193,7 @@ class TestRegisterMCPTools:
     async def test_duplicate_tool_names_collision_handling(self, mock_registry):
         """
         Test handling of duplicate tool names within same namespace.
-        
+
         Based on enhanced testing: registry allows collisions (update behavior).
         """
         mgr = Mock(spec=StreamManager)
@@ -220,7 +211,7 @@ class TestRegisterMCPTools:
         # All tools should be processed (registry allows duplicates)
         assert registered == ["duplicate_tool", "duplicate_tool", "unique_tool"]
         assert mock_registry.register_tool.call_count == 3
-        
+
         # Verify both duplicate registrations happened
         duplicate_regs = [r for r in mock_registry.registered_tools if r["name"] == "duplicate_tool"]
         assert len(duplicate_regs) == 2
@@ -251,7 +242,7 @@ class TestRegisterMCPTools:
     async def test_large_scale_registration_performance(self, mock_registry, large_tool_set):
         """Test performance with large number of tools."""
         import time
-        
+
         mgr = Mock(spec=StreamManager)
         mgr.get_all_tools = Mock(return_value=large_tool_set)
 
@@ -263,44 +254,41 @@ class TestRegisterMCPTools:
         # Should register all 50 tools
         assert len(registered) == 50
         assert mock_registry.register_tool.call_count == 50
-        
+
         # Performance should be reasonable (less than 1 second for 50 tools)
         assert execution_time < 1.0
-        
+
         # Calculate tools per second
-        tools_per_second = len(registered) / execution_time if execution_time > 0 else float('inf')
+        tools_per_second = len(registered) / execution_time if execution_time > 0 else float("inf")
         assert tools_per_second > 10  # Should process at least 10 tools/second
 
     @pytest.mark.asyncio
     async def test_concurrent_registration_simulation(self, mock_registry):
         """Test concurrent registration behavior using asyncio.gather."""
         import asyncio
-        
+
         # Create multiple stream managers with different tools
         managers = []
         for i in range(5):
             mgr = Mock(spec=StreamManager)
             mgr.get_all_tools = Mock(
-                return_value=[{
-                    "name": f"concurrent_tool_{i}",
-                    "description": f"Tool from manager {i}",
-                    "inputSchema": {}
-                }]
+                return_value=[
+                    {"name": f"concurrent_tool_{i}", "description": f"Tool from manager {i}", "inputSchema": {}}
+                ]
             )
             managers.append(mgr)
 
         # Register all tools concurrently
         with self._patch_registry(mock_registry):
-            results = await asyncio.gather(*[
-                register_mcp_tools(mgr, namespace=f"concurrent_ns_{i}")
-                for i, mgr in enumerate(managers)
-            ])
+            results = await asyncio.gather(
+                *[register_mcp_tools(mgr, namespace=f"concurrent_ns_{i}") for i, mgr in enumerate(managers)]
+            )
 
         # All registrations should succeed
         assert len(results) == 5
         for i, result in enumerate(results):
             assert result == [f"concurrent_tool_{i}"]
-        
+
         # Total of 5 tools should be registered
         assert mock_registry.register_tool.call_count == 5
 
@@ -314,10 +302,10 @@ class TestRegisterMCPTools:
             await register_mcp_tools(mock_stream_manager, namespace="metadata_test")
 
         registrations = mock_registry.registered_tools
-        
+
         for reg in registrations:
             metadata = reg["metadata"]
-            
+
             # Check required metadata fields
             assert "description" in metadata
             assert "is_async" in metadata
@@ -325,7 +313,7 @@ class TestRegisterMCPTools:
             assert "tags" in metadata
             assert "mcp" in metadata["tags"]
             assert "remote" in metadata["tags"]
-            
+
             # Check argument schema is included
             assert "argument_schema" in metadata
             assert isinstance(metadata["argument_schema"], dict)
@@ -335,11 +323,9 @@ class TestRegisterMCPTools:
         """Test that tools can be registered to different namespaces independently."""
         mgr = Mock(spec=StreamManager)
         mgr.get_all_tools = Mock(
-            return_value=[{
-                "name": "shared_tool",
-                "description": "Tool that exists in multiple namespaces",
-                "inputSchema": {}
-            }]
+            return_value=[
+                {"name": "shared_tool", "description": "Tool that exists in multiple namespaces", "inputSchema": {}}
+            ]
         )
 
         with self._patch_registry(mock_registry):
@@ -351,7 +337,7 @@ class TestRegisterMCPTools:
         assert result1 == ["shared_tool"]
         assert result2 == ["shared_tool"]
         assert mock_registry.register_tool.call_count == 2
-        
+
         # Verify tools were registered to correct namespaces
         registrations = mock_registry.registered_tools
         namespaces = [reg["namespace"] for reg in registrations]
@@ -371,10 +357,10 @@ class TestRegisterMCPTools:
                         "type": "object",
                         "properties": {
                             "required_param": {"type": "string"},
-                            "optional_param": {"type": "number", "default": 42}
+                            "optional_param": {"type": "number", "default": 42},
                         },
-                        "required": ["required_param"]
-                    }
+                        "required": ["required_param"],
+                    },
                 },
                 {
                     "name": "no_schema_tool",
@@ -388,16 +374,16 @@ class TestRegisterMCPTools:
             registered = await register_mcp_tools(mgr, namespace="schema_test")
 
         assert registered == ["schema_tool", "no_schema_tool"]
-        
+
         registrations = mock_registry.registered_tools
-        
+
         # Tool with schema should have it preserved
         schema_tool_reg = next(r for r in registrations if r["name"] == "schema_tool")
         assert "argument_schema" in schema_tool_reg["metadata"]
         schema = schema_tool_reg["metadata"]["argument_schema"]
         assert schema["type"] == "object"
         assert "required_param" in schema["properties"]
-        
+
         # Tool without schema should have empty schema
         no_schema_reg = next(r for r in registrations if r["name"] == "no_schema_tool")
         assert no_schema_reg["metadata"]["argument_schema"] == {}
@@ -419,10 +405,10 @@ class TestRegisterMCPTools:
                         "type": "object",
                         "properties": {
                             "location": {"type": "string", "description": "City name"},
-                            "units": {"type": "string", "enum": ["celsius", "fahrenheit"], "default": "celsius"}
+                            "units": {"type": "string", "enum": ["celsius", "fahrenheit"], "default": "celsius"},
                         },
-                        "required": ["location"]
-                    }
+                        "required": ["location"],
+                    },
                 }
             ]
         )
@@ -433,19 +419,19 @@ class TestRegisterMCPTools:
         # Verify end-to-end flow
         assert registered == ["get_weather"]
         assert mock_registry.register_tool.call_count == 1
-        
+
         reg = mock_registry.registered_tools[0]
-        
+
         # Verify tool wrapper
         assert isinstance(reg["tool"], MCPTool)
         assert reg["tool"].tool_name == "get_weather"
-        
+
         # Verify metadata
         metadata = reg["metadata"]
         assert metadata["description"] == "Get current weather for a location"
         assert metadata["is_async"] is True
         assert "mcp" in metadata["tags"]
-        
+
         # Verify schema preservation
         schema = metadata["argument_schema"]
         assert schema["properties"]["location"]["type"] == "string"

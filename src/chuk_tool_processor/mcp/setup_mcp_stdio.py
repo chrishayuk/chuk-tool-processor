@@ -13,8 +13,6 @@ It:
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple
-
 from chuk_tool_processor.core.processor import ToolProcessor
 from chuk_tool_processor.logging import get_logger
 from chuk_tool_processor.mcp.register_mcp_tools import register_mcp_tools
@@ -29,19 +27,19 @@ logger = get_logger("chuk_tool_processor.mcp.setup_stdio")
 async def setup_mcp_stdio(  # noqa: C901 - long but just a config facade
     *,
     config_file: str,
-    servers: List[str],
-    server_names: Optional[Dict[int, str]] = None,
+    servers: list[str],
+    server_names: dict[int, str] | None = None,
     default_timeout: float = 10.0,
-    max_concurrency: Optional[int] = None,
+    max_concurrency: int | None = None,
     enable_caching: bool = True,
     cache_ttl: int = 300,
     enable_rate_limiting: bool = False,
-    global_rate_limit: Optional[int] = None,
-    tool_rate_limits: Optional[Dict[str, tuple]] = None,
+    global_rate_limit: int | None = None,
+    tool_rate_limits: dict[str, tuple] | None = None,
     enable_retries: bool = True,
     max_retries: int = 3,
     namespace: str = "mcp",
-) -> Tuple[ToolProcessor, StreamManager]:
+) -> tuple[ToolProcessor, StreamManager]:
     """
     Initialise stdio-transport MCP + a :class:`ToolProcessor`.
 

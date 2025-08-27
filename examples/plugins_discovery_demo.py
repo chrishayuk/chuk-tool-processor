@@ -15,23 +15,19 @@ from __future__ import annotations
 
 import asyncio
 import sys
-import types
-from typing import List
 
 from chuk_tool_processor.models.tool_call import ToolCall
-from chuk_tool_processor.models.tool_result import ToolResult
 from chuk_tool_processor.plugins.discovery import (
     PluginDiscovery,
-    plugin_registry,          # the global registry singleton
-    discover_default_plugins, # helper to load the library's own plugins
+    discover_default_plugins,  # helper to load the library's own plugins
+    plugin_registry,  # the global registry singleton
 )
 from chuk_tool_processor.plugins.parsers.base import ParserPlugin
-
 
 # --------------------------------------------------------------------------- #
 # 1.  Load the built-in plugins shipped with chuk_tool_processor
 # --------------------------------------------------------------------------- #
-discover_default_plugins()   # fills *plugin_registry* with default plugins
+discover_default_plugins()  # fills *plugin_registry* with default plugins
 
 
 # --------------------------------------------------------------------------- #
@@ -43,7 +39,7 @@ class AngleParser(ParserPlugin):
     ``<angle> … </angle>`` in a string and turns them into a ToolCall.
     """
 
-    async def try_parse(self, raw: str | object) -> List[ToolCall]:
+    async def try_parse(self, raw: str | object) -> list[ToolCall]:
         if isinstance(raw, str) and "<angle>" in raw and "</angle>" in raw:
             return [ToolCall(tool="angle", arguments={})]
         return []
