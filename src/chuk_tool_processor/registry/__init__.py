@@ -3,9 +3,6 @@
 Async-native tool registry package for managing and accessing tool implementations.
 """
 
-import asyncio
-from typing import Optional
-
 from chuk_tool_processor.registry.decorators import discover_decorated_tools, ensure_registrations, register_tool
 from chuk_tool_processor.registry.interface import ToolRegistryInterface
 from chuk_tool_processor.registry.metadata import StreamingToolMetadata, ToolMetadata

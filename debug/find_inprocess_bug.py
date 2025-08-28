@@ -5,6 +5,7 @@ Find the exact hardcoded timeout bug in InProcessStrategy.
 """
 
 import inspect
+import platform
 import sys
 from datetime import UTC
 from pathlib import Path

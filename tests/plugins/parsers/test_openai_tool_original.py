@@ -25,7 +25,7 @@ class OpenAIToolPlugin(ParserPlugin):
     def try_parse(self, raw: str | Any) -> list[ToolCall]:  # type: ignore[override]
         # lazy import to dodge circular reference during package import
         try:
-            from chuk_tool_processor.registry.tool_export import tool_by_openai_name  # noqa: WPS433
+            from chuk_tool_processor.registry.tool_export import tool_by_openai_name
         except ImportError as exc:  # pragma: no cover
             logger.warning("tool_export not available: %s", exc)
             return []

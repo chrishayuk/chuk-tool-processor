@@ -35,19 +35,20 @@ _initialize_shutdown_fixes()
 # Import internal modules in correct order to avoid circular imports
 # First, formatter has no internal dependencies
 # Second, context only depends on formatter
-from .context import LogContext, StructuredAdapter, get_logger, log_context
-from .formatter import StructuredFormatter
+from .context import LogContext, StructuredAdapter, get_logger, log_context  # noqa: E402
+from .formatter import StructuredFormatter  # noqa: E402
 
 # Third, helpers depend on context
-from .helpers import log_context_span, log_tool_call, request_logging
+from .helpers import log_context_span, log_tool_call, request_logging  # noqa: E402
 
 # Fourth, metrics depend on helpers and context
-from .metrics import MetricsLogger, metrics
+from .metrics import MetricsLogger, metrics  # noqa: E402
 
 __all__ = [
     "get_logger",
     "log_context",
     "LogContext",
+    "StructuredAdapter",
     "log_context_span",
     "request_logging",
     "log_tool_call",

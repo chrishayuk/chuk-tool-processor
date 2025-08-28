@@ -39,17 +39,23 @@ class FunctionCallPlugin(ParserPlugin):
     # Public API
     # --------------------------------------------------------------------- #
 
-    async def try_parse(self, raw: str | dict[str, Any]) -> list[ToolCall]:
+    async def try_parse(self, raw: Any) -> list[ToolCall]:
+        # Handle non-string, non-dict inputs gracefully
+        if not isinstance(raw, str | dict):
+            return []
+
         payload: dict[str, Any] | None
 
         # 1️⃣  Primary path ─ whole payload is JSON
         if isinstance(raw, dict):
             payload = raw
-        else:
+        elif isinstance(raw, str):
             try:
                 payload = json.loads(raw)
             except json.JSONDecodeError:
                 payload = None
+        else:
+            return []
 
         calls: list[ToolCall] = []
 

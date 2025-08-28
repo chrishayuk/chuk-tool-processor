@@ -5,7 +5,6 @@ Async registry provider implementations and factory functions.
 
 import asyncio
 import os
-from typing import Any, Dict, Optional
 
 from chuk_tool_processor.registry.interface import ToolRegistryInterface
 

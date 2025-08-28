@@ -83,6 +83,8 @@ omit = [
     "*/tests/*",
     "*/test_*.py",
     "*/__main__.py",
+    "*/sample_tools/*",
+    "src/sample_tools/*",
 ]
 
 [tool.coverage.report]
@@ -100,6 +102,10 @@ exclude_lines = [
 skip_covered = false
 show_missing = true
 precision = 2
+omit = [
+    "*/sample_tools/*",
+    "src/sample_tools/*",
+]
 
 [tool.mypy]
 python_version = "3.11"

@@ -61,7 +61,13 @@ class OpenAIToolPlugin(ParserPlugin):
         # 2. Build ToolCall objects
         # ------------------------------------------------------------------ #
         calls: list[ToolCall] = []
-        for entry in data["tool_calls"]:
+
+        # Ensure tool_calls is a list
+        tool_calls = data.get("tool_calls", [])
+        if not isinstance(tool_calls, list):
+            return []
+
+        for entry in tool_calls:
             fn = entry.get("function", {})
             name = fn.get("name")
             args = fn.get("arguments", {})
