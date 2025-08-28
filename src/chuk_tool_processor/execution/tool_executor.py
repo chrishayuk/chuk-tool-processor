@@ -96,7 +96,7 @@ class ToolExecutor:
         self,
         calls: list[ToolCall],
         timeout: float | None = None,
-        use_cache: bool = True,
+        use_cache: bool = True,  # noqa: ARG002
     ) -> list[ToolResult]:
         """
         Execute tool calls using the configured strategy.
@@ -244,9 +244,7 @@ class ToolExecutor:
             for result in results:
                 yield result
 
-    async def _direct_stream_tool(
-        self, call: ToolCall, tool: Any, queue: asyncio.Queue, timeout: float | None
-    ) -> None:
+    async def _direct_stream_tool(self, call: ToolCall, tool: Any, queue: asyncio.Queue, timeout: float | None) -> None:
         """
         Stream results directly from a streaming tool.
 

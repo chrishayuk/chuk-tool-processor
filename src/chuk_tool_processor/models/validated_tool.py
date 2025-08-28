@@ -68,7 +68,7 @@ class _ExportMixin:
             "function": {
                 "name": fn_name,
                 "description": description,
-                "parameters": cls.Arguments.model_json_schema(),  # type: ignore[attr-defined]
+                "parameters": cls.Arguments.model_json_schema(),
             },
         }
 
@@ -77,13 +77,13 @@ class _ExportMixin:
     # ------------------------------------------------------------------ #
     @classmethod
     def to_json_schema(cls: type[T_Validated]) -> dict[str, Any]:
-        return cls.Arguments.model_json_schema()  # type: ignore[attr-defined]
+        return cls.Arguments.model_json_schema()
 
     # ------------------------------------------------------------------ #
     # Tiny XML tag - handy for unit-tests / demos
     # ------------------------------------------------------------------ #
     @classmethod
-    def to_xml_tag(cls: type[T_Validated], **arguments: Any) -> str:
+    def to_xml_tag(cls: type[T_Validated], **arguments: Any) -> str:  # type: ignore[misc]
         return f"<tool name=\"{html.escape(cls.__name__)}\" args='{html.escape(json.dumps(arguments))}'/>"
 
 
@@ -108,8 +108,8 @@ class ValidatedTool(_ExportMixin, BaseModel):
     async def execute(self: T_Validated, **kwargs: Any) -> BaseModel:
         """Validate *kwargs*, run `_execute`, validate the result."""
         try:
-            args = self.Arguments(**kwargs)  # type: ignore[arg-type]
-            res = await self._execute(**args.model_dump())  # type: ignore[arg-type]
+            args = self.Arguments(**kwargs)
+            res = await self._execute(**args.model_dump())
 
             return (
                 res
@@ -117,7 +117,7 @@ class ValidatedTool(_ExportMixin, BaseModel):
                 else self.Result(**(res if isinstance(res, dict) else {"value": res}))
             )
         except ValidationError as exc:
-            raise ToolValidationError(self.__class__.__name__, exc.errors()) from exc
+            raise ToolValidationError(self.__class__.__name__, {"errors": exc.errors()}) from exc
 
     # ------------------------------------------------------------------ #
     # Sub-classes must implement this
@@ -141,15 +141,15 @@ def with_validation(cls):  # noqa: D401 - factory
         validate_result,
     )
 
-    original = cls.execute  # type: ignore[attr-defined]
+    original = cls.execute
     if not inspect.iscoroutinefunction(original):
         raise TypeError(f"Tool {cls.__name__} must have an async execute method")
 
-    async def _async_wrapper(self, **kwargs):  # type: ignore[override]
+    async def _async_wrapper(self, **kwargs):
         tool_name = cls.__name__
         validated = validate_arguments(tool_name, original, kwargs)
         result = await original(self, **validated)
         return validate_result(tool_name, original, result)
 
-    cls.execute = _async_wrapper  # type: ignore[assignment]
+    cls.execute = _async_wrapper
     return cls

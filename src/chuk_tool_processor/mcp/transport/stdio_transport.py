@@ -8,7 +8,7 @@ import time
 from typing import Any
 
 import psutil
-from chuk_mcp.protocol.messages import (
+from chuk_mcp.protocol.messages import (  # type: ignore[import-untyped]
     send_initialize,
     send_ping,
     send_prompts_get,
@@ -18,8 +18,8 @@ from chuk_mcp.protocol.messages import (
     send_tools_call,
     send_tools_list,
 )
-from chuk_mcp.transports.stdio import stdio_client
-from chuk_mcp.transports.stdio.parameters import StdioParameters
+from chuk_mcp.transports.stdio import stdio_client  # type: ignore[import-untyped]
+from chuk_mcp.transports.stdio.parameters import StdioParameters  # type: ignore[import-untyped]
 
 from .base_transport import MCPBaseTransport
 
@@ -312,10 +312,14 @@ class StdioTransport(MCPBaseTransport):
             return False
 
         # Check process health first (NEW) - but only if we have a real process
-        if self.process_monitor and self._process_id and isinstance(self._process_id, int):
-            if not await self._monitor_process_health():
-                self._consecutive_failures += 1
-                return False
+        if (
+            self.process_monitor
+            and self._process_id
+            and isinstance(self._process_id, int)
+            and not await self._monitor_process_health()
+        ):
+            self._consecutive_failures += 1
+            return False
 
         start_time = time.time()
         try:
@@ -529,10 +533,12 @@ class StdioTransport(MCPBaseTransport):
                     parsed = json.loads(text)
                     # If the parsed result is a simple type and the original was a string,
                     # keep it as a string to maintain compatibility
-                    if isinstance(parsed, int | float | bool) and isinstance(text, str):
-                        # Check if this looks like a simple numeric string
-                        if text.strip().isdigit() or (text.strip().replace(".", "", 1).isdigit()):
-                            return text  # Return as string for numeric values
+                    if (
+                        isinstance(parsed, int | float | bool)
+                        and isinstance(text, str)
+                        and (text.strip().isdigit() or text.strip().replace(".", "", 1).isdigit())
+                    ):
+                        return text  # Return as string for numeric values
                     return parsed
                 except json.JSONDecodeError:
                     return text

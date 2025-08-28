@@ -480,7 +480,7 @@ class CachingToolExecutor:
         # ------------------------------------------------------------------
         if use_cache:
             cache_tasks = []
-            for (idx, call), result in zip(uncached, uncached_results, strict=False):
+            for (_idx, call), result in zip(uncached, uncached_results, strict=False):
                 if result.error is None and self._is_cacheable(call.tool):
                     ttl = self._ttl_for(call.tool)
                     logger.debug(f"Caching result for {call.tool} with TTL={ttl}s")

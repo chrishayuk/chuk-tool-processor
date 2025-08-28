@@ -16,16 +16,14 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import contextlib
 import contextvars
 import logging
 import threading
 import uuid
 import warnings
 from collections.abc import AsyncGenerator
-from typing import (
-    Any,
-    AsyncContextManager,
-)
+from typing import Any
 
 __all__ = ["LogContext", "log_context", "StructuredAdapter", "get_logger"]
 
@@ -131,13 +129,13 @@ atexit.register(lambda: None)
 # Per-task context storage
 # --------------------------------------------------------------------------- #
 
-_context_var: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("log_context", default={})
+_context_var: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar("log_context", default=None)
 
 
 # --------------------------------------------------------------------------- #
 # Helpers for turning async generators into async context managers
 # --------------------------------------------------------------------------- #
-class AsyncContextManagerWrapper(AsyncContextManager):
+class AsyncContextManagerWrapper(contextlib.AbstractAsyncContextManager):
     """Wrap an async generator so it can be used with `async with`."""
 
     def __init__(self, gen: AsyncGenerator[Any, None]):
@@ -190,7 +188,8 @@ class LogContext:
     @property
     def context(self) -> dict[str, Any]:
         """Return the current context dict (task-local)."""
-        return _context_var.get()
+        ctx = _context_var.get()
+        return ctx if ctx is not None else {}
 
     @property
     def request_id(self) -> str | None:
@@ -240,7 +239,7 @@ class LogContext:
         finally:
             _context_var.set(prev_ctx)
 
-    def context_scope(self, **kwargs: Any) -> AsyncContextManager:
+    def context_scope(self, **kwargs: Any) -> contextlib.AbstractAsyncContextManager:
         """
         Temporarily add *kwargs* to the context.
 
@@ -262,7 +261,7 @@ class LogContext:
         finally:
             _context_var.set(prev_ctx)
 
-    def request_scope(self, request_id: str | None = None) -> AsyncContextManager:
+    def request_scope(self, request_id: str | None = None) -> contextlib.AbstractAsyncContextManager:
         """
         Manage a full request lifecycle::
 

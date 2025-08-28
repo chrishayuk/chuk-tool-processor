@@ -30,11 +30,7 @@ class MockTool:
         name = registry_name or cls.__name__
         return {
             "type": "function",
-            "function": {
-                "name": name,
-                "description": cls.__doc__,
-                "parameters": {"type": "object", "properties": {}}
-            }
+            "function": {"name": name, "description": cls.__doc__, "parameters": {"type": "object", "properties": {}}},
         }
 
 
@@ -47,14 +43,8 @@ class TestToolExport:
         await clear_name_cache()
 
         mock_registry = Mock()
-        mock_registry.list_tools = AsyncMock(return_value=[
-            ("default", "tool1"),
-            ("custom", "tool2")
-        ])
-        mock_registry.get_tool = AsyncMock(side_effect=[
-            MockTool,
-            MockTool
-        ])
+        mock_registry.list_tools = AsyncMock(return_value=[("default", "tool1"), ("custom", "tool2")])
+        mock_registry.get_tool = AsyncMock(side_effect=[MockTool, MockTool])
 
         with patch("chuk_tool_processor.registry.tool_export.ToolRegistryProvider") as mock_provider:
             mock_provider.get_registry = AsyncMock(return_value=mock_registry)
@@ -114,10 +104,7 @@ class TestToolExport:
         await clear_name_cache()
 
         mock_registry = Mock()
-        mock_registry.list_tools = AsyncMock(return_value=[
-            ("default", "Tool1"),
-            ("custom", "Tool2")
-        ])
+        mock_registry.list_tools = AsyncMock(return_value=[("default", "Tool1"), ("custom", "Tool2")])
         mock_registry.get_tool = AsyncMock(return_value=MockTool)
 
         with patch("chuk_tool_processor.registry.tool_export.ToolRegistryProvider") as mock_provider:
@@ -133,6 +120,7 @@ class TestToolExport:
         """Test clearing the cache."""
         # Set up a mock cache
         import chuk_tool_processor.registry.tool_export as export_module
+
         export_module._OPENAI_NAME_CACHE = {"test": "data"}
 
         await clear_name_cache()

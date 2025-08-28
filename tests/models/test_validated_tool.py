@@ -24,12 +24,14 @@ class MockValidatedTool(ValidatedTool):
 
     class Arguments(BaseModel):
         """Tool arguments."""
+
         name: str = Field(..., description="Name parameter")
         age: int = Field(..., ge=0, le=120, description="Age parameter")
         optional: str | None = Field(None, description="Optional parameter")
 
     class Result(BaseModel):
         """Tool result."""
+
         message: str
 
     async def _execute(self, name: str, age: int, optional: str | None = None) -> Result:
@@ -58,6 +60,7 @@ class TestValidatedTool:
         tool = MockValidatedTool()
 
         from chuk_tool_processor.core.exceptions import ToolValidationError
+
         with pytest.raises(ToolValidationError):
             await tool.execute(name="David", age="not_a_number")
 
@@ -66,6 +69,7 @@ class TestValidatedTool:
         tool = MockValidatedTool()
 
         from chuk_tool_processor.core.exceptions import ToolValidationError
+
         with pytest.raises(ToolValidationError):
             await tool.execute(name="Eve", age=150)
 
@@ -74,6 +78,7 @@ class TestValidatedTool:
         tool = MockValidatedTool()
 
         from chuk_tool_processor.core.exceptions import ToolValidationError
+
         with pytest.raises(ToolValidationError):
             await tool.execute(age=30)
 
@@ -112,6 +117,7 @@ class TestValidatedTool:
 
     async def test_simple_tool(self):
         """Test a simple tool without custom models."""
+
         class SimpleTool(ValidatedTool):
             class Arguments(BaseModel):
                 x: int
@@ -140,22 +146,17 @@ class TestValidatedTool:
                 summary: str
 
             async def _execute(self, items: list, mapping: dict, nested: dict) -> Result:
-                return self.Result(
-                    summary=f"Items: {len(items)}, Mapping: {len(mapping)}, Nested: {len(nested)}"
-                )
+                return self.Result(summary=f"Items: {len(items)}, Mapping: {len(mapping)}, Nested: {len(nested)}")
 
         tool = ComplexTool()
 
         # Valid complex parameters
-        result = await tool.execute(
-            items=["a", "b", "c"],
-            mapping={"x": 1, "y": 2},
-            nested={"deep": {"value": 42}}
-        )
+        result = await tool.execute(items=["a", "b", "c"], mapping={"x": 1, "y": 2}, nested={"deep": {"value": 42}})
         assert result.summary == "Items: 3, Mapping: 2, Nested: 1"
 
         # Invalid - empty items list
         from chuk_tool_processor.core.exceptions import ToolValidationError
+
         with pytest.raises(ToolValidationError):
             await tool.execute(items=[], mapping={})
 
@@ -174,6 +175,7 @@ class TestValidatedTool:
 
     async def test_result_conversion(self):
         """Test automatic result conversion."""
+
         class AutoConvertTool(ValidatedTool):
             class Arguments(BaseModel):
                 value: int

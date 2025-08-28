@@ -60,10 +60,11 @@ class TestHTTPStreamableTransport:
         mock_context = AsyncMock()
         mock_streams = (Mock(), Mock())  # (read_stream, write_stream)
 
-        with patch(
-            "chuk_tool_processor.mcp.transport.http_streamable_transport.http_client", return_value=mock_context
-        ), patch(
-            "chuk_tool_processor.mcp.transport.http_streamable_transport.send_ping", AsyncMock(return_value=True)
+        with (
+            patch("chuk_tool_processor.mcp.transport.http_streamable_transport.http_client", return_value=mock_context),
+            patch(
+                "chuk_tool_processor.mcp.transport.http_streamable_transport.send_ping", AsyncMock(return_value=True)
+            ),
         ):
             mock_context.__aenter__.return_value = mock_streams
 
@@ -85,10 +86,11 @@ class TestHTTPStreamableTransport:
         mock_context = AsyncMock()
         mock_streams = (Mock(), Mock())
 
-        with patch(
-            "chuk_tool_processor.mcp.transport.http_streamable_transport.http_client", return_value=mock_context
-        ), patch(
-            "chuk_tool_processor.mcp.transport.http_streamable_transport.send_ping", AsyncMock(return_value=False)
+        with (
+            patch("chuk_tool_processor.mcp.transport.http_streamable_transport.http_client", return_value=mock_context),
+            patch(
+                "chuk_tool_processor.mcp.transport.http_streamable_transport.send_ping", AsyncMock(return_value=False)
+            ),
         ):
             mock_context.__aenter__.return_value = mock_streams
 
@@ -425,20 +427,24 @@ class TestHTTPStreamableTransport:
     @pytest.mark.asyncio
     async def test_context_manager_success(self, transport):
         """Test using transport as context manager."""
-        with patch.object(transport, "initialize", AsyncMock(return_value=True)):
-            with patch.object(transport, "close", AsyncMock()):
-                async with transport as t:
-                    assert t is transport
-                transport.initialize.assert_called_once()
-                transport.close.assert_called_once()
+        with (
+            patch.object(transport, "initialize", AsyncMock(return_value=True)),
+            patch.object(transport, "close", AsyncMock()),
+        ):
+            async with transport as t:
+                assert t is transport
+            transport.initialize.assert_called_once()
+            transport.close.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_context_manager_init_failure(self, transport):
         """Test context manager when initialization fails."""
-        with patch.object(transport, "initialize", AsyncMock(return_value=False)):
-            with pytest.raises(RuntimeError, match="Failed to initialize HTTPStreamableTransport"):
-                async with transport:
-                    pass
+        with (
+            patch.object(transport, "initialize", AsyncMock(return_value=False)),
+            pytest.raises(RuntimeError, match="Failed to initialize HTTPStreamableTransport"),
+        ):
+            async with transport:
+                pass
 
     def test_repr_consistent_format(self, transport):
         """Test string representation follows consistent format."""

@@ -99,7 +99,7 @@ class ToolResult(BaseModel):
     def create_stream_chunk(cls, tool: str, result: Any, stream_id: str | None = None) -> ToolResult:
         """Create a partial streaming result."""
         stream_id = stream_id or str(uuid.uuid4())
-        return cls(tool=tool, result=result, stream_id=stream_id, is_partial=True)
+        return cls(tool=tool, result=result, error=None, stream_id=stream_id, is_partial=True)
 
     @classmethod
     async def from_dict(cls, data: dict[str, Any]) -> ToolResult:

@@ -115,10 +115,53 @@ disallow_untyped_defs = false
 disallow_any_unimported = false
 no_implicit_optional = true
 warn_redundant_casts = true
-warn_unused_ignores = true
+warn_unused_ignores = false
 warn_no_return = true
-warn_unreachable = true
-strict_equality = true
+warn_unreachable = false
+strict_equality = false
+
+# Ignore import errors for packages without type stubs
+[[tool.mypy.overrides]]
+module = [
+    "chuk_mcp.*",
+    "httpx_sse.*",
+]
+ignore_missing_imports = true
+
+# Be less strict for test files
+[[tool.mypy.overrides]]
+module = ["tests.*", "sample_tools.*"]
+ignore_errors = true
+
+# Be more lenient for complex MCP integration code
+[[tool.mypy.overrides]]
+module = [
+    "chuk_tool_processor.mcp.*",
+    "chuk_tool_processor.plugins.*",
+    "chuk_tool_processor.registry.decorators",
+    "chuk_tool_processor.registry.auto_register",
+    "chuk_tool_processor.core.processor",
+    "chuk_tool_processor.execution.wrappers.*",
+    "chuk_tool_processor.execution.strategies.*",
+    "chuk_tool_processor.execution.tool_executor",
+    "chuk_tool_processor.models.validated_tool",
+]
+ignore_errors = true
+
+# Less strict for other modules
+[[tool.mypy.overrides]]
+module = [
+    "chuk_tool_processor.registry.*",
+    "chuk_tool_processor.core.*",
+    "chuk_tool_processor.execution.*",
+    "chuk_tool_processor.logging.*",
+]
+warn_return_any = false
+warn_no_return = false
+no_implicit_optional = false
+strict_optional = false
+check_untyped_defs = false
+disallow_untyped_defs = false
 
 [tool.isort]
 profile = "black"

@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from chuk_tool_processor.models.streaming_tool import StreamingTool
 
@@ -88,7 +88,7 @@ class TestStreamingToolProper:
         tool = ValidatedStreamingTool()
 
         # Should validate arguments
-        with pytest.raises(Exception):  # ValidationError from pydantic
+        with pytest.raises(ValidationError):
             # Missing required_field
             async for _ in tool.stream_execute(value=42):
                 pass
@@ -132,7 +132,7 @@ class TestStreamingToolProper:
                 yield "test"
 
         assert MyStreamingTool.supports_streaming is True
-        assert hasattr(MyStreamingTool, 'model_config')
+        assert hasattr(MyStreamingTool, "model_config")
 
     async def test_streaming_tool_with_complex_types(self):
         """Test streaming tool with complex argument and result types."""
@@ -150,25 +150,16 @@ class TestStreamingToolProper:
                 count: int
 
             async def _stream_execute(
-                self,
-                items: list[str],
-                config: dict[str, int],
-                optional: str
+                self, items: list[str], config: dict[str, int], optional: str
             ) -> AsyncIterator[Result]:
                 """Stream complex results."""
                 for i, item in enumerate(items):
-                    yield self.Result(
-                        processed={"item": item, "config": config, "opt": optional},
-                        count=i
-                    )
+                    yield self.Result(processed={"item": item, "config": config, "opt": optional}, count=i)
 
         tool = ComplexStreamingTool()
 
         results = []
-        async for result in tool.stream_execute(
-            items=["a", "b"],
-            config={"key": 1}
-        ):
+        async for result in tool.stream_execute(items=["a", "b"], config={"key": 1}):
             results.append(result)
 
         assert len(results) == 2

@@ -102,10 +102,10 @@ class TestToolExportMixinProper:
         xml = XmlTool.to_xml()
 
         assert '<tool name="xml"' in xml
-        assert 'args=' in xml
-        assert 'arg1' in xml
-        assert 'arg2' in xml
-        assert 'arg3' in xml
+        assert "args=" in xml
+        assert "arg1" in xml
+        assert "arg2" in xml
+        assert "arg3" in xml
 
     def test_complex_arguments_schema(self):
         """Test export with complex argument types."""

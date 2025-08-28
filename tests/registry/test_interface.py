@@ -114,8 +114,7 @@ async def test_runtime_checkable():
     assert any(
         [
             hasattr(ToolRegistryInterface, "__runtime_checkable__"),
-            hasattr(ToolRegistryInterface, "_is_runtime_checkable")
-            and ToolRegistryInterface._is_runtime_checkable,
+            hasattr(ToolRegistryInterface, "_is_runtime_checkable") and ToolRegistryInterface._is_runtime_checkable,
             hasattr(ToolRegistryInterface, "_is_protocol") and ToolRegistryInterface._is_protocol,
         ]
     ), "ToolRegistryInterface should be marked with @runtime_checkable"

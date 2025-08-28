@@ -27,10 +27,7 @@ class TestOpenAIToolPlugin:
                 {
                     "id": "call_123",
                     "type": "function",
-                    "function": {
-                        "name": "weather",
-                        "arguments": '{"location": "New York", "units": "celsius"}'
-                    }
+                    "function": {"name": "weather", "arguments": '{"location": "New York", "units": "celsius"}'},
                 }
             ]
         }
@@ -47,22 +44,8 @@ class TestOpenAIToolPlugin:
         """Test parsing multiple tool calls."""
         data = {
             "tool_calls": [
-                {
-                    "id": "call_1",
-                    "type": "function",
-                    "function": {
-                        "name": "tool1",
-                        "arguments": '{"arg": "val1"}'
-                    }
-                },
-                {
-                    "id": "call_2",
-                    "type": "function",
-                    "function": {
-                        "name": "tool2",
-                        "arguments": '{"arg": "val2"}'
-                    }
-                }
+                {"id": "call_1", "type": "function", "function": {"name": "tool1", "arguments": '{"arg": "val1"}'}},
+                {"id": "call_2", "type": "function", "function": {"name": "tool2", "arguments": '{"arg": "val2"}'}},
             ]
         }
 
@@ -78,18 +61,17 @@ class TestOpenAIToolPlugin:
 
     async def test_parse_json_string(self, parser):
         """Test parsing from JSON string."""
-        data = json.dumps({
-            "tool_calls": [
-                {
-                    "id": "call_abc",
-                    "type": "function",
-                    "function": {
-                        "name": "calculator",
-                        "arguments": '{"x": 5, "y": 10}'
+        data = json.dumps(
+            {
+                "tool_calls": [
+                    {
+                        "id": "call_abc",
+                        "type": "function",
+                        "function": {"name": "calculator", "arguments": '{"x": 5, "y": 10}'},
                     }
-                }
-            ]
-        })
+                ]
+            }
+        )
 
         calls = await parser.try_parse(data)
 
@@ -130,8 +112,8 @@ class TestOpenAIToolPlugin:
                     "type": "function",
                     "function": {
                         "name": "search",
-                        "arguments": {"query": "test", "limit": 10}  # Dict, not string
-                    }
+                        "arguments": {"query": "test", "limit": 10},  # Dict, not string
+                    },
                 }
             ]
         }
@@ -146,14 +128,7 @@ class TestOpenAIToolPlugin:
         """Test parsing with empty arguments."""
         data = {
             "tool_calls": [
-                {
-                    "id": "call_789",
-                    "type": "function",
-                    "function": {
-                        "name": "simple_tool",
-                        "arguments": "{}"
-                    }
-                }
+                {"id": "call_789", "type": "function", "function": {"name": "simple_tool", "arguments": "{}"}}
             ]
         }
 
@@ -167,14 +142,7 @@ class TestOpenAIToolPlugin:
         """Test parsing with invalid JSON in arguments."""
         data = {
             "tool_calls": [
-                {
-                    "id": "call_bad",
-                    "type": "function",
-                    "function": {
-                        "name": "bad_tool",
-                        "arguments": "not valid json"
-                    }
-                }
+                {"id": "call_bad", "type": "function", "function": {"name": "bad_tool", "arguments": "not valid json"}}
             ]
         }
 
@@ -188,15 +156,7 @@ class TestOpenAIToolPlugin:
     async def test_parse_missing_function_name(self, parser):
         """Test handling missing function name."""
         data = {
-            "tool_calls": [
-                {
-                    "id": "call_noname",
-                    "type": "function",
-                    "function": {
-                        "arguments": '{"arg": "value"}'
-                    }
-                }
-            ]
+            "tool_calls": [{"id": "call_noname", "type": "function", "function": {"arguments": '{"arg": "value"}'}}]
         }
 
         calls = await parser.try_parse(data)
@@ -210,7 +170,7 @@ class TestOpenAIToolPlugin:
             "tool_calls": [
                 {
                     "id": "call_nofunc",
-                    "type": "function"
+                    "type": "function",
                     # Missing "function" field
                 }
             ]
@@ -240,11 +200,8 @@ class TestOpenAIToolPlugin:
                 {  # Valid one
                     "id": "call_good",
                     "type": "function",
-                    "function": {
-                        "name": "good_tool",
-                        "arguments": "{}"
-                    }
-                }
+                    "function": {"name": "good_tool", "arguments": "{}"},
+                },
             ]
         }
 
@@ -262,14 +219,10 @@ class TestOpenAIToolPlugin:
                     "id": "call_extra",
                     "type": "function",
                     "extra_field": "ignored",
-                    "function": {
-                        "name": "test_tool",
-                        "arguments": "{}",
-                        "extra_func_field": "also_ignored"
-                    }
+                    "function": {"name": "test_tool", "arguments": "{}", "extra_func_field": "also_ignored"},
                 }
             ],
-            "other_field": "not_relevant"
+            "other_field": "not_relevant",
         }
 
         calls = await parser.try_parse(data)
@@ -279,26 +232,14 @@ class TestOpenAIToolPlugin:
 
     async def test_parse_complex_arguments(self, parser):
         """Test parsing complex nested arguments."""
-        args = {
-            "nested": {
-                "deep": {
-                    "value": 42
-                }
-            },
-            "list": [1, 2, 3],
-            "bool": True,
-            "null": None
-        }
+        args = {"nested": {"deep": {"value": 42}}, "list": [1, 2, 3], "bool": True, "null": None}
 
         data = {
             "tool_calls": [
                 {
                     "id": "call_complex",
                     "type": "function",
-                    "function": {
-                        "name": "complex_tool",
-                        "arguments": json.dumps(args)
-                    }
+                    "function": {"name": "complex_tool", "arguments": json.dumps(args)},
                 }
             ]
         }
@@ -315,10 +256,7 @@ class TestOpenAIToolPlugin:
                 {
                     "id": "call_unicode",
                     "type": "function",
-                    "function": {
-                        "name": "translate",
-                        "arguments": '{"text": "Hello 世界 🌍"}'
-                    }
+                    "function": {"name": "translate", "arguments": '{"text": "Hello 世界 🌍"}'},
                 }
             ]
         }
@@ -330,9 +268,7 @@ class TestOpenAIToolPlugin:
 
     async def test_parse_tool_calls_not_list(self, parser):
         """Test handling tool_calls that isn't a list."""
-        data = {
-            "tool_calls": "not a list"
-        }
+        data = {"tool_calls": "not a list"}
 
         # This will fail during parsing - test that it's handled
         calls = await parser.try_parse(data)
@@ -345,6 +281,7 @@ class TestOpenAIToolPlugin:
 
         # Check if has proper base class
         from chuk_tool_processor.plugins.parsers.base import ParserPlugin
+
         assert isinstance(plugin, ParserPlugin)
 
         # Check if PluginMeta exists

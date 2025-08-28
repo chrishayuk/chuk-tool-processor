@@ -177,7 +177,7 @@ class MCPTool:
         """Simple execution without resilience features."""
         effective_timeout = timeout if timeout is not None else self.default_timeout
 
-        call_kwargs = {
+        call_kwargs: dict[str, Any] = {
             "tool_name": self.tool_name,
             "arguments": kwargs,
         }
@@ -185,7 +185,7 @@ class MCPTool:
             call_kwargs["timeout"] = effective_timeout
 
         try:
-            result = await self._sm.call_tool(**call_kwargs)
+            result = await self._sm.call_tool(**call_kwargs)  # type: ignore[union-attr]
         except TimeoutError:
             logger.warning(f"MCP tool '{self.tool_name}' timed out after {effective_timeout}s")
             raise
@@ -270,7 +270,7 @@ class MCPTool:
 
     async def _execute_with_timeout(self, timeout: float, **kwargs: Any) -> Any:
         """Execute the tool with timeout."""
-        call_kwargs = {
+        call_kwargs: dict[str, Any] = {
             "tool_name": self.tool_name,
             "arguments": kwargs,
         }
@@ -279,7 +279,8 @@ class MCPTool:
 
         try:
             result = await asyncio.wait_for(
-                self._sm.call_tool(**call_kwargs), timeout=(timeout + 5.0) if timeout else None
+                self._sm.call_tool(**call_kwargs),  # type: ignore[union-attr]
+                timeout=(timeout + 5.0) if timeout else None,
             )
 
             if result.get("isError"):
@@ -322,7 +323,9 @@ class MCPTool:
                 return True
 
             # Fallback - try very quick operation with short timeout
-            server_info = await asyncio.wait_for(self._sm.get_server_info(), timeout=1.0)
+            server_info: list[dict[str, Any]] = await asyncio.wait_for(  # type: ignore[arg-type]
+                self._sm.get_server_info(), timeout=1.0
+            )
             healthy = len(server_info) > 0
             logger.debug(f"StreamManager health for '{self.tool_name}': {healthy} (via server_info)")
             return healthy

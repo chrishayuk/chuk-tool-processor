@@ -14,6 +14,7 @@ class TestValidation:
 
     def test_validate_arguments_basic(self):
         """Test basic argument validation."""
+
         def sample_func(x: int, y: str) -> None:
             pass
 
@@ -27,6 +28,7 @@ class TestValidation:
 
     def test_validate_arguments_invalid_type(self):
         """Test argument validation with invalid types."""
+
         def sample_func(x: int, y: str) -> None:
             pass
 
@@ -38,6 +40,7 @@ class TestValidation:
 
     def test_validate_arguments_missing_required(self):
         """Test validation with missing required arguments."""
+
         def sample_func(x: int, y: str) -> None:
             pass
 
@@ -48,6 +51,7 @@ class TestValidation:
 
     def test_validate_arguments_with_defaults(self):
         """Test validation with default arguments."""
+
         def sample_func(x: int, y: str = "default") -> None:
             pass
 
@@ -61,6 +65,7 @@ class TestValidation:
 
     def test_validate_arguments_optional_types(self):
         """Test validation with Optional types."""
+
         def sample_func(x: int, y: str | None = None) -> None:
             pass
 
@@ -74,6 +79,7 @@ class TestValidation:
 
     def test_validate_arguments_extra_fields(self):
         """Test that extra fields are rejected."""
+
         def sample_func(x: int) -> None:
             pass
 
@@ -85,6 +91,7 @@ class TestValidation:
 
     def test_validate_result_basic(self):
         """Test basic result validation."""
+
         def sample_func(x: int) -> int:
             return x * 2
 
@@ -98,6 +105,7 @@ class TestValidation:
 
     def test_validate_result_invalid_type(self):
         """Test result validation with invalid type."""
+
         def sample_func(x: int) -> int:
             return x * 2
 
@@ -109,6 +117,7 @@ class TestValidation:
 
     def test_validate_result_no_annotation(self):
         """Test result validation when no return type is annotated."""
+
         def sample_func(x: int):
             return x * 2
 
@@ -118,6 +127,7 @@ class TestValidation:
 
     def test_validate_result_none_return(self):
         """Test result validation with None return type."""
+
         def sample_func(x: int) -> None:
             pass
 
@@ -128,6 +138,7 @@ class TestValidation:
     def test_with_validation_decorator_sync_error(self):
         """Test that decorator requires async methods."""
         with pytest.raises(TypeError, match="must have an async"):
+
             @with_validation
             class SyncTool:
                 def execute(self, x: int) -> int:
@@ -135,6 +146,7 @@ class TestValidation:
 
     async def test_with_validation_decorator_execute(self):
         """Test with_validation decorator on execute method."""
+
         @with_validation
         class ValidatedTool:
             async def execute(self, x: int, y: str = "default") -> int:
@@ -156,6 +168,7 @@ class TestValidation:
 
     async def test_with_validation_decorator_private_execute(self):
         """Test with_validation decorator on _execute method."""
+
         @with_validation
         class ValidatedTool:
             async def _execute(self, x: int, y: int) -> int:
@@ -178,23 +191,16 @@ class TestValidation:
             return mapping
 
         # Valid complex arguments
-        validated = validate_arguments(
-            "TestTool",
-            sample_func,
-            {"items": ["a", "b"], "mapping": {"x": 1}}
-        )
+        validated = validate_arguments("TestTool", sample_func, {"items": ["a", "b"], "mapping": {"x": 1}})
         assert validated == {"items": ["a", "b"], "mapping": {"x": 1}}
 
         # Type coercion for lists
-        validated = validate_arguments(
-            "TestTool",
-            sample_func,
-            {"items": ["a", "b"], "mapping": {"x": "1"}}
-        )
+        validated = validate_arguments("TestTool", sample_func, {"items": ["a", "b"], "mapping": {"x": "1"}})
         assert validated["mapping"]["x"] == 1
 
     def test_validate_arguments_no_hints(self):
         """Test validation with function that has no type hints."""
+
         def sample_func(x, y):
             pass
 

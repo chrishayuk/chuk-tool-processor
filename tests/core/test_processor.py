@@ -28,13 +28,7 @@ def mock_registry():
 def mock_strategy():
     """Create a mock execution strategy."""
     strategy = AsyncMock()
-    strategy.execute = AsyncMock(
-        return_value=[
-            ToolResult(
-                tool="test_tool", result="test result", machine="test"
-            )
-        ]
-    )
+    strategy.execute = AsyncMock(return_value=[ToolResult(tool="test_tool", result="test result", machine="test")])
     return strategy
 
 
@@ -92,17 +86,7 @@ class TestToolProcessor:
 
     async def test_process_json_dict(self, processor):
         """Test processing JSON dict with tool_calls."""
-        data = {
-            "tool_calls": [
-                {
-                    "id": "call_1",
-                    "function": {
-                        "name": "test_tool",
-                        "arguments": '{"key": "value"}'
-                    }
-                }
-            ]
-        }
+        data = {"tool_calls": [{"id": "call_1", "function": {"name": "test_tool", "arguments": '{"key": "value"}'}}]}
 
         results = await processor.process(data)
 
@@ -111,10 +95,7 @@ class TestToolProcessor:
 
     async def test_process_single_tool_dict(self, processor):
         """Test processing single tool dict."""
-        data = {
-            "tool": "test_tool",
-            "arguments": {"key": "value"}
-        }
+        data = {"tool": "test_tool", "arguments": {"key": "value"}}
 
         results = await processor.process(data)
 
@@ -250,9 +231,7 @@ class TestToolProcessor:
             mock_plugin_registry.list_plugins.return_value = {"parser": ["json_tool", "xml_tool"]}
             mock_plugin_registry.get_plugin.return_value = Mock()
 
-            processor = ToolProcessor(
-                registry=mock_registry, strategy=mock_strategy, parser_plugins=["json_tool"]
-            )
+            processor = ToolProcessor(registry=mock_registry, strategy=mock_strategy, parser_plugins=["json_tool"])
             await processor.initialize()
 
             # Verify parser plugins were loaded
@@ -318,10 +297,7 @@ class TestToolProcessor:
             "tool_calls": [
                 {
                     "id": "call_1",  # Add required id field
-                    "function": {
-                        "name": "test_tool",
-                        "arguments": "invalid json"
-                    }
+                    "function": {"name": "test_tool", "arguments": "invalid json"},
                 }
             ]
         }

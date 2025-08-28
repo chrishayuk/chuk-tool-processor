@@ -124,7 +124,7 @@ class SafeCrashTool:
 
             ctypes.string_at(0)  # This will cause a segfault in many environments
             return "This should not return"
-        except:
+        except Exception:
             # In case it doesn't crash, raise an explicit exception
             raise RuntimeError("Simulated crash")
 

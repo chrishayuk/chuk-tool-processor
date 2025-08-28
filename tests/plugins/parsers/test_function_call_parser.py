@@ -22,12 +22,7 @@ class TestFunctionCallPlugin:
 
     async def test_parse_simple_function_call(self, parser):
         """Test parsing simple function_call object."""
-        data = {
-            "function_call": {
-                "name": "weather",
-                "arguments": '{"location": "Paris", "units": "metric"}'
-            }
-        }
+        data = {"function_call": {"name": "weather", "arguments": '{"location": "Paris", "units": "metric"}'}}
 
         calls = await parser.try_parse(data)
 
@@ -37,12 +32,7 @@ class TestFunctionCallPlugin:
 
     async def test_parse_json_string(self, parser):
         """Test parsing from JSON string."""
-        data = json.dumps({
-            "function_call": {
-                "name": "calculator",
-                "arguments": '{"x": 10, "y": 20, "op": "add"}'
-            }
-        })
+        data = json.dumps({"function_call": {"name": "calculator", "arguments": '{"x": 10, "y": 20, "op": "add"}'}})
 
         calls = await parser.try_parse(data)
 
@@ -67,7 +57,7 @@ class TestFunctionCallPlugin:
         data = {
             "function_call": {
                 "name": "tool",
-                "arguments": {"key": "value", "num": 42}  # Dict, not string
+                "arguments": {"key": "value", "num": 42},  # Dict, not string
             }
         }
 
@@ -79,12 +69,7 @@ class TestFunctionCallPlugin:
 
     async def test_parse_empty_arguments(self, parser):
         """Test parsing with empty arguments."""
-        data = {
-            "function_call": {
-                "name": "simple_tool",
-                "arguments": "{}"
-            }
-        }
+        data = {"function_call": {"name": "simple_tool", "arguments": "{}"}}
 
         calls = await parser.try_parse(data)
 
@@ -132,12 +117,7 @@ class TestFunctionCallPlugin:
 
     async def test_parse_invalid_json_arguments(self, parser):
         """Test parsing invalid JSON in arguments."""
-        data = {
-            "function_call": {
-                "name": "bad_tool",
-                "arguments": "not valid json"
-            }
-        }
+        data = {"function_call": {"name": "bad_tool", "arguments": "not valid json"}}
 
         calls = await parser.try_parse(data)
 
@@ -149,23 +129,13 @@ class TestFunctionCallPlugin:
     async def test_parse_complex_arguments(self, parser):
         """Test parsing complex nested arguments."""
         args = {
-            "nested": {
-                "deep": {
-                    "value": 100,
-                    "list": [1, 2, 3]
-                }
-            },
+            "nested": {"deep": {"value": 100, "list": [1, 2, 3]}},
             "array": ["a", "b", "c"],
             "boolean": False,
-            "null_val": None
+            "null_val": None,
         }
 
-        data = {
-            "function_call": {
-                "name": "complex_tool",
-                "arguments": json.dumps(args)
-            }
-        }
+        data = {"function_call": {"name": "complex_tool", "arguments": json.dumps(args)}}
 
         calls = await parser.try_parse(data)
 
@@ -195,12 +165,7 @@ class TestFunctionCallPlugin:
 
     async def test_parse_unicode_in_arguments(self, parser):
         """Test parsing Unicode in arguments."""
-        data = {
-            "function_call": {
-                "name": "translate",
-                "arguments": '{"text": "Hello 世界 🌍", "emoji": "😊"}'
-            }
-        }
+        data = {"function_call": {"name": "translate", "arguments": '{"text": "Hello 世界 🌍", "emoji": "😊"}'}}
 
         calls = await parser.try_parse(data)
 
@@ -210,12 +175,7 @@ class TestFunctionCallPlugin:
 
     async def test_parse_escaped_quotes_in_arguments(self, parser):
         """Test parsing escaped quotes in arguments."""
-        data = {
-            "function_call": {
-                "name": "echo",
-                "arguments": '{"message": "He said \\"Hello\\" to me"}'
-            }
-        }
+        data = {"function_call": {"name": "echo", "arguments": '{"message": "He said \\"Hello\\" to me"}'}}
 
         calls = await parser.try_parse(data)
 
@@ -240,9 +200,7 @@ class TestFunctionCallPlugin:
 
     async def test_parse_function_call_not_dict(self, parser):
         """Test handling function_call that isn't a dict."""
-        data = {
-            "function_call": "not a dict"
-        }
+        data = {"function_call": "not a dict"}
 
         calls = await parser.try_parse(data)
 
@@ -251,12 +209,8 @@ class TestFunctionCallPlugin:
     async def test_parse_with_extra_fields(self, parser):
         """Test parsing with extra fields (should ignore them)."""
         data = {
-            "function_call": {
-                "name": "test_tool",
-                "arguments": "{}",
-                "extra_field": "ignored"
-            },
-            "other_field": "also_ignored"
+            "function_call": {"name": "test_tool", "arguments": "{}", "extra_field": "ignored"},
+            "other_field": "also_ignored",
         }
 
         calls = await parser.try_parse(data)
@@ -288,6 +242,7 @@ class TestFunctionCallPlugin:
 
         # Check proper base class
         from chuk_tool_processor.plugins.parsers.base import ParserPlugin
+
         assert isinstance(plugin, ParserPlugin)
 
         # Check PluginMeta
@@ -295,17 +250,9 @@ class TestFunctionCallPlugin:
 
     async def test_parse_newlines_in_arguments(self, parser):
         """Test parsing arguments with newlines."""
-        args_with_newlines = {
-            "multiline": "line1\nline2\nline3",
-            "formatted": "{\n  \"nested\": true\n}"
-        }
+        args_with_newlines = {"multiline": "line1\nline2\nline3", "formatted": '{\n  "nested": true\n}'}
 
-        data = {
-            "function_call": {
-                "name": "multiline_tool",
-                "arguments": json.dumps(args_with_newlines)
-            }
-        }
+        data = {"function_call": {"name": "multiline_tool", "arguments": json.dumps(args_with_newlines)}}
 
         calls = await parser.try_parse(data)
 

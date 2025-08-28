@@ -48,21 +48,21 @@ class TestStdioTransport:
         mock_context = AsyncMock()
         mock_streams = (Mock(), Mock())  # (read_stream, write_stream)
 
-        with patch("chuk_tool_processor.mcp.transport.stdio_transport.stdio_client", return_value=mock_context):
-            with patch(
-                "chuk_tool_processor.mcp.transport.stdio_transport.send_initialize", AsyncMock(return_value=True)
-            ):
-                mock_context.__aenter__.return_value = mock_streams
+        with (
+            patch("chuk_tool_processor.mcp.transport.stdio_transport.stdio_client", return_value=mock_context),
+            patch("chuk_tool_processor.mcp.transport.stdio_transport.send_initialize", AsyncMock(return_value=True)),
+        ):
+            mock_context.__aenter__.return_value = mock_streams
 
-                result = await transport.initialize()
+            result = await transport.initialize()
 
-                assert result is True
-                assert transport._initialized is True
-                assert transport._streams == mock_streams
+            assert result is True
+            assert transport._initialized is True
+            assert transport._streams == mock_streams
 
-                # Check metrics were updated
-                metrics = transport.get_metrics()
-                assert metrics["initialization_time"] > 0
+            # Check metrics were updated
+            metrics = transport.get_metrics()
+            assert metrics["initialization_time"] > 0
 
     @pytest.mark.asyncio
     async def test_initialize_timeout(self, transport):
@@ -84,16 +84,16 @@ class TestStdioTransport:
         mock_context = AsyncMock()
         mock_streams = (Mock(), Mock())
 
-        with patch("chuk_tool_processor.mcp.transport.stdio_transport.stdio_client", return_value=mock_context):
-            with patch(
-                "chuk_tool_processor.mcp.transport.stdio_transport.send_initialize", AsyncMock(return_value=False)
-            ):
-                mock_context.__aenter__.return_value = mock_streams
+        with (
+            patch("chuk_tool_processor.mcp.transport.stdio_transport.stdio_client", return_value=mock_context),
+            patch("chuk_tool_processor.mcp.transport.stdio_transport.send_initialize", AsyncMock(return_value=False)),
+        ):
+            mock_context.__aenter__.return_value = mock_streams
 
-                result = await transport.initialize()
+            result = await transport.initialize()
 
-                assert result is False
-                assert transport._initialized is False
+            assert result is False
+            assert transport._initialized is False
 
     @pytest.mark.asyncio
     async def test_send_ping_success(self, transport):
@@ -449,20 +449,24 @@ class TestStdioTransport:
     @pytest.mark.asyncio
     async def test_context_manager_success(self, transport):
         """Test using transport as context manager."""
-        with patch.object(transport, "initialize", AsyncMock(return_value=True)):
-            with patch.object(transport, "close", AsyncMock()):
-                async with transport as t:
-                    assert t is transport
-                transport.initialize.assert_called_once()
-                transport.close.assert_called_once()
+        with (
+            patch.object(transport, "initialize", AsyncMock(return_value=True)),
+            patch.object(transport, "close", AsyncMock()),
+        ):
+            async with transport as t:
+                assert t is transport
+            transport.initialize.assert_called_once()
+            transport.close.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_context_manager_init_failure(self, transport):
         """Test context manager when initialization fails."""
-        with patch.object(transport, "initialize", AsyncMock(return_value=False)):
-            with pytest.raises(RuntimeError, match="Failed to initialize StdioTransport"):
-                async with transport:
-                    pass
+        with (
+            patch.object(transport, "initialize", AsyncMock(return_value=False)),
+            pytest.raises(RuntimeError, match="Failed to initialize StdioTransport"),
+        ):
+            async with transport:
+                pass
 
     def test_repr_consistent_format(self, transport):
         """Test string representation follows consistent format - FIXED."""

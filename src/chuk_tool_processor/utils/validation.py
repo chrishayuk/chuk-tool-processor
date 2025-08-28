@@ -16,7 +16,7 @@ from collections.abc import Callable
 from functools import lru_cache, wraps
 from typing import Any, get_type_hints
 
-from pydantic import BaseModel, Extra, ValidationError, create_model
+from pydantic import BaseModel, ConfigDict, ValidationError, create_model
 
 # exception
 from chuk_tool_processor.core.exceptions import ToolValidationError
@@ -45,13 +45,9 @@ def _arg_model(tool_name: str, fn: Callable) -> type[BaseModel]:
         default = param.default if param.default is not inspect.Parameter.empty else ...
         fields[name] = (hint, default)
 
-    return create_model(
+    return create_model(  # type: ignore[call-overload, no-any-return]
         f"{tool_name}Args",
-        __config__=type(
-            "Cfg",
-            (),
-            {"extra": Extra.forbid},  # disallow unknown keys
-        ),
+        __config__=ConfigDict(extra="forbid"),  # disallow unknown keys
         **fields,
     )
 
@@ -80,7 +76,7 @@ def validate_arguments(tool_name: str, fn: Callable, args: dict[str, Any]) -> di
         model = _arg_model(tool_name, fn)
         return model(**args).model_dump()
     except ValidationError as exc:
-        raise ToolValidationError(tool_name, exc.errors()) from exc
+        raise ToolValidationError(tool_name, {"errors": exc.errors()}) from exc
 
 
 def validate_result(tool_name: str, fn: Callable, result: Any) -> Any:
@@ -89,9 +85,9 @@ def validate_result(tool_name: str, fn: Callable, result: Any) -> Any:
     if model is None:  # no annotation ⇒ no validation
         return result
     try:
-        return model(result=result).result
+        return model(result=result).result  # type: ignore[attr-defined]
     except ValidationError as exc:
-        raise ToolValidationError(tool_name, exc.errors()) from exc
+        raise ToolValidationError(tool_name, {"errors": exc.errors()}) from exc
 
 
 # --------------------------------------------------------------------------- #

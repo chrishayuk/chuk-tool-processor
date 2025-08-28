@@ -6,13 +6,14 @@ StreamManager for CHUK Tool Processor - Enhanced with robust shutdown handling a
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from contextlib import asynccontextmanager
 from typing import Any
 
 # --------------------------------------------------------------------------- #
 #  CHUK imports                                                               #
 # --------------------------------------------------------------------------- #
-from chuk_mcp.config import load_config
+from chuk_mcp.config import load_config  # type: ignore[import-untyped]
 
 from chuk_tool_processor.logging import get_logger
 from chuk_tool_processor.mcp.transport import (
@@ -631,12 +632,10 @@ class StreamManager:
                         close_results.append((name, False, "timeout"))
 
                 # Brief wait for cancellations to complete
-                try:
+                with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(
                         asyncio.gather(*[task for _, task in close_tasks], return_exceptions=True), timeout=0.5
                     )
-                except TimeoutError:
-                    pass  # Some tasks may not cancel cleanly
 
     async def _sequential_close(self, transport_items: list[tuple[str, MCPBaseTransport]], close_results: list) -> None:
         """Close transports one by one as fallback."""

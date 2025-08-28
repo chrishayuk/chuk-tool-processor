@@ -89,12 +89,7 @@ class TestXmlToolPlugin:
 
     async def test_parse_complex_arguments(self, parser):
         """Test parsing complex nested arguments."""
-        args_dict = {
-            "list": [1, 2, 3],
-            "nested": {"key": "value"},
-            "bool": True,
-            "null": None
-        }
+        args_dict = {"list": [1, 2, 3], "nested": {"key": "value"}, "bool": True, "null": None}
         args_json = json.dumps(args_dict).replace('"', '\\"')
         text = f'<tool name="complex" args="{args_json}"/>'
 
@@ -162,6 +157,7 @@ class TestXmlToolPlugin:
         """Test Unicode characters in arguments."""
         # Use properly escaped JSON for the args attribute
         import json
+
         args_dict = {"text": "Hello 世界 🌍"}
         args_json = json.dumps(args_dict)
         # Double escape for XML attribute
@@ -180,7 +176,7 @@ class TestXmlToolPlugin:
         """Test parsing args that span multiple lines."""
         args = """{"key1": "value1",
                    "key2": "value2"}"""
-        escaped_args = args.replace('"', '\\"').replace('\n', '\\n')
+        escaped_args = args.replace('"', '\\"').replace("\n", "\\n")
         text = f'<tool name="multiline" args="{escaped_args}"/>'
 
         calls = await parser.try_parse(text)
@@ -209,6 +205,7 @@ class TestXmlToolPlugin:
 
         # Should be a ParserPlugin
         from chuk_tool_processor.plugins.parsers.base import ParserPlugin
+
         assert isinstance(plugin, ParserPlugin)
 
     async def test_regex_pattern(self, parser):

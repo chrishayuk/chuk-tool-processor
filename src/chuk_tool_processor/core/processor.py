@@ -184,7 +184,7 @@ class ToolProcessor:
         self,
         data: str | dict[str, Any] | list[dict[str, Any]],
         timeout: float | None = None,
-        use_cache: bool = True,
+        use_cache: bool = True,  # noqa: ARG002
         request_id: str | None = None,
     ) -> list[ToolResult]:
         """

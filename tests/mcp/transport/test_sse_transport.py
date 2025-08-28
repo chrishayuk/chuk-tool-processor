@@ -73,21 +73,23 @@ class TestSSETransport:
                     return {"jsonrpc": "2.0", "id": "init-id", "result": {"protocolVersion": "2024-11-05"}}
                 return {"result": {}}
 
-            with patch.object(transport, "_send_request", side_effect=mock_send_request):
-                with patch.object(transport, "_send_notification", AsyncMock()):
-                    result = await transport.initialize()
-                    # Give the background task time to extract session
-                    await asyncio.sleep(0.2)
+            with (
+                patch.object(transport, "_send_request", side_effect=mock_send_request),
+                patch.object(transport, "_send_notification", AsyncMock()),
+            ):
+                result = await transport.initialize()
+                # Give the background task time to extract session
+                await asyncio.sleep(0.2)
 
-                    assert result is True
-                    assert transport._initialized is True
-                    assert transport.session_id == "test-session-123"
-                    assert transport.message_url == "http://test.com/messages/session?session_id=test-session-123"
+                assert result is True
+                assert transport._initialized is True
+                assert transport.session_id == "test-session-123"
+                assert transport.message_url == "http://test.com/messages/session?session_id=test-session-123"
 
-                    # Check metrics were updated
-                    metrics = transport.get_metrics()
-                    assert metrics["initialization_time"] > 0
-                    assert metrics["session_discoveries"] == 1
+                # Check metrics were updated
+                metrics = transport.get_metrics()
+                assert metrics["initialization_time"] > 0
+                assert metrics["session_discoveries"] == 1
 
     @pytest.mark.asyncio
     async def test_initialize_sse_connection_failure(self, transport):
@@ -491,20 +493,24 @@ class TestSSETransport:
     @pytest.mark.asyncio
     async def test_context_manager_success(self, transport):
         """Test using transport as context manager."""
-        with patch.object(transport, "initialize", AsyncMock(return_value=True)):
-            with patch.object(transport, "close", AsyncMock()):
-                async with transport as t:
-                    assert t is transport
-                transport.initialize.assert_called_once()
-                transport.close.assert_called_once()
+        with (
+            patch.object(transport, "initialize", AsyncMock(return_value=True)),
+            patch.object(transport, "close", AsyncMock()),
+        ):
+            async with transport as t:
+                assert t is transport
+            transport.initialize.assert_called_once()
+            transport.close.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_context_manager_init_failure(self, transport):
         """Test context manager when initialization fails."""
-        with patch.object(transport, "initialize", AsyncMock(return_value=False)):
-            with pytest.raises(RuntimeError, match="Failed to initialize SSETransport"):
-                async with transport:
-                    pass
+        with (
+            patch.object(transport, "initialize", AsyncMock(return_value=False)),
+            pytest.raises(RuntimeError, match="Failed to initialize SSETransport"),
+        ):
+            async with transport:
+                pass
 
     def test_repr_consistent_format(self, transport):
         """Test string representation follows consistent format."""

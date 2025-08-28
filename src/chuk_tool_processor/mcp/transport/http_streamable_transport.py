@@ -6,7 +6,7 @@ import logging
 import time
 from typing import Any
 
-from chuk_mcp.protocol.messages import (
+from chuk_mcp.protocol.messages import (  # type: ignore[import-untyped]
     send_initialize,
     send_ping,
     send_prompts_get,
@@ -18,8 +18,8 @@ from chuk_mcp.protocol.messages import (
 )
 
 # Import chuk-mcp HTTP transport components
-from chuk_mcp.transports.http import http_client
-from chuk_mcp.transports.http.parameters import StreamableHTTPParameters
+from chuk_mcp.transports.http import http_client  # type: ignore[import-untyped]
+from chuk_mcp.transports.http.parameters import StreamableHTTPParameters  # type: ignore[import-untyped]
 
 from .base_transport import MCPBaseTransport
 
@@ -185,9 +185,7 @@ class HTTPStreamableTransport(MCPBaseTransport):
             logger.debug("Sending MCP initialize request...")
             init_start = time.time()
 
-            await asyncio.wait_for(
-                send_initialize(self._read_stream, self._write_stream), timeout=self.default_timeout
-            )
+            await asyncio.wait_for(send_initialize(self._read_stream, self._write_stream), timeout=self.default_timeout)
 
             init_time = time.time() - init_start
             logger.debug("MCP initialize completed in %.3fs", init_time)

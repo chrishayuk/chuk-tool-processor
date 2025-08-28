@@ -32,11 +32,11 @@ def _is_pydantic_model(cls: type) -> bool:
     try:
         # Check for Pydantic v2
         return hasattr(cls, "model_fields") or hasattr(cls, "__pydantic_core_schema__")
-    except:
+    except Exception:
         try:
             # Check for Pydantic v1
             return hasattr(cls, "__fields__")
-        except:
+        except Exception:
             return False
 
 
@@ -306,7 +306,7 @@ def make_pydantic_tool_compatible(cls: type, tool_name: str) -> type:
                     state = self.dict()
                 else:
                     state = self.__dict__.copy()
-            except:
+            except Exception:
                 state = self.__dict__.copy()
 
             state["tool_name"] = getattr(self.__class__, "_tool_name", tool_name)
