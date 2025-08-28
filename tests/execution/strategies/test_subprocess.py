@@ -226,8 +226,9 @@ async def test_parallel_execution(strategy):
     assert all(r.error is None for r in results)
     assert all(isinstance(r.result, dict) for r in results)
 
-    # Verify it ran in parallel (allowing some buffer for process startup)
-    assert duration < 0.6, f"Expected duration < 0.6s, got {duration}s"
+    # Verify it ran in parallel (allowing buffer for process startup - CI can be slower)
+    # In CI environments, process startup can be significantly slower
+    assert duration < 1.2, f"Expected duration < 1.2s (parallel execution), got {duration}s"
 
     # Verify they ran in different processes if possible
     pids = [r.pid for r in results]

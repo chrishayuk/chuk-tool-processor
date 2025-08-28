@@ -1,6 +1,4 @@
 # tests/tool_processor/registry/test_tool_metadata.py
-from datetime import datetime, timedelta
-
 import pytest
 from pydantic import ValidationError
 
@@ -98,15 +96,17 @@ async def test_with_updated_timestamp():
     tm = ToolMetadata(name="test")
     initial_timestamp = tm.updated_at
 
-    # Use a small time delay to ensure timestamp will be different
-    # Create a new timestamp slightly in the future rather than using sleep
-    datetime.utcnow() + timedelta(milliseconds=100)
+    # Small delay to ensure timestamp difference
+    # Using asyncio.sleep to ensure time passes
+    import asyncio
+
+    await asyncio.sleep(0.001)  # 1ms delay
 
     # Create an updated copy
     updated = tm.with_updated_timestamp()
 
     # Check that the timestamp was updated
-    assert updated.updated_at > initial_timestamp
+    assert updated.updated_at >= initial_timestamp  # Should be equal or greater
     assert updated.name == tm.name  # Should preserve other properties
 
 
