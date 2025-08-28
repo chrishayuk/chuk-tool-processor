@@ -94,7 +94,9 @@ async def register_fn_tool(
             if inspect.iscoroutinefunction(func):
                 return await func(**kwargs)
             # off-load blocking sync work
-            return await anyio.to_thread.run_sync(func, **kwargs)
+            import functools
+
+            return await anyio.to_thread.run_sync(functools.partial(func, **kwargs))
 
     # Set the docstring
     _Tool.__doc__ = tool_description
