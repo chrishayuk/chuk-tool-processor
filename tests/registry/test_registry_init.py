@@ -65,4 +65,6 @@ class TestRegistryInit:
         # Check if the tool was registered
         tool = await registry.get_tool("test_init_tool_unique", namespace="test_init_ns")
         assert tool is not None
+        # Check if the tool is a class or has __name__ attribute
+        assert hasattr(tool, "__name__"), f"Tool should have __name__, got {type(tool)}: {tool}"
         assert tool.__name__ == "TestInitTool"

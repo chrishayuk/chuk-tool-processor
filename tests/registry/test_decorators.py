@@ -504,7 +504,7 @@ class TestEnsureRegistrations:
     @pytest.mark.asyncio
     async def test_ensure_registrations_empty(self):
         """Test ensure_registrations with no pending tools."""
-        with patch("chuk_tool_processor.registry.decorators._pending_registrations", []):
+        with patch("chuk_tool_processor.registry.decorators._PENDING_REGISTRATIONS", []):
             await ensure_registrations()
             # Should complete without error
 
@@ -514,14 +514,17 @@ class TestEnsureRegistrations:
         mock_registry = AsyncMock()
         mock_registry.register_tool = AsyncMock()
 
-        # Create pending registrations
-        pending = [
-            ("tool1", ValidatedTool, {"namespace": "default"}),
-            ("tool2", ValidatedTool, {"namespace": "custom"}),
-        ]
+        # Create async registration functions
+        async def reg1():
+            await mock_registry.register_tool(ValidatedTool, name="tool1", namespace="default", metadata={})
+
+        async def reg2():
+            await mock_registry.register_tool(ValidatedTool, name="tool2", namespace="custom", metadata={})
+
+        pending = [reg1, reg2]
 
         with (
-            patch("chuk_tool_processor.registry.decorators._pending_registrations", pending),
+            patch("chuk_tool_processor.registry.decorators._PENDING_REGISTRATIONS", pending),
             patch(
                 "chuk_tool_processor.registry.provider.ToolRegistryProvider.get_registry", return_value=mock_registry
             ),
@@ -537,10 +540,14 @@ class TestEnsureRegistrations:
         mock_registry = AsyncMock()
         mock_registry.register_tool = AsyncMock()
 
-        pending = [("tool1", ValidatedTool, {})]
+        # Create async registration function
+        async def reg1():
+            await mock_registry.register_tool(ValidatedTool, name="tool1", namespace="default", metadata={})
+
+        pending = [reg1]
 
         with (
-            patch("chuk_tool_processor.registry.decorators._pending_registrations", pending) as pending_list,
+            patch("chuk_tool_processor.registry.decorators._PENDING_REGISTRATIONS", pending) as pending_list,
             patch(
                 "chuk_tool_processor.registry.provider.ToolRegistryProvider.get_registry", return_value=mock_registry
             ),
@@ -692,21 +699,17 @@ class TestDecoratorIntegration:
                 async def _execute(self, value: str, count: int):
                     return {"result": value * count}
 
+            # Process pending registrations
+            await ensure_registrations()
+
             # Tool should be registered
             mock_registry.register_tool.assert_called()
 
-            # Should be in decorated tools
-            with patch("chuk_tool_processor.registry.decorators._decorated_tools", []) as decorated:
-
-                @register_tool(name="another")
-                class AnotherTool(ValidatedTool):
-                    class Arguments(BaseModel):
-                        x: int
-
-                    async def _execute(self, x: int):
-                        return {"result": x}
-
-                assert len(decorated) == 1
+            # Verify the tool was registered with correct parameters
+            call_args = mock_registry.register_tool.call_args
+            assert call_args is not None
+            assert call_args.kwargs["name"] == "integration_tool"
+            assert call_args.kwargs["namespace"] == "test"
 
     def test_function_to_tool_conversion(self):
         """Test converting function to tool via decorator."""

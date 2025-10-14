@@ -92,9 +92,11 @@ class TestToolExport:
             tool = await tool_by_openai_name("MockTool")
             assert tool == MockTool
 
-            # Unknown tool returns None
-            tool = await tool_by_openai_name("UnknownTool")
-            assert tool is None
+            # Unknown tool raises KeyError
+            import pytest
+
+            with pytest.raises(KeyError, match="No tool registered for OpenAI name 'UnknownTool'"):
+                await tool_by_openai_name("UnknownTool")
 
     @pytest.mark.asyncio
     async def test_openai_functions(self):
