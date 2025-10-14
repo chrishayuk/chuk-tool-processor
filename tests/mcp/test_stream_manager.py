@@ -330,3 +330,991 @@ class TestStreamManager:
 
             # Should not have added the failing server
             assert "bad_command" not in stream_manager.transports
+
+    # ------------------------------------------------------------------ #
+    # Factory method tests                                               #
+    # ------------------------------------------------------------------ #
+    @pytest.mark.asyncio
+    async def test_create_factory_method(self):
+        """Test create factory method."""
+        with (
+            patch("chuk_tool_processor.mcp.stream_manager.load_config") as mock_load,
+            patch("chuk_tool_processor.mcp.stream_manager.StdioTransport") as mock_stdio,
+        ):
+            mock_load.return_value = {"command": "python", "args": []}
+            mock_transport = AsyncMock(spec=MCPBaseTransport)
+            mock_transport.initialize = AsyncMock(return_value=True)
+            mock_transport.get_tools = AsyncMock(return_value=[])
+            mock_stdio.return_value = mock_transport
+
+            stream_manager = await StreamManager.create(
+                config_file="test.json", servers=["test"], transport_type="stdio", default_timeout=30.0
+            )
+
+            assert stream_manager is not None
+            assert isinstance(stream_manager, StreamManager)
+
+    @pytest.mark.asyncio
+    async def test_create_with_timeout(self):
+        """Test create factory method with initialization timeout."""
+        with (
+            patch("chuk_tool_processor.mcp.stream_manager.load_config") as mock_load,
+            patch("chuk_tool_processor.mcp.stream_manager.StdioTransport") as mock_stdio,
+        ):
+            mock_load.return_value = {"command": "python", "args": []}
+            mock_transport = AsyncMock(spec=MCPBaseTransport)
+
+            # Simulate slow initialization
+            async def slow_init():
+                await asyncio.sleep(10)
+                return True
+
+            mock_transport.initialize = slow_init
+            mock_stdio.return_value = mock_transport
+
+            # Should timeout with short initialization_timeout
+            with pytest.raises(RuntimeError, match="timed out"):
+                await StreamManager.create(
+                    config_file="test.json",
+                    servers=["test"],
+                    transport_type="stdio",
+                    initialization_timeout=0.1,
+                )
+
+    @pytest.mark.asyncio
+    async def test_create_with_sse_factory(self):
+        """Test create_with_sse factory method."""
+        with patch("chuk_tool_processor.mcp.stream_manager.SSETransport") as mock_sse:
+            mock_transport = AsyncMock(spec=MCPBaseTransport)
+            mock_transport.initialize = AsyncMock(return_value=True)
+            mock_transport.get_tools = AsyncMock(return_value=[])
+            mock_sse.return_value = mock_transport
+
+            stream_manager = await StreamManager.create_with_sse(
+                servers=[{"name": "test", "url": "http://test.com"}]
+            )
+
+            assert stream_manager is not None
+            assert isinstance(stream_manager, StreamManager)
+
+    @pytest.mark.asyncio
+    async def test_create_with_sse_timeout(self):
+        """Test create_with_sse with timeout."""
+        with patch("chuk_tool_processor.mcp.stream_manager.SSETransport") as mock_sse:
+            mock_transport = AsyncMock(spec=MCPBaseTransport)
+
+            async def slow_init():
+                await asyncio.sleep(10)
+                return True
+
+            mock_transport.initialize = slow_init
+            mock_sse.return_value = mock_transport
+
+            with pytest.raises(RuntimeError, match="SSE.*timed out"):
+                await StreamManager.create_with_sse(
+                    servers=[{"name": "test", "url": "http://test.com"}], initialization_timeout=0.1
+                )
+
+    @pytest.mark.asyncio
+    async def test_create_with_http_streamable_factory(self):
+        """Test create_with_http_streamable factory method."""
+        with patch("chuk_tool_processor.mcp.stream_manager.HTTPStreamableTransport") as mock_http:
+            mock_transport = AsyncMock(spec=MCPBaseTransport)
+            mock_transport.initialize = AsyncMock(return_value=True)
+            mock_transport.get_tools = AsyncMock(return_value=[])
+            mock_http.return_value = mock_transport
+
+            stream_manager = await StreamManager.create_with_http_streamable(
+                servers=[{"name": "test", "url": "http://test.com"}]
+            )
+
+            assert stream_manager is not None
+            assert isinstance(stream_manager, StreamManager)
+
+    @pytest.mark.asyncio
+    async def test_create_with_http_streamable_timeout(self):
+        """Test create_with_http_streamable with timeout."""
+        with patch("chuk_tool_processor.mcp.stream_manager.HTTPStreamableTransport") as mock_http:
+            mock_transport = AsyncMock(spec=MCPBaseTransport)
+
+            async def slow_init():
+                await asyncio.sleep(10)
+                return True
+
+            mock_transport.initialize = slow_init
+            mock_http.return_value = mock_transport
+
+            with pytest.raises(RuntimeError, match="HTTP Streamable.*timed out"):
+                await StreamManager.create_with_http_streamable(
+                    servers=[{"name": "test", "url": "http://test.com"}], initialization_timeout=0.1
+                )
+
+    @pytest.mark.asyncio
+    async def test_create_managed_context_manager(self):
+        """Test create_managed factory method."""
+        with (
+            patch("chuk_tool_processor.mcp.stream_manager.load_config") as mock_load,
+            patch("chuk_tool_processor.mcp.stream_manager.StdioTransport") as mock_stdio,
+        ):
+            mock_load.return_value = {"command": "python", "args": []}
+            mock_transport = AsyncMock(spec=MCPBaseTransport)
+            mock_transport.initialize = AsyncMock(return_value=True)
+            mock_transport.get_tools = AsyncMock(return_value=[])
+            mock_transport.close = AsyncMock()
+            mock_stdio.return_value = mock_transport
+
+            async with StreamManager.create_managed(
+                config_file="test.json", servers=["test"], transport_type="stdio"
+            ) as sm:
+                assert sm is not None
+                assert isinstance(sm, StreamManager)
+                assert sm._closed is False
+
+            # Should be closed after exiting context
+            assert sm._closed is True
+
+    # ------------------------------------------------------------------ #
+    # Error handling and edge cases                                      #
+    # ------------------------------------------------------------------ #
+    @pytest.mark.asyncio
+    async def test_initialize_when_closed(self):
+        """Test that initialize raises error when StreamManager is closed."""
+        stream_manager = StreamManager()
+        await stream_manager.close()
+
+        with pytest.raises(RuntimeError, match="Cannot initialize a closed StreamManager"):
+            await stream_manager.initialize(config_file="test.json", servers=["test"])
+
+    @pytest.mark.asyncio
+    async def test_initialize_with_sse_when_closed(self):
+        """Test initialize_with_sse raises error when closed."""
+        stream_manager = StreamManager()
+        await stream_manager.close()
+
+        with pytest.raises(RuntimeError, match="Cannot initialize a closed StreamManager"):
+            await stream_manager.initialize_with_sse(servers=[{"name": "test", "url": "http://test.com"}])
+
+    @pytest.mark.asyncio
+    async def test_initialize_with_http_streamable_when_closed(self):
+        """Test initialize_with_http_streamable raises error when closed."""
+        stream_manager = StreamManager()
+        await stream_manager.close()
+
+        with pytest.raises(RuntimeError, match="Cannot initialize a closed StreamManager"):
+            await stream_manager.initialize_with_http_streamable(servers=[{"name": "test", "url": "http://test.com"}])
+
+    @pytest.mark.asyncio
+    async def test_initialize_with_sse_type_warning(self, stream_manager):
+        """Test that using SSE in initialize() logs warning."""
+        with (
+            patch("chuk_tool_processor.mcp.stream_manager.load_config") as mock_load,
+            patch("chuk_tool_processor.mcp.stream_manager.SSETransport") as mock_sse,
+        ):
+            mock_load.return_value = {"url": "http://test.com"}
+            mock_transport = AsyncMock(spec=MCPBaseTransport)
+            mock_transport.initialize = AsyncMock(return_value=True)
+            mock_transport.get_tools = AsyncMock(return_value=[])
+            mock_sse.return_value = mock_transport
+
+            # Should work but log warning
+            await stream_manager.initialize(
+                config_file="test.json", servers=["test"], transport_type="sse", default_timeout=30.0
+            )
+
+            assert len(stream_manager.transports) == 1
+
+    @pytest.mark.asyncio
+    async def test_initialize_with_http_streamable_type_warning(self, stream_manager):
+        """Test that using http_streamable in initialize() logs warning."""
+        with (
+            patch("chuk_tool_processor.mcp.stream_manager.load_config") as mock_load,
+            patch("chuk_tool_processor.mcp.stream_manager.HTTPStreamableTransport") as mock_http,
+        ):
+            mock_load.return_value = {"url": "http://test.com"}
+            mock_transport = AsyncMock(spec=MCPBaseTransport)
+            mock_transport.initialize = AsyncMock(return_value=True)
+            mock_transport.get_tools = AsyncMock(return_value=[])
+            mock_http.return_value = mock_transport
+
+            await stream_manager.initialize(
+                config_file="test.json", servers=["test"], transport_type="http_streamable", default_timeout=30.0
+            )
+
+            assert len(stream_manager.transports) == 1
+
+    @pytest.mark.asyncio
+    async def test_initialize_sse_with_headers(self, stream_manager):
+        """Test initialize with SSE and headers."""
+        with (
+            patch("chuk_tool_processor.mcp.stream_manager.load_config") as mock_load,
+            patch("chuk_tool_processor.mcp.stream_manager.SSETransport") as mock_sse,
+        ):
+            mock_load.return_value = {"url": "http://test.com", "headers": {"Auth": "Bearer token"}}
+            mock_transport = AsyncMock(spec=MCPBaseTransport)
+            mock_transport.initialize = AsyncMock(return_value=True)
+            mock_transport.get_tools = AsyncMock(return_value=[])
+            mock_sse.return_value = mock_transport
+
+            await stream_manager.initialize(
+                config_file="test.json", servers=["test"], transport_type="sse", default_timeout=30.0
+            )
+
+            # Verify SSETransport was called with headers
+            call_kwargs = mock_sse.call_args[1]
+            assert "headers" in call_kwargs
+            assert call_kwargs["headers"]["Auth"] == "Bearer token"
+
+    @pytest.mark.asyncio
+    async def test_initialize_http_streamable_with_headers_warning(self, stream_manager):
+        """Test initialize with HTTP streamable and headers logs warning."""
+        with (
+            patch("chuk_tool_processor.mcp.stream_manager.load_config") as mock_load,
+            patch("chuk_tool_processor.mcp.stream_manager.HTTPStreamableTransport") as mock_http,
+        ):
+            mock_load.return_value = {
+                "url": "http://test.com",
+                "headers": {"Auth": "Bearer token"},
+                "session_id": "test-session",
+            }
+            mock_transport = AsyncMock(spec=MCPBaseTransport)
+            mock_transport.initialize = AsyncMock(return_value=True)
+            mock_transport.get_tools = AsyncMock(return_value=[])
+            mock_http.return_value = mock_transport
+
+            await stream_manager.initialize(
+                config_file="test.json", servers=["test"], transport_type="http_streamable", default_timeout=30.0
+            )
+
+            # Should work but headers not passed (not supported yet)
+            call_kwargs = mock_http.call_args[1]
+            assert "headers" not in call_kwargs
+
+    @pytest.mark.asyncio
+    async def test_initialize_sse_default_url(self, stream_manager):
+        """Test initialize with SSE and no URL uses default."""
+        with (
+            patch("chuk_tool_processor.mcp.stream_manager.load_config") as mock_load,
+            patch("chuk_tool_processor.mcp.stream_manager.SSETransport") as mock_sse,
+        ):
+            mock_load.return_value = "not_a_dict"  # Invalid config
+            mock_transport = AsyncMock(spec=MCPBaseTransport)
+            mock_transport.initialize = AsyncMock(return_value=True)
+            mock_transport.get_tools = AsyncMock(return_value=[])
+            mock_sse.return_value = mock_transport
+
+            await stream_manager.initialize(
+                config_file="test.json", servers=["test"], transport_type="sse", default_timeout=30.0
+            )
+
+            # Should use default URL
+            call_kwargs = mock_sse.call_args[1]
+            assert call_kwargs["url"] == "http://localhost:8000"
+
+    @pytest.mark.asyncio
+    async def test_initialize_http_streamable_default_url(self, stream_manager):
+        """Test initialize with HTTP streamable and no URL uses default."""
+        with (
+            patch("chuk_tool_processor.mcp.stream_manager.load_config") as mock_load,
+            patch("chuk_tool_processor.mcp.stream_manager.HTTPStreamableTransport") as mock_http,
+        ):
+            mock_load.return_value = "not_a_dict"
+            mock_transport = AsyncMock(spec=MCPBaseTransport)
+            mock_transport.initialize = AsyncMock(return_value=True)
+            mock_transport.get_tools = AsyncMock(return_value=[])
+            mock_http.return_value = mock_transport
+
+            await stream_manager.initialize(
+                config_file="test.json", servers=["test"], transport_type="http_streamable", default_timeout=30.0
+            )
+
+            call_kwargs = mock_http.call_args[1]
+            assert call_kwargs["url"] == "http://localhost:8000"
+
+    @pytest.mark.asyncio
+    async def test_initialize_transport_init_failure(self, stream_manager):
+        """Test when transport.initialize() returns False."""
+        with (
+            patch("chuk_tool_processor.mcp.stream_manager.load_config") as mock_load,
+            patch("chuk_tool_processor.mcp.stream_manager.StdioTransport") as mock_stdio,
+        ):
+            mock_load.return_value = {"command": "python", "args": []}
+            mock_transport = AsyncMock(spec=MCPBaseTransport)
+            mock_transport.initialize = AsyncMock(return_value=False)  # Init fails
+            mock_stdio.return_value = mock_transport
+
+            await stream_manager.initialize(config_file="test.json", servers=["test"], transport_type="stdio")
+
+            # Should not add the transport
+            assert "test" not in stream_manager.transports
+
+    @pytest.mark.asyncio
+    async def test_initialize_timeout_on_init(self, stream_manager):
+        """Test timeout during transport initialization."""
+        with (
+            patch("chuk_tool_processor.mcp.stream_manager.load_config") as mock_load,
+            patch("chuk_tool_processor.mcp.stream_manager.StdioTransport") as mock_stdio,
+        ):
+            mock_load.return_value = {"command": "python", "args": []}
+            mock_transport = AsyncMock(spec=MCPBaseTransport)
+
+            async def slow_init():
+                await asyncio.sleep(10)
+                return True
+
+            mock_transport.initialize = slow_init
+            mock_stdio.return_value = mock_transport
+
+            await stream_manager.initialize(
+                config_file="test.json", servers=["test"], transport_type="stdio", default_timeout=0.1
+            )
+
+            # Should not add the transport due to timeout
+            assert "test" not in stream_manager.transports
+
+    @pytest.mark.asyncio
+    async def test_initialize_with_sse_bad_config(self, stream_manager):
+        """Test initialize_with_sse with missing name or URL."""
+        with patch("chuk_tool_processor.mcp.stream_manager.SSETransport"):
+            # Missing name
+            await stream_manager.initialize_with_sse(servers=[{"url": "http://test.com"}])
+            assert len(stream_manager.transports) == 0
+
+            # Missing URL
+            await stream_manager.initialize_with_sse(servers=[{"name": "test"}])
+            assert len(stream_manager.transports) == 0
+
+    @pytest.mark.asyncio
+    async def test_initialize_with_sse_init_failure(self, stream_manager):
+        """Test initialize_with_sse when transport init fails."""
+        with patch("chuk_tool_processor.mcp.stream_manager.SSETransport") as mock_sse:
+            mock_transport = AsyncMock(spec=MCPBaseTransport)
+            mock_transport.initialize = AsyncMock(return_value=False)
+            mock_sse.return_value = mock_transport
+
+            await stream_manager.initialize_with_sse(servers=[{"name": "test", "url": "http://test.com"}])
+
+            assert "test" not in stream_manager.transports
+
+    @pytest.mark.asyncio
+    async def test_initialize_with_sse_timeout(self, stream_manager):
+        """Test initialize_with_sse with timeout."""
+        with patch("chuk_tool_processor.mcp.stream_manager.SSETransport") as mock_sse:
+            mock_transport = AsyncMock(spec=MCPBaseTransport)
+
+            async def slow():
+                await asyncio.sleep(10)
+                return True
+
+            mock_transport.initialize = slow
+            mock_sse.return_value = mock_transport
+
+            await stream_manager.initialize_with_sse(
+                servers=[{"name": "test", "url": "http://test.com"}], connection_timeout=0.1
+            )
+
+            assert "test" not in stream_manager.transports
+
+    @pytest.mark.asyncio
+    async def test_initialize_with_sse_exception(self, stream_manager):
+        """Test initialize_with_sse handles exceptions."""
+        with patch("chuk_tool_processor.mcp.stream_manager.SSETransport") as mock_sse:
+            mock_sse.side_effect = Exception("Connection failed")
+
+            await stream_manager.initialize_with_sse(servers=[{"name": "test", "url": "http://test.com"}])
+
+            assert "test" not in stream_manager.transports
+
+    @pytest.mark.asyncio
+    async def test_initialize_with_sse_headers_support(self, stream_manager):
+        """Test initialize_with_sse with headers."""
+        with patch("chuk_tool_processor.mcp.stream_manager.SSETransport") as mock_sse:
+            mock_transport = AsyncMock(spec=MCPBaseTransport)
+            mock_transport.initialize = AsyncMock(return_value=True)
+            mock_transport.get_tools = AsyncMock(return_value=[])
+            mock_sse.return_value = mock_transport
+
+            await stream_manager.initialize_with_sse(
+                servers=[
+                    {"name": "test", "url": "http://test.com", "api_key": "key123", "headers": {"Custom": "Header"}}
+                ]
+            )
+
+            # Verify headers were passed
+            call_kwargs = mock_sse.call_args[1]
+            assert "headers" in call_kwargs
+            assert call_kwargs["headers"]["Custom"] == "Header"
+
+    @pytest.mark.asyncio
+    async def test_initialize_with_http_streamable_bad_config(self, stream_manager):
+        """Test initialize_with_http_streamable with missing name or URL."""
+        with patch("chuk_tool_processor.mcp.stream_manager.HTTPStreamableTransport"):
+            await stream_manager.initialize_with_http_streamable(servers=[{"url": "http://test.com"}])
+            assert len(stream_manager.transports) == 0
+
+            await stream_manager.initialize_with_http_streamable(servers=[{"name": "test"}])
+            assert len(stream_manager.transports) == 0
+
+    @pytest.mark.asyncio
+    async def test_initialize_with_http_streamable_init_failure(self, stream_manager):
+        """Test initialize_with_http_streamable when transport init fails."""
+        with patch("chuk_tool_processor.mcp.stream_manager.HTTPStreamableTransport") as mock_http:
+            mock_transport = AsyncMock(spec=MCPBaseTransport)
+            mock_transport.initialize = AsyncMock(return_value=False)
+            mock_http.return_value = mock_transport
+
+            await stream_manager.initialize_with_http_streamable(
+                servers=[{"name": "test", "url": "http://test.com"}]
+            )
+
+            assert "test" not in stream_manager.transports
+
+    @pytest.mark.asyncio
+    async def test_initialize_with_http_streamable_timeout(self, stream_manager):
+        """Test initialize_with_http_streamable with timeout."""
+        with patch("chuk_tool_processor.mcp.stream_manager.HTTPStreamableTransport") as mock_http:
+            mock_transport = AsyncMock(spec=MCPBaseTransport)
+
+            async def slow():
+                await asyncio.sleep(10)
+                return True
+
+            mock_transport.initialize = slow
+            mock_http.return_value = mock_transport
+
+            await stream_manager.initialize_with_http_streamable(
+                servers=[{"name": "test", "url": "http://test.com"}], connection_timeout=0.1
+            )
+
+            assert "test" not in stream_manager.transports
+
+    @pytest.mark.asyncio
+    async def test_initialize_with_http_streamable_exception(self, stream_manager):
+        """Test initialize_with_http_streamable handles exceptions."""
+        with patch("chuk_tool_processor.mcp.stream_manager.HTTPStreamableTransport") as mock_http:
+            mock_http.side_effect = Exception("Connection failed")
+
+            await stream_manager.initialize_with_http_streamable(servers=[{"name": "test", "url": "http://test.com"}])
+
+            assert "test" not in stream_manager.transports
+
+    @pytest.mark.asyncio
+    async def test_initialize_with_http_streamable_headers_warning(self, stream_manager):
+        """Test initialize_with_http_streamable logs warning for headers."""
+        with patch("chuk_tool_processor.mcp.stream_manager.HTTPStreamableTransport") as mock_http:
+            mock_transport = AsyncMock(spec=MCPBaseTransport)
+            mock_transport.initialize = AsyncMock(return_value=True)
+            mock_transport.get_tools = AsyncMock(return_value=[])
+            mock_http.return_value = mock_transport
+
+            await stream_manager.initialize_with_http_streamable(
+                servers=[{"name": "test", "url": "http://test.com", "headers": {"Custom": "Header"}}]
+            )
+
+            # Headers should not be passed (not supported yet)
+            call_kwargs = mock_http.call_args[1]
+            assert "headers" not in call_kwargs
+
+    # ------------------------------------------------------------------ #
+    # Query methods tests                                                #
+    # ------------------------------------------------------------------ #
+    @pytest.mark.asyncio
+    async def test_get_server_for_tool(self, stream_manager):
+        """Test get_server_for_tool method."""
+        stream_manager.tool_to_server_map["tool1"] = "server1"
+        stream_manager.tool_to_server_map["tool2"] = "server2"
+
+        assert stream_manager.get_server_for_tool("tool1") == "server1"
+        assert stream_manager.get_server_for_tool("tool2") == "server2"
+        assert stream_manager.get_server_for_tool("nonexistent") is None
+
+    @pytest.mark.asyncio
+    async def test_list_tools(self, stream_manager, mock_transport):
+        """Test list_tools method."""
+        stream_manager.transports["test_server"] = mock_transport
+        mock_transport.get_tools = AsyncMock(return_value=[{"name": "tool1"}, {"name": "tool2"}])
+
+        tools = await stream_manager.list_tools("test_server")
+
+        assert len(tools) == 2
+        assert tools[0]["name"] == "tool1"
+        assert tools[1]["name"] == "tool2"
+
+    @pytest.mark.asyncio
+    async def test_list_tools_when_closed(self, stream_manager):
+        """Test list_tools returns empty when closed."""
+        await stream_manager.close()
+
+        tools = await stream_manager.list_tools("test_server")
+
+        assert tools == []
+
+    @pytest.mark.asyncio
+    async def test_list_tools_server_not_found(self, stream_manager):
+        """Test list_tools with non-existent server."""
+        tools = await stream_manager.list_tools("nonexistent_server")
+
+        assert tools == []
+
+    @pytest.mark.asyncio
+    async def test_list_tools_timeout(self, stream_manager):
+        """Test list_tools with timeout."""
+        mock_transport = AsyncMock(spec=MCPBaseTransport)
+
+        async def slow_get_tools():
+            await asyncio.sleep(20)
+            return []
+
+        mock_transport.get_tools = slow_get_tools
+        stream_manager.transports["slow_server"] = mock_transport
+
+        tools = await stream_manager.list_tools("slow_server")
+
+        assert tools == []
+
+    @pytest.mark.asyncio
+    async def test_list_tools_exception(self, stream_manager):
+        """Test list_tools handles exceptions."""
+        mock_transport = AsyncMock(spec=MCPBaseTransport)
+        mock_transport.get_tools = AsyncMock(side_effect=Exception("Failed"))
+        stream_manager.transports["failing_server"] = mock_transport
+
+        tools = await stream_manager.list_tools("failing_server")
+
+        assert tools == []
+
+    # ------------------------------------------------------------------ #
+    # Ping, resources, prompts tests                                    #
+    # ------------------------------------------------------------------ #
+    @pytest.mark.asyncio
+    async def test_ping_servers(self, stream_manager, mock_transport):
+        """Test ping_servers method."""
+        stream_manager.transports["server1"] = mock_transport
+        mock_transport.send_ping = AsyncMock(return_value=True)
+
+        results = await stream_manager.ping_servers()
+
+        assert len(results) == 1
+        assert results[0]["server"] == "server1"
+        assert results[0]["ok"] is True
+
+    @pytest.mark.asyncio
+    async def test_ping_servers_when_closed(self, stream_manager):
+        """Test ping_servers returns empty when closed."""
+        await stream_manager.close()
+
+        results = await stream_manager.ping_servers()
+
+        assert results == []
+
+    @pytest.mark.asyncio
+    async def test_ping_servers_exception(self, stream_manager):
+        """Test ping_servers handles exceptions."""
+        mock_transport = AsyncMock(spec=MCPBaseTransport)
+        mock_transport.send_ping = AsyncMock(side_effect=Exception("Ping failed"))
+        stream_manager.transports["failing_server"] = mock_transport
+
+        results = await stream_manager.ping_servers()
+
+        assert len(results) == 1
+        assert results[0]["server"] == "failing_server"
+        assert results[0]["ok"] is False
+
+    @pytest.mark.asyncio
+    async def test_list_resources(self, stream_manager, mock_transport):
+        """Test list_resources method."""
+        stream_manager.transports["server1"] = mock_transport
+        mock_transport.list_resources = AsyncMock(return_value={"resources": [{"name": "res1"}]})
+
+        resources = await stream_manager.list_resources()
+
+        assert len(resources) == 1
+        assert resources[0]["name"] == "res1"
+        assert resources[0]["server"] == "server1"
+
+    @pytest.mark.asyncio
+    async def test_list_resources_when_closed(self, stream_manager):
+        """Test list_resources returns empty when closed."""
+        await stream_manager.close()
+
+        resources = await stream_manager.list_resources()
+
+        assert resources == []
+
+    @pytest.mark.asyncio
+    async def test_list_resources_exception(self, stream_manager):
+        """Test list_resources handles exceptions."""
+        mock_transport = AsyncMock(spec=MCPBaseTransport)
+        mock_transport.list_resources = AsyncMock(side_effect=Exception("Failed"))
+        stream_manager.transports["failing_server"] = mock_transport
+
+        resources = await stream_manager.list_resources()
+
+        assert resources == []
+
+    @pytest.mark.asyncio
+    async def test_list_prompts(self, stream_manager, mock_transport):
+        """Test list_prompts method."""
+        stream_manager.transports["server1"] = mock_transport
+        mock_transport.list_prompts = AsyncMock(return_value={"prompts": [{"name": "prompt1"}]})
+
+        prompts = await stream_manager.list_prompts()
+
+        assert len(prompts) == 1
+        assert prompts[0]["name"] == "prompt1"
+        assert prompts[0]["server"] == "server1"
+
+    @pytest.mark.asyncio
+    async def test_list_prompts_when_closed(self, stream_manager):
+        """Test list_prompts returns empty when closed."""
+        await stream_manager.close()
+
+        prompts = await stream_manager.list_prompts()
+
+        assert prompts == []
+
+    @pytest.mark.asyncio
+    async def test_list_prompts_exception(self, stream_manager):
+        """Test list_prompts handles exceptions."""
+        mock_transport = AsyncMock(spec=MCPBaseTransport)
+        mock_transport.list_prompts = AsyncMock(side_effect=Exception("Failed"))
+        stream_manager.transports["failing_server"] = mock_transport
+
+        prompts = await stream_manager.list_prompts()
+
+        assert prompts == []
+
+    # ------------------------------------------------------------------ #
+    # call_tool method with timeout tests                               #
+    # ------------------------------------------------------------------ #
+    @pytest.mark.asyncio
+    async def test_call_tool_when_closed(self, stream_manager):
+        """Test call_tool returns error when closed."""
+        await stream_manager.close()
+
+        result = await stream_manager.call_tool("tool1", {})
+
+        assert result["isError"] is True
+        assert "closed" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_call_tool_with_explicit_server(self, stream_manager, mock_transport):
+        """Test call_tool with explicit server_name parameter."""
+        stream_manager.transports["test_server"] = mock_transport
+        mock_transport.call_tool = AsyncMock(return_value={"result": "success"})
+
+        result = await stream_manager.call_tool("tool1", {"arg": "value"}, server_name="test_server")
+
+        assert result["result"] == "success"
+
+    @pytest.mark.asyncio
+    async def test_call_tool_with_timeout_param(self, stream_manager, mock_transport):
+        """Test call_tool with timeout parameter."""
+        stream_manager.transports["test_server"] = mock_transport
+        stream_manager.tool_to_server_map["test_tool"] = "test_server"
+        mock_transport.call_tool = AsyncMock(return_value={"result": "success"})
+
+        result = await stream_manager.call_tool("test_tool", {"arg": "value"}, timeout=30.0)
+
+        assert result["result"] == "success"
+
+    @pytest.mark.asyncio
+    async def test_call_tool_timeout_expires(self, stream_manager):
+        """Test call_tool when timeout expires."""
+        mock_transport = AsyncMock(spec=MCPBaseTransport)
+
+        async def slow_call(tool_name, args):
+            await asyncio.sleep(10)
+            return {"result": "done"}
+
+        mock_transport.call_tool = slow_call
+        stream_manager.transports["test_server"] = mock_transport
+        stream_manager.tool_to_server_map["test_tool"] = "test_server"
+
+        result = await stream_manager.call_tool("test_tool", {}, timeout=0.1)
+
+        assert result["isError"] is True
+        assert "timed out" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_call_tool_transport_supports_timeout(self, stream_manager):
+        """Test call_tool when transport has timeout parameter."""
+        mock_transport = AsyncMock(spec=MCPBaseTransport)
+
+        # Create a method that accepts timeout parameter
+        async def call_with_timeout(tool_name, args, timeout=None):
+            return {"result": "success", "timeout": timeout}
+
+        mock_transport.call_tool = call_with_timeout
+        stream_manager.transports["test_server"] = mock_transport
+        stream_manager.tool_to_server_map["test_tool"] = "test_server"
+
+        result = await stream_manager.call_tool("test_tool", {}, timeout=15.0)
+
+        assert result["result"] == "success"
+        assert result["timeout"] == 15.0
+
+    # ------------------------------------------------------------------ #
+    # Close method tests                                                 #
+    # ------------------------------------------------------------------ #
+    @pytest.mark.asyncio
+    async def test_close_already_closed(self, stream_manager):
+        """Test close when already closed."""
+        await stream_manager.close()
+
+        # Should not raise, just return
+        await stream_manager.close()
+
+        assert stream_manager._closed is True
+
+    @pytest.mark.asyncio
+    async def test_close_no_transports(self, stream_manager):
+        """Test close when no transports."""
+        await stream_manager.close()
+
+        assert stream_manager._closed is True
+        assert len(stream_manager.transports) == 0
+
+    @pytest.mark.asyncio
+    async def test_close_with_exception_during_cleanup(self, stream_manager):
+        """Test close handles exceptions during cleanup."""
+        mock_transport = AsyncMock(spec=MCPBaseTransport)
+        mock_transport.close = AsyncMock(side_effect=Exception("Close failed"))
+        stream_manager.transports["failing_server"] = mock_transport
+
+        # Should not raise
+        await stream_manager.close()
+
+        assert stream_manager._closed is True
+
+    @pytest.mark.asyncio
+    async def test_close_with_cancelled_error(self, stream_manager):
+        """Test close handles CancelledError."""
+        mock_transport = AsyncMock(spec=MCPBaseTransport)
+
+        async def cancel_close():
+            raise asyncio.CancelledError()
+
+        mock_transport.close = cancel_close
+        stream_manager.transports["cancelling_server"] = mock_transport
+
+        # Should handle cancellation gracefully
+        await stream_manager.close()
+
+        assert stream_manager._closed is True
+
+    @pytest.mark.asyncio
+    async def test_list_resources_non_dict_response(self, stream_manager):
+        """Test list_resources when response is not dict."""
+        mock_transport = AsyncMock(spec=MCPBaseTransport)
+        # Return list directly instead of dict
+        mock_transport.list_resources = AsyncMock(return_value=[{"name": "res1"}])
+        stream_manager.transports["server1"] = mock_transport
+
+        resources = await stream_manager.list_resources()
+
+        assert len(resources) == 1
+        assert resources[0]["name"] == "res1"
+
+    @pytest.mark.asyncio
+    async def test_list_prompts_non_dict_response(self, stream_manager):
+        """Test list_prompts when response is not dict."""
+        mock_transport = AsyncMock(spec=MCPBaseTransport)
+        # Return list directly instead of dict
+        mock_transport.list_prompts = AsyncMock(return_value=[{"name": "prompt1"}])
+        stream_manager.transports["server1"] = mock_transport
+
+        prompts = await stream_manager.list_prompts()
+
+        assert len(prompts) == 1
+        assert prompts[0]["name"] == "prompt1"
+
+    # ------------------------------------------------------------------ #
+    # Stream and diagnostic methods                                      #
+    # ------------------------------------------------------------------ #
+    def test_get_streams(self, stream_manager):
+        """Test get_streams method."""
+        mock_transport = AsyncMock(spec=MCPBaseTransport)
+        mock_transport.get_streams = lambda: [(None, None)]
+        stream_manager.transports["server1"] = mock_transport
+
+        streams = stream_manager.get_streams()
+
+        assert len(streams) == 1
+
+    def test_get_streams_when_closed(self, stream_manager):
+        """Test get_streams returns empty when closed."""
+        stream_manager._closed = True
+
+        streams = stream_manager.get_streams()
+
+        assert streams == []
+
+    def test_get_streams_fallback_to_attributes(self, stream_manager):
+        """Test get_streams falls back to read/write stream attributes."""
+        # Create mock that doesn't have get_streams but has read/write_stream attributes
+        mock_transport = type('MockTransport', (), {
+            'read_stream': 'read',
+            'write_stream': 'write'
+        })()
+        stream_manager.transports["server1"] = mock_transport
+
+        streams = stream_manager.get_streams()
+
+        assert len(streams) == 1
+        assert streams[0] == ("read", "write")
+
+    def test_streams_property(self, stream_manager):
+        """Test streams property is an alias for get_streams."""
+        mock_transport = AsyncMock(spec=MCPBaseTransport)
+        mock_transport.get_streams = lambda: [(None, None)]
+        stream_manager.transports["server1"] = mock_transport
+
+        streams = stream_manager.streams
+
+        assert len(streams) == 1
+
+    def test_is_closed(self, stream_manager):
+        """Test is_closed method."""
+        assert stream_manager.is_closed() is False
+
+        stream_manager._closed = True
+
+        assert stream_manager.is_closed() is True
+
+    def test_get_transport_count(self, stream_manager, mock_transport):
+        """Test get_transport_count method."""
+        assert stream_manager.get_transport_count() == 0
+
+        stream_manager.transports["server1"] = mock_transport
+        assert stream_manager.get_transport_count() == 1
+
+        stream_manager.transports["server2"] = mock_transport
+        assert stream_manager.get_transport_count() == 2
+
+    @pytest.mark.asyncio
+    async def test_health_check_when_closed(self, stream_manager):
+        """Test health_check when closed."""
+        stream_manager._closed = True
+
+        health = await stream_manager.health_check()
+
+        assert health["status"] == "closed"
+        assert health["transports"] == {}
+
+    @pytest.mark.asyncio
+    async def test_health_check_healthy_transports(self, stream_manager):
+        """Test health_check with healthy transports."""
+        mock_transport = AsyncMock(spec=MCPBaseTransport)
+        mock_transport.send_ping = AsyncMock(return_value=True)
+        stream_manager.transports["server1"] = mock_transport
+
+        health = await stream_manager.health_check()
+
+        assert health["status"] == "active"
+        assert health["transport_count"] == 1
+        assert health["transports"]["server1"]["status"] == "healthy"
+        assert health["transports"]["server1"]["ping_success"] is True
+
+    @pytest.mark.asyncio
+    async def test_health_check_unhealthy_transports(self, stream_manager):
+        """Test health_check with unhealthy transports."""
+        mock_transport = AsyncMock(spec=MCPBaseTransport)
+        mock_transport.send_ping = AsyncMock(return_value=False)
+        stream_manager.transports["server1"] = mock_transport
+
+        health = await stream_manager.health_check()
+
+        assert health["transports"]["server1"]["status"] == "unhealthy"
+        assert health["transports"]["server1"]["ping_success"] is False
+
+    @pytest.mark.asyncio
+    async def test_health_check_timeout(self, stream_manager):
+        """Test health_check when ping times out."""
+        mock_transport = AsyncMock(spec=MCPBaseTransport)
+
+        async def slow_ping():
+            await asyncio.sleep(10)
+            return True
+
+        mock_transport.send_ping = slow_ping
+        stream_manager.transports["server1"] = mock_transport
+
+        health = await stream_manager.health_check()
+
+        assert health["transports"]["server1"]["status"] == "timeout"
+
+    @pytest.mark.asyncio
+    async def test_health_check_exception(self, stream_manager):
+        """Test health_check when ping raises exception."""
+        mock_transport = AsyncMock(spec=MCPBaseTransport)
+        mock_transport.send_ping = AsyncMock(side_effect=Exception("Ping failed"))
+        stream_manager.transports["server1"] = mock_transport
+
+        health = await stream_manager.health_check()
+
+        assert health["transports"]["server1"]["status"] == "error"
+        assert "error" in health["transports"]["server1"]
+
+    @pytest.mark.asyncio
+    async def test_call_tool_no_hasattr(self, stream_manager):
+        """Test call_tool when transport has no call_tool attribute."""
+        # Create object without call_tool method
+        mock_transport = AsyncMock(spec=[])
+        stream_manager.transports["test_server"] = mock_transport
+        stream_manager.tool_to_server_map["test_tool"] = "test_server"
+
+        # Should still work with timeout wrapper
+        mock_transport.call_tool = AsyncMock(return_value={"result": "success"})
+
+        result = await stream_manager.call_tool("test_tool", {}, timeout=1.0)
+
+        assert result["result"] == "success"
+
+    @pytest.mark.asyncio
+    async def test_close_single_transport_no_close_method(self, stream_manager):
+        """Test _close_single_transport when transport has no close method."""
+        mock_transport = AsyncMock(spec=[])  # No close method
+        stream_manager.transports["no_close"] = mock_transport
+
+        # Should handle gracefully
+        await stream_manager.close()
+
+        assert stream_manager._closed is True
+
+    @pytest.mark.asyncio
+    async def test_close_concurrent_timeout(self, stream_manager):
+        """Test close with concurrent timeout."""
+        # Create multiple slow transports
+        for i in range(3):
+            mock_transport = AsyncMock(spec=MCPBaseTransport)
+
+            async def slow_close():
+                await asyncio.sleep(10)
+
+            mock_transport.close = slow_close
+            stream_manager.transports[f"slow_{i}"] = mock_transport
+
+        # Set a very short shutdown timeout
+        stream_manager._shutdown_timeout = 0.1
+
+        await stream_manager.close()
+
+        assert stream_manager._closed is True
+        assert len(stream_manager.transports) == 0
+
+    @pytest.mark.asyncio
+    async def test_initialize_invalid_transport_type(self, stream_manager):
+        """Test initialize with completely invalid transport type."""
+        with (
+            patch("chuk_tool_processor.mcp.stream_manager.load_config") as mock_load,
+        ):
+            mock_load.return_value = {"command": "test"}
+
+            await stream_manager.initialize(
+                config_file="test.json",
+                servers=["test"],
+                transport_type="completely_invalid",
+            )
+
+            # Should not add any transports
+            assert len(stream_manager.transports) == 0

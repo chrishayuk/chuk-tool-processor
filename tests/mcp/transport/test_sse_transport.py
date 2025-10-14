@@ -591,3 +591,296 @@ class TestSSETransport:
             with patch.object(transport, "_send_request", AsyncMock(return_value=case["input"])):
                 result = await transport.call_tool("test", {})
                 assert result == case["expected"]
+
+    @pytest.mark.asyncio
+    async def test_initialize_already_initialized(self, transport):
+        """Test initialization when already initialized."""
+        transport._initialized = True
+        result = await transport.initialize()
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_initialize_gateway_connectivity_fails(self, transport):
+        """Test initialization when gateway connectivity test fails."""
+        with patch.object(transport, "_test_gateway_connectivity", AsyncMock(return_value=False)):
+            result = await transport.initialize()
+            assert result is False
+
+    @pytest.mark.asyncio
+    async def test_initialize_sse_status_not_200(self, transport):
+        """Test initialization when SSE connection returns non-200 status."""
+        mock_stream_client = AsyncMock()
+        mock_send_client = AsyncMock()
+        mock_stream_client.aclose = AsyncMock()
+        mock_send_client.aclose = AsyncMock()
+
+        mock_sse_response = AsyncMock()
+        mock_sse_response.status_code = 500
+
+        class AsyncStreamContext:
+            def __init__(self, response):
+                self.response = response
+
+            async def __aenter__(self):
+                return self.response
+
+            async def __aexit__(self, exc_type, exc, tb):
+                pass
+
+        async_context = AsyncStreamContext(mock_sse_response)
+        mock_stream_client.stream = Mock(return_value=async_context)
+
+        with (
+            patch("httpx.AsyncClient", side_effect=[mock_stream_client, mock_send_client]),
+            patch.object(transport, "_test_gateway_connectivity", AsyncMock(return_value=True)),
+        ):
+            result = await transport.initialize()
+            assert result is False
+
+    @pytest.mark.asyncio
+    async def test_initialize_sse_task_dies(self, transport):
+        """Test initialization when SSE task dies during session discovery."""
+        mock_stream_client = AsyncMock()
+        mock_send_client = AsyncMock()
+        mock_stream_client.aclose = AsyncMock()
+        mock_send_client.aclose = AsyncMock()
+
+        async def mock_aiter_lines():
+            # Don't yield session URL, but die
+            if False:
+                yield
+
+        mock_sse_response = AsyncMock()
+        mock_sse_response.status_code = 200
+        mock_sse_response.aiter_lines = mock_aiter_lines
+
+        class AsyncStreamContext:
+            def __init__(self, response):
+                self.response = response
+
+            async def __aenter__(self):
+                return self.response
+
+            async def __aexit__(self, exc_type, exc, tb):
+                pass
+
+        async_context = AsyncStreamContext(mock_sse_response)
+        mock_stream_client.stream = Mock(return_value=async_context)
+
+        with (
+            patch("httpx.AsyncClient", side_effect=[mock_stream_client, mock_send_client]),
+            patch.object(transport, "_test_gateway_connectivity", AsyncMock(return_value=True)),
+        ):
+            # Mock SSE processing to raise exception
+            with patch.object(
+                transport,
+                "_process_sse_stream",
+                AsyncMock(side_effect=Exception("SSE died")),
+            ):
+                result = await transport.initialize()
+                await asyncio.sleep(0.2)  # Let task die
+                assert result is False
+
+    @pytest.mark.asyncio
+    async def test_initialize_init_response_has_error(self, transport):
+        """Test initialization when init response contains error."""
+        mock_stream_client = AsyncMock()
+        mock_send_client = AsyncMock()
+        mock_stream_client.aclose = AsyncMock()
+        mock_send_client.aclose = AsyncMock()
+
+        async def mock_aiter_lines():
+            yield "data: /messages/session?session_id=test-session"
+
+        mock_sse_response = AsyncMock()
+        mock_sse_response.status_code = 200
+        mock_sse_response.aiter_lines = mock_aiter_lines
+
+        class AsyncStreamContext:
+            def __init__(self, response):
+                self.response = response
+
+            async def __aenter__(self):
+                return self.response
+
+            async def __aexit__(self, exc_type, exc, tb):
+                pass
+
+        async_context = AsyncStreamContext(mock_sse_response)
+        mock_stream_client.stream = Mock(return_value=async_context)
+
+        with patch("httpx.AsyncClient", side_effect=[mock_stream_client, mock_send_client]):
+            with patch.object(
+                transport,
+                "_send_request",
+                AsyncMock(return_value={"error": {"message": "Init failed"}}),
+            ):
+                with patch.object(transport, "_test_gateway_connectivity", AsyncMock(return_value=True)):
+                    result = await transport.initialize()
+                    await asyncio.sleep(0.2)
+                    assert result is False
+
+    @pytest.mark.asyncio
+    async def test_send_request_with_valid_timeout_param(self, transport):
+        """Test send_request accepts timeout parameter."""
+        transport._initialized = True
+        transport.message_url = "http://test.com/messages/test"
+
+        mock_send_client = AsyncMock()
+        mock_post_response = AsyncMock()
+        mock_post_response.status_code = 202
+        mock_send_client.post.return_value = mock_post_response
+        transport.send_client = mock_send_client
+
+        # Test that timeout parameter doesn't cause issues
+        with pytest.raises(asyncio.TimeoutError):
+            await transport._send_request("test_method", {}, timeout=0.01)
+
+    @pytest.mark.asyncio
+    async def test_send_request_timeout(self, transport):
+        """Test send_request with timeout."""
+        transport._initialized = True
+        transport.message_url = "http://test.com/messages/test"
+
+        mock_send_client = AsyncMock()
+        mock_post_response = AsyncMock()
+        mock_post_response.status_code = 202
+        mock_send_client.post.return_value = mock_post_response
+        transport.send_client = mock_send_client
+
+        # Don't add response to pending_responses, so it times out
+        with pytest.raises(asyncio.TimeoutError):
+            await transport._send_request("test_method", {}, timeout=0.1)
+
+    @pytest.mark.asyncio
+    async def test_send_request_http_error(self, transport):
+        """Test send_request with HTTP error."""
+        transport._initialized = True
+        transport.message_url = "http://test.com/messages/test"
+
+        mock_send_client = AsyncMock()
+        mock_send_client.post.side_effect = Exception("HTTP Error")
+        transport.send_client = mock_send_client
+
+        with pytest.raises(Exception, match="HTTP Error"):
+            await transport._send_request("test_method", {})
+
+    @pytest.mark.asyncio
+    async def test_send_notification_success(self, transport):
+        """Test sending notification."""
+        transport._initialized = True
+        transport.message_url = "http://test.com/messages/test"
+
+        mock_send_client = AsyncMock()
+        mock_post_response = AsyncMock()
+        mock_post_response.status_code = 202
+        mock_send_client.post.return_value = mock_post_response
+        transport.send_client = mock_send_client
+
+        await transport._send_notification("test_notification", {"param": "value"})
+        mock_send_client.post.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_close_with_metrics_logging(self, transport):
+        """Test close with metrics logging."""
+        transport._initialized = True
+        transport._metrics["total_calls"] = 10
+        transport._metrics["successful_calls"] = 8
+        transport.stream_client = AsyncMock()
+        transport.send_client = AsyncMock()
+        transport.sse_task = None
+
+        await transport.close()
+        assert transport._initialized is False
+
+    def test_url_normalization(self, transport):
+        """Test URL normalization in constructor."""
+        # Test with trailing slash
+        t1 = SSETransport("http://test.com/", api_key="key")
+        assert t1.url == "http://test.com"
+
+        # Test without trailing slash
+        t2 = SSETransport("http://test.com", api_key="key")
+        assert t2.url == "http://test.com"
+
+
+    @pytest.mark.asyncio
+    async def test_call_tool_with_different_response_formats(self, transport):
+        """Test call_tool with various response formats."""
+        transport._initialized = True
+        transport.message_url = "http://test.com/messages/test"
+
+        # Test with error response
+        with patch.object(
+            transport,
+            "_send_request",
+            AsyncMock(return_value={"error": {"message": "Tool error"}}),
+        ):
+            result = await transport.call_tool("test", {})
+            assert result["isError"] is True
+
+        # Test with successful response
+        with patch.object(
+            transport,
+            "_send_request",
+            AsyncMock(return_value={"result": {"content": "success"}}),
+        ):
+            result = await transport.call_tool("test", {})
+            assert result["isError"] is False
+
+    @pytest.mark.asyncio
+    async def test_is_connected_with_stale_session(self, transport):
+        """Test is_connected with stale session."""
+        transport._initialized = True
+        transport._last_successful_ping = 0  # Very old
+        transport.session_timeout = 1  # Short timeout
+
+        # Should be disconnected due to stale session
+        assert transport.is_connected() is False
+
+    @pytest.mark.asyncio
+    async def test_call_tool_with_explicit_timeout(self, transport):
+        """Test call_tool with explicit timeout parameter."""
+        transport._initialized = True
+        transport.message_url = "http://test.com/messages/test"
+
+        with patch.object(
+            transport,
+            "_send_request",
+            AsyncMock(return_value={"result": {"content": "success"}}),
+        ) as mock_send:
+            await transport.call_tool("test", {}, timeout=15.0)
+            # Verify timeout was passed to _send_request
+            call_args = mock_send.call_args
+            assert call_args[1]["timeout"] == 15.0
+
+    @pytest.mark.asyncio
+    async def test_list_resources_with_error(self, transport):
+        """Test list_resources with error response."""
+        transport._initialized = True
+
+        with patch.object(transport, "_send_request", AsyncMock(side_effect=Exception("List error"))):
+            result = await transport.list_resources()
+            assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_list_prompts_with_error(self, transport):
+        """Test list_prompts with error response."""
+        transport._initialized = True
+
+        with patch.object(transport, "_send_request", AsyncMock(side_effect=Exception("List error"))):
+            result = await transport.list_prompts()
+            assert result == {}
+
+    def test_repr_with_session(self, transport):
+        """Test __repr__ with active session."""
+        transport._initialized = True
+        transport.session_id = "test-session-123"
+        transport._metrics["total_calls"] = 20
+        transport._metrics["successful_calls"] = 18
+
+        repr_str = repr(transport)
+        assert "SSETransport" in repr_str
+        assert "status=initialized" in repr_str
+        assert "calls: 20" in repr_str
+        assert "success: 90.0%" in repr_str

@@ -46,3 +46,53 @@ def test_extra_fields_ignored():
     assert call.tool == "toolX"
     # Ensure extra_field is not set on the model
     assert not hasattr(call, "extra_field")
+
+
+@pytest.mark.asyncio
+async def test_to_dict():
+    """Test converting ToolCall to dictionary."""
+    call = ToolCall(tool="test_tool", namespace="custom", arguments={"key": "value"})
+    result = await call.to_dict()
+
+    assert result["tool"] == "test_tool"
+    assert result["namespace"] == "custom"
+    assert result["arguments"] == {"key": "value"}
+    assert "id" in result
+    assert isinstance(result["id"], str)
+
+
+@pytest.mark.asyncio
+async def test_from_dict():
+    """Test creating ToolCall from dictionary."""
+    data = {
+        "id": "test-id-123",
+        "tool": "my_tool",
+        "namespace": "my_namespace",
+        "arguments": {"param": 42}
+    }
+    call = await ToolCall.from_dict(data)
+
+    assert call.id == "test-id-123"
+    assert call.tool == "my_tool"
+    assert call.namespace == "my_namespace"
+    assert call.arguments == {"param": 42}
+
+
+def test_str_representation():
+    """Test string representation of ToolCall."""
+    call = ToolCall(tool="example_tool", arguments={"arg1": "value1", "arg2": 123})
+    str_repr = str(call)
+
+    assert "ToolCall" in str_repr
+    assert "example_tool" in str_repr
+    assert "arg1" in str_repr
+    assert "arg2" in str_repr
+
+
+def test_str_representation_no_args():
+    """Test string representation with no arguments."""
+    call = ToolCall(tool="simple_tool")
+    str_repr = str(call)
+
+    assert "ToolCall" in str_repr
+    assert "simple_tool" in str_repr

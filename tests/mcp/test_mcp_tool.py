@@ -388,3 +388,98 @@ class TestMCPTool:
 
         # Verify
         assert result == "Legacy method works"
+
+    def test_init_without_tool_name(self):
+        """Test MCPTool raises error when tool_name is empty."""
+        with pytest.raises(ValueError, match="MCPTool requires a tool_name"):
+            MCPTool(tool_name="", stream_manager=None)
+
+        with pytest.raises(ValueError, match="MCPTool requires a tool_name"):
+            MCPTool(tool_name=None, stream_manager=None)
+
+    def test_init_with_custom_timeout(self):
+        """Test MCPTool initialization with custom timeout."""
+        tool = MCPTool(tool_name="test", stream_manager=None, default_timeout=60.0)
+        assert tool.default_timeout == 60.0
+
+    def test_connection_state_without_stream_manager(self):
+        """Test connection state when initialized without stream manager."""
+        tool = MCPTool(tool_name="test", stream_manager=None, enable_resilience=True)
+        assert tool.connection_state == ConnectionState.DISCONNECTED
+
+    def test_connection_state_with_stream_manager(self, mock_stream_manager):
+        """Test connection state when initialized with stream manager."""
+        tool = MCPTool(tool_name="test", stream_manager=mock_stream_manager, enable_resilience=True)
+        assert tool.connection_state == ConnectionState.HEALTHY
+
+    @pytest.mark.asyncio
+    async def test_execute_with_dict_arguments(self, simple_mcp_tool, mock_stream_manager):
+        """Test execute with dict-style arguments."""
+        mock_stream_manager.call_tool.return_value = {"isError": False, "content": "dict args work"}
+
+        result = await simple_mcp_tool.execute(arg1="value1", arg2="value2")
+
+        assert result == "dict args work"
+        mock_stream_manager.call_tool.assert_called_once()
+
+
+    def test_serialization_preserves_recovery_config(self, simple_mcp_tool):
+        """Test serialization preserves recovery config."""
+        from chuk_tool_processor.mcp.mcp_tool import RecoveryConfig
+
+        custom_config = RecoveryConfig(max_retries=5, circuit_breaker_threshold=10)
+        tool = MCPTool(tool_name="test", stream_manager=None, recovery_config=custom_config)
+
+        state = tool.__getstate__()
+
+        assert "recovery_config" in state
+        new_tool = MCPTool.__new__(MCPTool)
+        new_tool.__setstate__(state)
+
+        assert new_tool.recovery_config.max_retries == 5
+        assert new_tool.recovery_config.circuit_breaker_threshold == 10
+
+    def test_setstate_initializes_missing_resilience_state(self):
+        """Test __setstate__ initializes missing resilience state."""
+        from chuk_tool_processor.mcp.mcp_tool import ConnectionState
+
+        # Create a state dict without connection_state and stats
+        state = {
+            "tool_name": "test",
+            "default_timeout": 30.0,
+            "enable_resilience": True,
+            "recovery_config": None,
+            "_sm": None,
+        }
+
+        tool = MCPTool.__new__(MCPTool)
+        tool.__setstate__(state)
+
+        # Verify resilience state was initialized
+        assert hasattr(tool, "connection_state")
+        assert tool.connection_state == ConnectionState.DISCONNECTED
+        assert hasattr(tool, "stats")
+
+    def test_setstate_preserves_existing_resilience_state(self):
+        """Test __setstate__ preserves existing resilience state."""
+        from chuk_tool_processor.mcp.mcp_tool import ConnectionState, ConnectionStats
+
+        # Create a tool with existing state
+        tool = MCPTool.__new__(MCPTool)
+        tool.connection_state = ConnectionState.HEALTHY
+        tool.stats = ConnectionStats()
+        tool.stats.total_calls = 10
+
+        state = {
+            "tool_name": "test",
+            "default_timeout": 30.0,
+            "enable_resilience": True,
+            "recovery_config": None,
+            "_sm": None,
+        }
+
+        tool.__setstate__(state)
+
+        # Verify existing state was preserved
+        assert tool.connection_state == ConnectionState.HEALTHY
+        assert tool.stats.total_calls == 10

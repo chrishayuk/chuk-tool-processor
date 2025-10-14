@@ -43,18 +43,21 @@ class MockValidatedTool(ValidatedTool):
 class TestValidatedTool:
     """Test cases for ValidatedTool."""
 
+    @pytest.mark.asyncio
     async def test_execute_with_valid_parameters(self):
         """Test execution with valid parameters."""
         tool = MockValidatedTool()
         result = await tool.execute(name="Alice", age=30)
         assert result.message == "Hello Alice, age 30"
 
+    @pytest.mark.asyncio
     async def test_execute_with_optional_parameter(self):
         """Test execution with optional parameter."""
         tool = MockValidatedTool()
         result = await tool.execute(name="Bob", age=25, optional="extra")
         assert result.message == "Hello Bob, age 25, extra"
 
+    @pytest.mark.asyncio
     async def test_execute_with_invalid_type(self):
         """Test execution with invalid type raises ValidationError."""
         tool = MockValidatedTool()
@@ -64,6 +67,7 @@ class TestValidatedTool:
         with pytest.raises(ToolValidationError):
             await tool.execute(name="David", age="not_a_number")
 
+    @pytest.mark.asyncio
     async def test_execute_out_of_range(self):
         """Test execution with out of range value."""
         tool = MockValidatedTool()
@@ -73,6 +77,7 @@ class TestValidatedTool:
         with pytest.raises(ToolValidationError):
             await tool.execute(name="Eve", age=150)
 
+    @pytest.mark.asyncio
     async def test_execute_missing_required(self):
         """Test execution with missing required field."""
         tool = MockValidatedTool()
@@ -115,6 +120,7 @@ class TestValidatedTool:
         assert "Alice" in xml
         assert "30" in xml
 
+    @pytest.mark.asyncio
     async def test_simple_tool(self):
         """Test a simple tool without custom models."""
 
@@ -133,6 +139,7 @@ class TestValidatedTool:
         result = await tool.execute(x=5, y=3)
         assert result.sum == 8
 
+    @pytest.mark.asyncio
     async def test_complex_parameter_types(self):
         """Test with complex parameter types."""
 
@@ -173,6 +180,7 @@ class TestValidatedTool:
         assert hasattr(tool, "to_json_schema")
         assert hasattr(tool, "to_xml_tag")
 
+    @pytest.mark.asyncio
     async def test_result_conversion(self):
         """Test automatic result conversion."""
 
@@ -191,3 +199,97 @@ class TestValidatedTool:
         result = await tool.execute(value=5)
         assert isinstance(result, tool.Result)
         assert result.value == 10
+
+    @pytest.mark.asyncio
+    async def test_not_implemented_execute(self):
+        """Test that base _execute raises NotImplementedError."""
+
+        class EmptyTool(ValidatedTool):
+            class Arguments(BaseModel):
+                pass
+
+            class Result(BaseModel):
+                pass
+
+        tool = EmptyTool()
+        with pytest.raises(NotImplementedError, match="Tool must implement async _execute"):
+            await tool.execute()
+
+    @pytest.mark.asyncio
+    async def test_result_conversion_non_dict_non_result(self):
+        """Test result conversion for non-dict, non-Result values."""
+
+        class RawValueTool(ValidatedTool):
+            class Arguments(BaseModel):
+                x: int
+
+            class Result(BaseModel):
+                value: int
+
+            async def _execute(self, x: int):
+                # Return raw value instead of Result or dict
+                return x * 3
+
+        tool = RawValueTool()
+        result = await tool.execute(x=4)
+        assert isinstance(result, tool.Result)
+        assert result.value == 12
+
+
+class TestWithValidation:
+    """Test cases for with_validation decorator."""
+
+    @pytest.mark.asyncio
+    async def test_with_validation_basic(self):
+        """Test with_validation decorator on a basic tool."""
+        from chuk_tool_processor.models.validated_tool import with_validation
+
+        @with_validation
+        class SimpleTool:
+            async def execute(self, x: int, y: int) -> int:
+                return x + y
+
+        tool = SimpleTool()
+        result = await tool.execute(x=5, y=3)
+        assert result == 8
+
+    @pytest.mark.asyncio
+    async def test_with_validation_invalid_args(self):
+        """Test with_validation catches invalid arguments."""
+        from chuk_tool_processor.models.validated_tool import with_validation
+        from chuk_tool_processor.core.exceptions import ToolValidationError
+
+        @with_validation
+        class TypedTool:
+            async def execute(self, value: int) -> int:
+                return value * 2
+
+        tool = TypedTool()
+        with pytest.raises(ToolValidationError):
+            await tool.execute(value="not_an_int")
+
+    @pytest.mark.asyncio
+    async def test_with_validation_invalid_result(self):
+        """Test with_validation catches invalid return values."""
+        from chuk_tool_processor.models.validated_tool import with_validation
+        from chuk_tool_processor.core.exceptions import ToolValidationError
+
+        @with_validation
+        class StrictReturnTool:
+            async def execute(self, x: int) -> int:
+                return "not_an_int"  # Wrong return type
+
+        tool = StrictReturnTool()
+        with pytest.raises(ToolValidationError):
+            await tool.execute(x=5)
+
+    def test_with_validation_non_async(self):
+        """Test with_validation raises TypeError for non-async execute."""
+        from chuk_tool_processor.models.validated_tool import with_validation
+
+        with pytest.raises(TypeError, match="must have an async execute method"):
+
+            @with_validation
+            class SyncTool:
+                def execute(self, x: int) -> int:
+                    return x * 2

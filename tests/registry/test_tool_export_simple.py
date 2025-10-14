@@ -6,6 +6,8 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, Mock, patch
 
+import pytest
+
 from chuk_tool_processor.registry.tool_export import (
     _build_openai_name_cache,
     clear_name_cache,
@@ -33,6 +35,7 @@ class MockTool:
 class TestToolExport:
     """Test tool export functions."""
 
+    @pytest.mark.asyncio
     async def test_build_openai_name_cache(self):
         """Test building the OpenAI name cache."""
         # Clear cache first
@@ -51,6 +54,7 @@ class TestToolExport:
             mock_registry.list_tools.assert_called_once()
             assert mock_registry.get_tool.call_count == 2
 
+    @pytest.mark.asyncio
     async def test_build_openai_name_cache_concurrent(self):
         """Test that concurrent cache builds only build once."""
         await clear_name_cache()
@@ -68,6 +72,7 @@ class TestToolExport:
             # Should only call list_tools once
             assert mock_registry.list_tools.call_count == 1
 
+    @pytest.mark.asyncio
     async def test_tool_by_openai_name(self):
         """Test looking up tool by OpenAI name."""
         await clear_name_cache()
@@ -91,6 +96,7 @@ class TestToolExport:
             tool = await tool_by_openai_name("UnknownTool")
             assert tool is None
 
+    @pytest.mark.asyncio
     async def test_openai_functions(self):
         """Test listing tools in OpenAI format."""
         await clear_name_cache()
@@ -108,6 +114,7 @@ class TestToolExport:
             assert all("type" in tool for tool in tools)
             assert all(tool["type"] == "function" for tool in tools)
 
+    @pytest.mark.asyncio
     async def test_clear_name_cache(self):
         """Test clearing the cache."""
         import chuk_tool_processor.registry.tool_export as export_module
@@ -119,6 +126,7 @@ class TestToolExport:
 
         assert export_module._OPENAI_NAME_CACHE is None
 
+    @pytest.mark.asyncio
     async def test_tool_without_to_openai(self):
         """Test handling tool without to_openai method."""
         await clear_name_cache()

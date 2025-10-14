@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 from typing import Any
 
@@ -54,13 +55,28 @@ class StdioTransport(MCPBaseTransport):
         """
         # Convert dict to StdioParameters if needed
         if isinstance(server_params, dict):
+            # Merge provided env with system environment to ensure PATH is available
+            merged_env = os.environ.copy()
+            if server_params.get("env"):
+                merged_env.update(server_params["env"])
+
             self.server_params = StdioParameters(
                 command=server_params.get("command", "python"),
                 args=server_params.get("args", []),
-                env=server_params.get("env"),
+                env=merged_env,
             )
         else:
-            self.server_params = server_params
+            # Also handle StdioParameters object - merge env if provided
+            # Create a new StdioParameters with merged env (Pydantic models are immutable)
+            merged_env = os.environ.copy()
+            if hasattr(server_params, "env") and server_params.env:
+                merged_env.update(server_params.env)
+
+            self.server_params = StdioParameters(
+                command=server_params.command,
+                args=server_params.args,
+                env=merged_env,
+            )
 
         self.connection_timeout = connection_timeout
         self.default_timeout = default_timeout

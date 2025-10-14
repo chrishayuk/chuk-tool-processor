@@ -508,3 +508,361 @@ class TestHTTPStreamableTransport:
         assert transport.session_id == "test-session"
         assert transport.connection_timeout == 30.0
         assert transport.default_timeout == 30.0
+
+    def test_init_with_custom_headers(self):
+        """Test initialization with custom headers."""
+        custom_headers = {"X-Custom": "Value", "Authorization": "Bearer token"}
+        transport = HTTPStreamableTransport(
+            "http://test.com", headers=custom_headers, enable_metrics=True
+        )
+        assert transport.configured_headers == custom_headers
+
+    def test_init_with_session_id(self):
+        """Test initialization with session ID."""
+        transport = HTTPStreamableTransport(
+            "http://test.com", session_id="test-session-123", enable_metrics=True
+        )
+        assert transport.session_id == "test-session-123"
+
+    @pytest.mark.asyncio
+    async def test_initialize_already_initialized(self, transport):
+        """Test initialization when already initialized."""
+        transport._initialized = True
+        result = await transport.initialize()
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_initialize_with_exception(self, transport):
+        """Test initialization with general exception."""
+        with patch(
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.http_client",
+            side_effect=Exception("Connection error"),
+        ):
+            result = await transport.initialize()
+            assert result is False
+
+    @pytest.mark.asyncio
+    async def test_send_ping_increments_failures(self, transport):
+        """Test send_ping increments failure counter."""
+        transport._initialized = True
+        transport._read_stream = Mock()
+        transport._write_stream = Mock()
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.send_ping",
+            AsyncMock(return_value=False),
+        ):
+            result = await transport.send_ping()
+            assert result is False
+            assert transport._consecutive_failures == 1
+
+    @pytest.mark.asyncio
+    async def test_send_ping_resets_failures_on_success(self, transport):
+        """Test send_ping resets failure counter on success."""
+        transport._initialized = True
+        transport._read_stream = Mock()
+        transport._write_stream = Mock()
+        transport._consecutive_failures = 2
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.send_ping",
+            AsyncMock(return_value=True),
+        ):
+            result = await transport.send_ping()
+            assert result is True
+            assert transport._consecutive_failures == 0
+
+    @pytest.mark.asyncio
+    async def test_is_connected_with_too_many_failures(self, transport):
+        """Test is_connected returns False with too many failures."""
+        transport._initialized = True
+        transport._consecutive_failures = 5
+        assert transport.is_connected() is False
+
+    @pytest.mark.asyncio
+    async def test_get_tools_with_error_response(self, transport):
+        """Test get_tools with error response."""
+        transport._initialized = True
+        transport._read_stream = Mock()
+        transport._write_stream = Mock()
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.send_tools_list",
+            AsyncMock(side_effect=Exception("List error")),
+        ):
+            tools = await transport.get_tools()
+            assert tools == []
+
+    @pytest.mark.asyncio
+    async def test_call_tool_with_error_in_response(self, transport):
+        """Test call_tool with error in response."""
+        transport._initialized = True
+        transport._read_stream = Mock()
+        transport._write_stream = Mock()
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.send_tools_call",
+            AsyncMock(return_value={"error": {"message": "Tool error"}}),
+        ):
+            result = await transport.call_tool("test", {})
+            assert result["isError"] is True
+            assert result["error"] == "Tool error"
+
+    @pytest.mark.asyncio
+    async def test_list_resources_not_initialized(self, transport):
+        """Test list_resources when not initialized."""
+        result = await transport.list_resources()
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_list_resources_with_exception(self, transport):
+        """Test list_resources with exception."""
+        transport._initialized = True
+        transport._read_stream = Mock()
+        transport._write_stream = Mock()
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.send_resources_list",
+            AsyncMock(side_effect=Exception("List error")),
+        ):
+            result = await transport.list_resources()
+            assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_list_prompts_not_initialized(self, transport):
+        """Test list_prompts when not initialized."""
+        result = await transport.list_prompts()
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_list_prompts_with_exception(self, transport):
+        """Test list_prompts with exception."""
+        transport._initialized = True
+        transport._read_stream = Mock()
+        transport._write_stream = Mock()
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.send_prompts_list",
+            AsyncMock(side_effect=Exception("List error")),
+        ):
+            result = await transport.list_prompts()
+            assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_read_resource_not_initialized(self, transport):
+        """Test read_resource when not initialized."""
+        result = await transport.read_resource("test://uri")
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_read_resource_with_exception(self, transport):
+        """Test read_resource with exception."""
+        transport._initialized = True
+        transport._read_stream = Mock()
+        transport._write_stream = Mock()
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.send_resources_read",
+            AsyncMock(side_effect=Exception("Read error")),
+        ):
+            result = await transport.read_resource("test://uri")
+            assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_get_prompt_not_initialized(self, transport):
+        """Test get_prompt when not initialized."""
+        result = await transport.get_prompt("test_prompt")
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_get_prompt_with_exception(self, transport):
+        """Test get_prompt with exception."""
+        transport._initialized = True
+        transport._read_stream = Mock()
+        transport._write_stream = Mock()
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.send_prompts_get",
+            AsyncMock(side_effect=Exception("Get error")),
+        ):
+            result = await transport.get_prompt("test_prompt")
+            assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_close_with_metrics_logging(self, transport):
+        """Test close with metrics logging."""
+        transport._initialized = True
+        transport._metrics["total_calls"] = 10
+        transport._metrics["successful_calls"] = 8
+        transport._http_context = AsyncMock()
+
+        await transport.close()
+        assert transport._initialized is False
+
+    @pytest.mark.asyncio
+    async def test_close_with_exception(self, transport):
+        """Test close when context exit raises exception."""
+        transport._initialized = True
+        mock_context = AsyncMock()
+        transport._http_context = mock_context
+        mock_context.__aexit__.side_effect = Exception("Exit error")
+
+        await transport.close()
+        assert transport._initialized is False
+
+    def test_get_streams_returns_read_and_write_streams(self, transport):
+        """Test get_streams returns tuple of streams when initialized."""
+        mock_read = Mock()
+        mock_write = Mock()
+        transport._initialized = True
+        transport._read_stream = mock_read
+        transport._write_stream = mock_write
+
+        streams = transport.get_streams()
+        assert streams == [(mock_read, mock_write)]
+
+    def test_get_streams_returns_empty_when_not_initialized(self, transport):
+        """Test get_streams returns empty when not initialized."""
+        mock_read = Mock()
+        mock_write = Mock()
+        transport._initialized = False
+        transport._read_stream = mock_read
+        transport._write_stream = mock_write
+
+        streams = transport.get_streams()
+        assert streams == []
+
+    def test_get_streams_returns_empty_when_streams_missing(self, transport):
+        """Test get_streams returns empty when streams are None."""
+        transport._initialized = True
+        transport._read_stream = None
+        transport._write_stream = None
+
+        streams = transport.get_streams()
+        assert streams == []
+
+    @pytest.mark.asyncio
+    async def test_attempt_recovery_success(self, transport):
+        """Test _attempt_recovery successfully recovers connection."""
+        transport._initialized = False
+
+        with (
+            patch.object(transport, "_cleanup", AsyncMock()),
+            patch.object(transport, "initialize", AsyncMock(return_value=True)),
+        ):
+            result = await transport._attempt_recovery()
+            assert result is True
+            assert transport._metrics["recovery_attempts"] == 1
+
+    @pytest.mark.asyncio
+    async def test_attempt_recovery_failure(self, transport):
+        """Test _attempt_recovery handles failure."""
+        transport._initialized = False
+
+        with (
+            patch.object(transport, "_cleanup", AsyncMock()),
+            patch.object(transport, "initialize", AsyncMock(side_effect=Exception("Recovery failed"))),
+        ):
+            result = await transport._attempt_recovery()
+            assert result is False
+            assert transport._metrics["recovery_attempts"] == 1
+
+    @pytest.mark.asyncio
+    async def test_initialize_connection_error_increments_metric(self, transport):
+        """Test initialize increments connection error metric on failure."""
+        with patch(
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.http_client",
+            side_effect=Exception("Connection error"),
+        ):
+            result = await transport.initialize()
+            assert result is False
+            assert transport._metrics["connection_errors"] == 1
+
+    @pytest.mark.asyncio
+    async def test_list_prompts_not_initialized_check(self, transport):
+        """Test list_prompts checks initialization."""
+        transport._initialized = False
+        result = await transport.list_prompts()
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_read_resource_success(self, transport):
+        """Test read_resource with successful response."""
+        transport._initialized = True
+        transport._read_stream = Mock()
+        transport._write_stream = Mock()
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.send_resources_read",
+            AsyncMock(return_value={"content": "resource data"}),
+        ):
+            result = await transport.read_resource("test://uri")
+            assert result == {"content": "resource data"}
+
+    @pytest.mark.asyncio
+    async def test_get_prompt_success(self, transport):
+        """Test get_prompt with successful response."""
+        transport._initialized = True
+        transport._read_stream = Mock()
+        transport._write_stream = Mock()
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.send_prompts_get",
+            AsyncMock(return_value={"prompt": "test prompt"}),
+        ):
+            result = await transport.get_prompt("test_prompt")
+            assert result == {"prompt": "test prompt"}
+
+    def test_repr_with_session_info(self, transport):
+        """Test __repr__ includes session information."""
+        transport._initialized = True
+        transport.session_id = "test-session-456"
+        transport._metrics["total_calls"] = 5
+
+        repr_str = repr(transport)
+        assert "HTTPStreamableTransport" in repr_str
+        assert "status=initialized" in repr_str
+
+    @pytest.mark.asyncio
+    async def test_send_ping_timeout_exception(self, transport):
+        """Test send_ping handles timeout exception."""
+        transport._initialized = True
+        transport._read_stream = Mock()
+        transport._write_stream = Mock()
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.send_ping",
+            AsyncMock(side_effect=asyncio.TimeoutError),
+        ):
+            result = await transport.send_ping()
+            assert result is False
+            assert transport._consecutive_failures == 1
+
+    @pytest.mark.asyncio
+    async def test_is_connected_warns_on_too_many_failures(self, transport):
+        """Test is_connected logs warning when max failures reached."""
+        transport._initialized = True
+        transport._read_stream = Mock()
+        transport._write_stream = Mock()
+        transport._consecutive_failures = 3  # Equals max
+        transport._max_consecutive_failures = 3
+
+        # This should trigger the warning log
+        result = transport.is_connected()
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_call_tool_updates_metrics(self, transport):
+        """Test call_tool updates metrics on success."""
+        transport._initialized = True
+        transport._read_stream = Mock()
+        transport._write_stream = Mock()
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.send_tools_call",
+            AsyncMock(return_value={"result": {"content": "success"}}),
+        ):
+            result = await transport.call_tool("test", {})
+            assert result["isError"] is False
+            assert transport._metrics["total_calls"] == 1
+            assert transport._metrics["successful_calls"] == 1

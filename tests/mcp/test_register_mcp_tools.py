@@ -436,3 +436,171 @@ class TestRegisterMCPTools:
         schema = metadata["argument_schema"]
         assert schema["properties"]["location"]["type"] == "string"
         assert "celsius" in schema["properties"]["units"]["enum"]
+
+
+class TestUpdateMCPToolsStreamManager:
+    """Test cases for update_mcp_tools_stream_manager function."""
+
+    def _patch_registry(self, mock_registry):
+        """Helper to patch registry provider."""
+        return patch(
+            "chuk_tool_processor.mcp.register_mcp_tools.ToolRegistryProvider.get_registry",
+            new=AsyncMock(return_value=mock_registry),
+        )
+
+    @pytest.fixture
+    def mock_registry_with_tools(self):
+        """Mock registry with some registered tools."""
+        from chuk_tool_processor.mcp.register_mcp_tools import update_mcp_tools_stream_manager
+
+        reg = Mock(spec=ToolRegistryInterface)
+        reg.list_tools = AsyncMock(return_value=[("mcp", "tool1"), ("mcp", "tool2"), ("other", "tool3")])
+
+        # Create mock tools
+        tool1 = Mock()
+        tool1.set_stream_manager = Mock()
+        tool2 = Mock()
+        tool2.set_stream_manager = Mock()
+        tool3 = Mock()  # No set_stream_manager
+
+        async def get_tool_impl(name, namespace):
+            if namespace == "mcp" and name == "tool1":
+                return tool1
+            elif namespace == "mcp" and name == "tool2":
+                return tool2
+            elif namespace == "other" and name == "tool3":
+                return tool3
+            return None
+
+        reg.get_tool = AsyncMock(side_effect=get_tool_impl)
+        reg.tools = {"tool1": tool1, "tool2": tool2, "tool3": tool3}
+        return reg
+
+    @pytest.mark.asyncio
+    async def test_update_stream_manager_basic(self, mock_registry_with_tools):
+        """Test updating stream manager for tools in a namespace."""
+        from chuk_tool_processor.mcp.register_mcp_tools import update_mcp_tools_stream_manager
+
+        new_mgr = Mock(spec=StreamManager)
+
+        with self._patch_registry(mock_registry_with_tools):
+            count = await update_mcp_tools_stream_manager("mcp", new_mgr)
+
+        # Should update 2 tools in mcp namespace
+        assert count == 2
+
+        # Verify set_stream_manager was called on the tools
+        mock_registry_with_tools.tools["tool1"].set_stream_manager.assert_called_once_with(new_mgr)
+        mock_registry_with_tools.tools["tool2"].set_stream_manager.assert_called_once_with(new_mgr)
+
+    @pytest.mark.asyncio
+    async def test_update_stream_manager_disconnect(self, mock_registry_with_tools):
+        """Test disconnecting tools by passing None."""
+        from chuk_tool_processor.mcp.register_mcp_tools import update_mcp_tools_stream_manager
+
+        with self._patch_registry(mock_registry_with_tools):
+            count = await update_mcp_tools_stream_manager("mcp", None)
+
+        # Should still update the tools
+        assert count == 2
+        mock_registry_with_tools.tools["tool1"].set_stream_manager.assert_called_once_with(None)
+        mock_registry_with_tools.tools["tool2"].set_stream_manager.assert_called_once_with(None)
+
+    @pytest.mark.asyncio
+    async def test_update_stream_manager_empty_namespace(self):
+        """Test updating when namespace has no tools."""
+        from chuk_tool_processor.mcp.register_mcp_tools import update_mcp_tools_stream_manager
+
+        reg = Mock(spec=ToolRegistryInterface)
+        reg.list_tools = AsyncMock(return_value=[("other", "tool1")])
+
+        new_mgr = Mock(spec=StreamManager)
+
+        with self._patch_registry(reg):
+            count = await update_mcp_tools_stream_manager("empty_ns", new_mgr)
+
+        # Should update 0 tools
+        assert count == 0
+
+    @pytest.mark.asyncio
+    async def test_update_stream_manager_tool_without_method(self):
+        """Test handling tools that don't have set_stream_manager method."""
+        from chuk_tool_processor.mcp.register_mcp_tools import update_mcp_tools_stream_manager
+
+        reg = Mock(spec=ToolRegistryInterface)
+        reg.list_tools = AsyncMock(return_value=[("test", "plain_tool")])
+
+        # Tool without set_stream_manager method
+        plain_tool = Mock(spec=[])  # No set_stream_manager
+        reg.get_tool = AsyncMock(return_value=plain_tool)
+
+        new_mgr = Mock(spec=StreamManager)
+
+        with self._patch_registry(reg):
+            count = await update_mcp_tools_stream_manager("test", new_mgr)
+
+        # Should not update tools without the method
+        assert count == 0
+
+    @pytest.mark.asyncio
+    async def test_update_stream_manager_with_error(self):
+        """Test error handling when updating fails."""
+        from chuk_tool_processor.mcp.register_mcp_tools import update_mcp_tools_stream_manager
+
+        reg = Mock(spec=ToolRegistryInterface)
+        reg.list_tools = AsyncMock(return_value=[("test", "tool1"), ("test", "tool2")])
+
+        # First tool succeeds, second fails
+        tool1 = Mock()
+        tool1.set_stream_manager = Mock()
+        tool2 = Mock()
+        tool2.set_stream_manager = Mock()
+
+        async def get_tool_with_error(name, namespace):
+            if name == "tool1":
+                return tool1
+            raise Exception("Failed to get tool2")
+
+        reg.get_tool = AsyncMock(side_effect=get_tool_with_error)
+
+        new_mgr = Mock(spec=StreamManager)
+
+        with self._patch_registry(reg):
+            count = await update_mcp_tools_stream_manager("test", new_mgr)
+
+        # Should still update tool1 despite tool2 failing
+        assert count == 1
+        tool1.set_stream_manager.assert_called_once_with(new_mgr)
+
+    @pytest.mark.asyncio
+    async def test_update_stream_manager_registry_list_error(self):
+        """Test handling when listing tools fails."""
+        from chuk_tool_processor.mcp.register_mcp_tools import update_mcp_tools_stream_manager
+
+        reg = Mock(spec=ToolRegistryInterface)
+        reg.list_tools = AsyncMock(side_effect=Exception("Registry error"))
+
+        new_mgr = Mock(spec=StreamManager)
+
+        with self._patch_registry(reg):
+            count = await update_mcp_tools_stream_manager("test", new_mgr)
+
+        # Should return 0 when listing fails
+        assert count == 0
+
+    @pytest.mark.asyncio
+    async def test_update_stream_manager_none_tool(self):
+        """Test handling when get_tool returns None."""
+        from chuk_tool_processor.mcp.register_mcp_tools import update_mcp_tools_stream_manager
+
+        reg = Mock(spec=ToolRegistryInterface)
+        reg.list_tools = AsyncMock(return_value=[("test", "missing_tool")])
+        reg.get_tool = AsyncMock(return_value=None)
+
+        new_mgr = Mock(spec=StreamManager)
+
+        with self._patch_registry(reg):
+            count = await update_mcp_tools_stream_manager("test", new_mgr)
+
+        # Should handle None tool gracefully
+        assert count == 0

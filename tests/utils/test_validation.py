@@ -144,6 +144,7 @@ class TestValidation:
                 def execute(self, x: int) -> int:
                     return x * 2
 
+    @pytest.mark.asyncio
     async def test_with_validation_decorator_execute(self):
         """Test with_validation decorator on execute method."""
 
@@ -166,6 +167,7 @@ class TestValidation:
         with pytest.raises(ToolValidationError):
             await tool.execute(x="not_int", y="test")
 
+    @pytest.mark.asyncio
     async def test_with_validation_decorator_private_execute(self):
         """Test with_validation decorator on _execute method."""
 

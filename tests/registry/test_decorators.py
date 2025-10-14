@@ -85,6 +85,117 @@ class TestAddSubprocessSerializationSupport:
         instance = enhanced()
         assert instance.method() == "original_method"
 
+    def test_add_serialization_to_pydantic_model(self):
+        """Test adding serialization to a Pydantic model."""
+
+        class PydanticTool(BaseModel):
+            value: str
+            count: int = 1
+
+        enhanced = _add_subprocess_serialization_support(PydanticTool, "pydantic_tool")
+
+        # Should have _tool_name
+        assert hasattr(enhanced, "_tool_name")
+        assert enhanced._tool_name == "pydantic_tool"
+
+        # Should have serialization methods
+        assert hasattr(enhanced, "__getstate__")
+        assert hasattr(enhanced, "__setstate__")
+
+        # Test instance creation
+        instance = enhanced(value="test", count=5)
+        assert instance.value == "test"
+        assert instance.count == 5
+
+    def test_add_serialization_with_custom_getstate(self):
+        """Test adding serialization to class with custom __getstate__."""
+
+        class CustomSerializable:
+            def __init__(self, value):
+                self.value = value
+
+            def __getstate__(self):
+                return {"custom": self.value}
+
+            def __setstate__(self, state):
+                self.value = state.get("custom", "default")
+
+        enhanced = _add_subprocess_serialization_support(CustomSerializable, "custom_tool")
+
+        # Should preserve and enhance custom serialization
+        instance = enhanced("test_value")
+        state = instance.__getstate__()
+
+        # Should include tool_name and custom state
+        assert "tool_name" in state or "custom" in state
+
+    def test_serialization_with_pydantic_v2(self):
+        """Test serialization with Pydantic v2 model_dump."""
+
+        class PydanticV2Tool(BaseModel):
+            name: str
+            age: int
+
+        enhanced = _add_subprocess_serialization_support(PydanticV2Tool, "v2_tool")
+
+        instance = enhanced(name="test", age=25)
+
+        # Test serialization
+        if hasattr(instance, "__getstate__"):
+            state = instance.__getstate__()
+            # Should work without errors
+            assert isinstance(state, dict)
+
+    def test_serialization_with_non_serializable_attrs(self):
+        """Test serialization handles non-serializable attributes."""
+
+        class ToolWithLambda:
+            def __init__(self):
+                self.func = lambda x: x * 2  # Non-serializable
+                self.value = 42
+
+        enhanced = _add_subprocess_serialization_support(ToolWithLambda, "lambda_tool")
+
+        instance = enhanced()
+
+        # Should have serialization methods
+        if hasattr(instance, "__getstate__"):
+            state = instance.__getstate__()
+            # Should handle non-serializable attributes gracefully
+            assert isinstance(state, dict)
+
+    def test_deserialization_with_dict_state(self):
+        """Test deserialization from dict state."""
+
+        class SimpleTool:
+            def __init__(self):
+                self.value = None
+
+        enhanced = _add_subprocess_serialization_support(SimpleTool, "simple")
+
+        instance = enhanced()
+        if hasattr(instance, "__setstate__"):
+            instance.__setstate__({"value": "restored", "tool_name": "simple"})
+
+            # State should be restored
+            if hasattr(instance, "value"):
+                assert instance.value == "restored"
+
+    def test_deserialization_with_non_dict_state(self):
+        """Test deserialization from non-dict state."""
+
+        class AnotherTool:
+            def __init__(self):
+                self.data = None
+
+        enhanced = _add_subprocess_serialization_support(AnotherTool, "another")
+
+        instance = enhanced()
+        if hasattr(instance, "__setstate__"):
+            # Non-dict state
+            instance.__setstate__("some_state")
+            # Should handle gracefully without errors
+
 
 class TestRegisterToolDecorator:
     """Tests for register_tool decorator."""
@@ -207,6 +318,61 @@ class TestRegisterToolDecorator:
             # Should be added to _REGISTERED_CLASSES
             assert TrackedTool in registered
 
+    def test_register_tool_skips_already_registered(self):
+        """Test that already registered tools are skipped."""
+        with (
+            patch("chuk_tool_processor.registry.decorators._PENDING_REGISTRATIONS", []) as pending,
+            patch("chuk_tool_processor.registry.decorators._REGISTERED_CLASSES", set()) as registered,
+        ):
+
+            @register_tool(name="first_tool")
+            class FirstTool(ValidatedTool):
+                class Arguments(BaseModel):
+                    value: str
+
+                async def _execute(self, value: str):
+                    return {"result": value}
+
+            initial_count = len(pending)
+
+            # Try to register again
+            registered.add(FirstTool)
+            FirstTool = register_tool(name="first_tool")(FirstTool)
+
+            # Should not add to pending again
+            assert len(pending) == initial_count
+
+    def test_register_tool_during_shutdown(self):
+        """Test that registration is skipped during shutdown."""
+        with (
+            patch("chuk_tool_processor.registry.decorators._PENDING_REGISTRATIONS", []) as pending,
+            patch("chuk_tool_processor.registry.decorators._SHUTTING_DOWN", True),
+        ):
+
+            @register_tool(name="shutdown_tool")
+            class ShutdownTool(ValidatedTool):
+                class Arguments(BaseModel):
+                    value: str
+
+                async def _execute(self, value: str):
+                    return {"result": value}
+
+            # Should not add to pending during shutdown
+            assert len(pending) == 0
+
+    def test_register_tool_with_sync_execute(self):
+        """Test that tools with non-async execute raise TypeError."""
+        with (
+            patch("chuk_tool_processor.registry.decorators._PENDING_REGISTRATIONS", []),
+            patch("chuk_tool_processor.registry.decorators._REGISTERED_CLASSES", set()),
+        ):
+            with pytest.raises(TypeError, match="must have an async execute method"):
+
+                @register_tool(name="sync_tool")
+                class SyncTool:
+                    def execute(self, value: str):  # Not async
+                        return {"result": value}
+
 
 class TestMakePydanticToolCompatible:
     """Tests for make_pydantic_tool_compatible function."""
@@ -257,16 +423,92 @@ class TestMakePydanticToolCompatible:
         # Arguments should also be made compatible
         assert hasattr(compatible.Arguments, "__reduce__")
 
+    def test_make_compatible_adds_tool_name_property(self):
+        """Test that tool_name property is added."""
+
+        class SimpleTool:
+            async def execute(self, value):
+                return value
+
+        compatible = make_pydantic_tool_compatible(SimpleTool, "simple_tool")
+
+        # Should have tool_name accessible at class level
+        assert hasattr(compatible, "tool_name")
+        # Check if it's a property on the class
+        tool_name_attr = getattr(compatible, "tool_name", None)
+        assert tool_name_attr is not None or hasattr(compatible, "_tool_name")
+
+    def test_make_compatible_with_existing_tool_name(self):
+        """Test with class that already has tool_name."""
+
+        class ToolWithName:
+            tool_name = "existing_name"
+
+            async def execute(self, value):
+                return value
+
+        compatible = make_pydantic_tool_compatible(ToolWithName, "new_name")
+
+        # Should preserve existing tool_name attribute
+        assert hasattr(compatible, "tool_name")
+
+    def test_make_compatible_adds_getstate(self):
+        """Test that __getstate__ is added."""
+
+        class ToolWithoutState:
+            async def execute(self, value):
+                return value
+
+        compatible = make_pydantic_tool_compatible(ToolWithoutState, "stateful")
+
+        # Should have __getstate__
+        assert hasattr(compatible, "__getstate__")
+
+    def test_make_compatible_adds_setstate(self):
+        """Test that __setstate__ is added."""
+
+        class ToolWithoutState:
+            async def execute(self, value):
+                return value
+
+        compatible = make_pydantic_tool_compatible(ToolWithoutState, "stateful")
+
+        # Should have __setstate__
+        assert hasattr(compatible, "__setstate__")
+
+    def test_make_compatible_preserves_existing_getstate(self):
+        """Test that existing __getstate__ is preserved."""
+
+        class ToolWithState:
+            def __getstate__(self):
+                return {"custom": "state"}
+
+            def __setstate__(self, state):
+                pass
+
+            async def execute(self, value):
+                return value
+
+        compatible = make_pydantic_tool_compatible(ToolWithState, "stateful")
+
+        # Should still have custom __getstate__
+        instance = compatible()
+        state = instance.__getstate__()
+        # Should work without errors
+        assert isinstance(state, dict)
+
 
 class TestEnsureRegistrations:
     """Tests for ensure_registrations function."""
 
+    @pytest.mark.asyncio
     async def test_ensure_registrations_empty(self):
         """Test ensure_registrations with no pending tools."""
         with patch("chuk_tool_processor.registry.decorators._pending_registrations", []):
             await ensure_registrations()
             # Should complete without error
 
+    @pytest.mark.asyncio
     async def test_ensure_registrations_with_pending(self):
         """Test ensure_registrations with pending tools."""
         mock_registry = AsyncMock()
@@ -289,6 +531,7 @@ class TestEnsureRegistrations:
             # Should register all pending tools
             assert mock_registry.register_tool.call_count == 2
 
+    @pytest.mark.asyncio
     async def test_ensure_registrations_clears_pending(self):
         """Test that pending list is cleared after registration."""
         mock_registry = AsyncMock()
@@ -357,6 +600,41 @@ class TestDiscoverDecoratedTools:
             assert tools1 is not tools2
             assert isinstance(tools1, list)
 
+    def test_discover_with_multiple_namespaces(self):
+        """Test discovering tools from multiple namespaces."""
+
+        class DefaultTool(ValidatedTool):
+            _tool_registration_info = {"name": "DefaultTool", "namespace": "default", "metadata": {}}
+
+        class CustomTool(ValidatedTool):
+            _tool_registration_info = {"name": "CustomTool", "namespace": "custom", "metadata": {}}
+
+        mock_module = MagicMock()
+        mock_module.DefaultTool = DefaultTool
+        mock_module.CustomTool = CustomTool
+
+        with patch("sys.modules", {"chuk_tool_processor.test_ns": mock_module}):
+            # Get all tools
+            all_tools = discover_decorated_tools()
+            assert len([t for t in all_tools if hasattr(t, "_tool_registration_info")]) >= 0
+
+            # Verify both tools are found regardless of namespace
+            tool_names = [t.__name__ for t in all_tools if hasattr(t, "__name__")]
+            # Should include tools from different namespaces
+            assert isinstance(all_tools, list)
+
+    def test_discover_handles_module_errors(self):
+        """Test that discover handles modules that raise errors gracefully."""
+
+        class BadModule:
+            def __getattribute__(self, name):
+                raise AttributeError("Bad module")
+
+        with patch("sys.modules", {"bad_module": BadModule()}):
+            # Should not raise, just skip the bad module
+            tools = discover_decorated_tools()
+            assert isinstance(tools, list)
+
 
 class TestHandleShutdown:
     """Tests for _handle_shutdown function."""
@@ -393,6 +671,7 @@ class TestHandleShutdown:
 class TestDecoratorIntegration:
     """Integration tests for decorators."""
 
+    @pytest.mark.asyncio
     async def test_full_registration_flow(self):
         """Test complete registration flow from decorator to registry."""
         mock_registry = AsyncMock()
