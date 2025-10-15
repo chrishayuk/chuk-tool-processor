@@ -41,16 +41,19 @@ class TestHTTPStreamableTransportHeaders:
         """Test that configured headers are used in HTTP requests."""
         headers = {"Authorization": "Bearer oauth-token"}
 
-        with patch("chuk_tool_processor.mcp.transport.http_streamable_transport.http_client") as mock_client:
-            # Mock the http_client context manager
+        with patch(
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.ChukHTTPTransport"
+        ) as mock_transport_class:
+            # Mock the transport instance
+            mock_http_transport = AsyncMock()
             mock_read = AsyncMock()
             mock_write = AsyncMock()
-            mock_context = AsyncMock()
-            mock_context.__aenter__ = AsyncMock(return_value=(mock_read, mock_write))
-            mock_context.__aexit__ = AsyncMock(return_value=None)
+            mock_http_transport.get_streams = AsyncMock(return_value=(mock_read, mock_write))
+            mock_http_transport.__aenter__ = AsyncMock(return_value=mock_http_transport)
+            mock_http_transport.__aexit__ = AsyncMock(return_value=None)
 
-            # http_client is called as a function returning a context manager
-            mock_client.return_value = mock_context
+            # ChukHTTPTransport is called as a constructor
+            mock_transport_class.return_value = mock_http_transport
 
             # Mock the send_initialize and send_ping functions
             with (
@@ -65,11 +68,11 @@ class TestHTTPStreamableTransportHeaders:
                 # Initialize should use the headers
                 await transport.initialize()
 
-                # Verify http_client was called
-                assert mock_client.called
+                # Verify ChukHTTPTransport was called
+                assert mock_transport_class.called
 
                 # Get the call arguments
-                call_args = mock_client.call_args
+                call_args = mock_transport_class.call_args
 
                 # The first argument should be StreamableHTTPParameters with headers
                 http_params = call_args[0][0]

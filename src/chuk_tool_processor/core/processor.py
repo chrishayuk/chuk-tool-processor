@@ -370,7 +370,7 @@ class ToolProcessor:
         def _args_digest(args: dict[str, Any]) -> str:
             """Return a stable hash for any JSON-serialisable payload."""
             blob = json.dumps(args, sort_keys=True, default=str)
-            return hashlib.md5(blob.encode()).hexdigest()
+            return hashlib.md5(blob.encode(), usedforsecurity=False).hexdigest()  # nosec B324
 
         unique_calls: dict[str, ToolCall] = {}
         for call in all_calls:

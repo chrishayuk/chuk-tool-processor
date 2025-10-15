@@ -110,8 +110,9 @@ class SSETransport(MCPBaseTransport):
         if self.configured_headers:
             headers.update(self.configured_headers)
 
-        # Add API key as Bearer token if provided
-        if self.api_key:
+        # Add API key as Bearer token if provided and no Authorization header exists
+        # This prevents clobbering OAuth tokens from configured_headers
+        if self.api_key and "Authorization" not in headers:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
         return headers
@@ -269,10 +270,28 @@ class SSETransport(MCPBaseTransport):
                         # Extract session ID from URL if present
                         if "session_id=" in data_part:
                             self.session_id = data_part.split("session_id=")[1].split("&")[0]
+                        elif "sessionId=" in data_part:
+                            self.session_id = data_part.split("sessionId=")[1].split("&")[0]
                         else:
                             self.session_id = str(uuid.uuid4())
 
                         logger.debug("Session endpoint discovered via event format: %s", self.message_url)
+                        continue
+
+                    # RELATIVE PATH FORMAT: event: endpoint + data: /sse/message?sessionId=...
+                    elif current_event == "endpoint" and data_part.startswith("/"):
+                        endpoint_path = data_part
+                        self.message_url = f"{self.url}{endpoint_path}"
+
+                        # Extract session ID if present
+                        if "session_id=" in endpoint_path:
+                            self.session_id = endpoint_path.split("session_id=")[1].split("&")[0]
+                        elif "sessionId=" in endpoint_path:
+                            self.session_id = endpoint_path.split("sessionId=")[1].split("&")[0]
+                        else:
+                            self.session_id = str(uuid.uuid4())
+
+                        logger.debug("Session endpoint discovered via relative path: %s", self.message_url)
                         continue
 
                     # OLD FORMAT: data: /messages/... (backwards compatibility)

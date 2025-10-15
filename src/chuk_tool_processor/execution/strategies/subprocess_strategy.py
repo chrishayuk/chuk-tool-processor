@@ -95,7 +95,8 @@ def _serialized_tool_worker(
 
     try:
         # Deserialize the complete tool
-        tool = pickle.loads(serialized_tool_data)
+        # This is safe as the data comes from the parent process, not untrusted external sources
+        tool = pickle.loads(serialized_tool_data)  # nosec B301
 
         # Multiple fallbacks to ensure tool_name is available
 

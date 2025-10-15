@@ -362,11 +362,11 @@ class CachingToolExecutor:
         """
         try:
             blob = json.dumps(arguments, sort_keys=True, default=str)
-            return hashlib.md5(blob.encode()).hexdigest()
+            return hashlib.md5(blob.encode(), usedforsecurity=False).hexdigest()  # nosec B324
         except Exception as e:
             logger.warning(f"Error hashing arguments: {e}")
             # Fallback to a string representation
-            return hashlib.md5(str(arguments).encode()).hexdigest()
+            return hashlib.md5(str(arguments).encode(), usedforsecurity=False).hexdigest()  # nosec B324
 
     def _is_cacheable(self, tool: str) -> bool:
         """
@@ -565,7 +565,9 @@ def invalidate_cache(tool: str, arguments: dict[str, Any] | None = None):
 
     async def _invalidate(cache: CacheInterface):
         if arguments is not None:
-            h = hashlib.md5(json.dumps(arguments, sort_keys=True, default=str).encode()).hexdigest()
+            h = hashlib.md5(
+                json.dumps(arguments, sort_keys=True, default=str).encode(), usedforsecurity=False
+            ).hexdigest()  # nosec B324
             await cache.invalidate(tool, h)
             logger.debug(f"Invalidated cache entry for {tool} with specific arguments")
         else:

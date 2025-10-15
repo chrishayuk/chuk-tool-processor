@@ -16,10 +16,12 @@ from chuk_mcp.protocol.messages import (  # type: ignore[import-untyped]
     send_tools_call,
     send_tools_list,
 )
+from chuk_mcp.transports.http.parameters import StreamableHTTPParameters  # type: ignore[import-untyped]
 
 # Import chuk-mcp HTTP transport components
-from chuk_mcp.transports.http import http_client  # type: ignore[import-untyped]
-from chuk_mcp.transports.http.parameters import StreamableHTTPParameters  # type: ignore[import-untyped]
+from chuk_mcp.transports.http.transport import (
+    StreamableHTTPTransport as ChukHTTPTransport,  # type: ignore[import-untyped]
+)
 
 from .base_transport import MCPBaseTransport
 
@@ -78,7 +80,7 @@ class HTTPStreamableTransport(MCPBaseTransport):
             logger.debug("Session ID configured: %s", self.session_id)
 
         # State tracking (enhanced like SSE)
-        self._http_context = None
+        self._http_transport = None
         self._read_stream = None
         self._write_stream = None
         self._initialized = False
@@ -115,8 +117,9 @@ class HTTPStreamableTransport(MCPBaseTransport):
         if self.configured_headers:
             headers.update(self.configured_headers)
 
-        # Add API key as Bearer token if provided
-        if self.api_key:
+        # Add API key as Bearer token if provided and no Authorization header exists
+        # This prevents clobbering OAuth tokens from configured_headers
+        if self.api_key and "Authorization" not in headers:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
         # Add session ID if provided
@@ -159,33 +162,38 @@ class HTTPStreamableTransport(MCPBaseTransport):
             headers = self._get_headers()
             logger.debug("Using headers: %s", list(headers.keys()))
 
-            # Create StreamableHTTPParameters with proper configuration
+            # Create StreamableHTTPParameters with minimal configuration
+            # NOTE: Keep params minimal - extra params can break message routing
             http_params = StreamableHTTPParameters(
                 url=self.url,
                 timeout=self.default_timeout,
                 headers=headers,
-                bearer_token=None,  # Don't duplicate auth - it's in headers
-                session_id=self.session_id,
                 enable_streaming=True,
-                max_concurrent_requests=5,
-                max_retries=2,
-                retry_delay=1.0,
-                user_agent="chuk-tool-processor/1.0.0",
             )
 
-            # Create and enter the HTTP context
-            self._http_context = http_client(http_params)
+            # Create and store transport (will be managed via async with in parent scope)
+            self._http_transport = ChukHTTPTransport(http_params)
 
+            # IMPORTANT: Must use async with for proper stream setup
             logger.debug("Establishing HTTP connection...")
-            self._read_stream, self._write_stream = await asyncio.wait_for(
-                self._http_context.__aenter__(), timeout=self.connection_timeout
+            self._http_context_entered = await asyncio.wait_for(
+                self._http_transport.__aenter__(), timeout=self.connection_timeout
             )
+
+            # Get streams after context entered
+            self._read_stream, self._write_stream = await self._http_transport.get_streams()
+
+            # Give the transport's message handler task time to start
+            await asyncio.sleep(0.1)
 
             # Enhanced MCP initialize sequence
             logger.debug("Sending MCP initialize request...")
             init_start = time.time()
 
-            await asyncio.wait_for(send_initialize(self._read_stream, self._write_stream), timeout=self.default_timeout)
+            await asyncio.wait_for(
+                send_initialize(self._read_stream, self._write_stream, timeout=self.default_timeout),
+                timeout=self.default_timeout,
+            )
 
             init_time = time.time() - init_start
             logger.debug("MCP initialize completed in %.3fs", init_time)
@@ -193,9 +201,11 @@ class HTTPStreamableTransport(MCPBaseTransport):
             # Verify connection with ping (enhanced like SSE)
             logger.debug("Verifying connection with ping...")
             ping_start = time.time()
+            # Use longer timeout for initial ping - some servers (like Notion) are slow
+            ping_timeout = max(self.default_timeout, 15.0)
             ping_success = await asyncio.wait_for(
-                send_ping(self._read_stream, self._write_stream),
-                timeout=10.0,  # Longer timeout for initial ping
+                send_ping(self._read_stream, self._write_stream, timeout=ping_timeout),
+                timeout=ping_timeout,
             )
             ping_time = time.time() - ping_start
 
@@ -273,8 +283,8 @@ class HTTPStreamableTransport(MCPBaseTransport):
             )
 
         try:
-            if self._http_context is not None:
-                await self._http_context.__aexit__(None, None, None)
+            if self._http_transport is not None:
+                await self._http_transport.__aexit__(None, None, None)
                 logger.debug("HTTP Streamable context closed")
 
         except Exception as e:
@@ -284,7 +294,7 @@ class HTTPStreamableTransport(MCPBaseTransport):
 
     async def _cleanup(self) -> None:
         """Enhanced cleanup with state reset."""
-        self._http_context = None
+        self._http_transport = None
         self._read_stream = None
         self._write_stream = None
         self._initialized = False
@@ -298,7 +308,8 @@ class HTTPStreamableTransport(MCPBaseTransport):
         start_time = time.time()
         try:
             result = await asyncio.wait_for(
-                send_ping(self._read_stream, self._write_stream), timeout=self.default_timeout
+                send_ping(self._read_stream, self._write_stream, timeout=self.default_timeout),
+                timeout=self.default_timeout,
             )
 
             success = bool(result)
@@ -347,7 +358,8 @@ class HTTPStreamableTransport(MCPBaseTransport):
         start_time = time.time()
         try:
             tools_response = await asyncio.wait_for(
-                send_tools_list(self._read_stream, self._write_stream), timeout=self.default_timeout
+                send_tools_list(self._read_stream, self._write_stream, timeout=self.default_timeout),
+                timeout=self.default_timeout,
             )
 
             # Normalize response

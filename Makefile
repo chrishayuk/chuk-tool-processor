@@ -16,7 +16,8 @@ help:
 	@echo "  lint           - Run code linters"
 	@echo "  format         - Auto-format code"
 	@echo "  typecheck      - Run type checking"
-	@echo "  check          - Run all checks (lint, typecheck, test)"
+	@echo "  security       - Run security checks"
+	@echo "  check          - Run all checks (lint, typecheck, security, test)"
 	@echo "  run            - Run the server"
 	@echo "  build          - Build the project"
 	@echo "  publish        - Build and publish to PyPI"
@@ -205,8 +206,19 @@ typecheck:
 		echo "MyPy not found. Install with: pip install mypy"; \
 	fi
 
+# Security checks
+security:
+	@echo "Running security checks..."
+	@if command -v uv >/dev/null 2>&1; then \
+		uv run bandit -r src -ll; \
+	elif command -v bandit >/dev/null 2>&1; then \
+		bandit -r src -ll; \
+	else \
+		echo "Bandit not found. Install with: pip install bandit"; \
+	fi
+
 # Run all checks
-check: lint typecheck test
+check: lint typecheck security test
 	@echo "All checks completed."
 
 # Show project info

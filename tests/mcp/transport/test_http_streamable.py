@@ -57,23 +57,27 @@ class TestHTTPStreamableTransport:
     @pytest.mark.asyncio
     async def test_initialize_success(self, transport):
         """Test successful HTTP Streamable transport initialization with metrics tracking."""
-        mock_context = AsyncMock()
-        mock_streams = (Mock(), Mock())  # (read_stream, write_stream)
+        mock_http_transport = AsyncMock()
+        mock_read_stream = Mock()
+        mock_write_stream = Mock()
 
         with (
-            patch("chuk_tool_processor.mcp.transport.http_streamable_transport.http_client", return_value=mock_context),
+            patch(
+                "chuk_tool_processor.mcp.transport.http_streamable_transport.ChukHTTPTransport",
+                return_value=mock_http_transport,
+            ),
             patch(
                 "chuk_tool_processor.mcp.transport.http_streamable_transport.send_ping", AsyncMock(return_value=True)
             ),
         ):
-            mock_context.__aenter__.return_value = mock_streams
+            mock_http_transport.get_streams.return_value = (mock_read_stream, mock_write_stream)
 
             result = await transport.initialize()
 
             assert result is True
             assert transport._initialized is True
-            assert transport._read_stream == mock_streams[0]
-            assert transport._write_stream == mock_streams[1]
+            assert transport._read_stream == mock_read_stream
+            assert transport._write_stream == mock_write_stream
 
             # Check metrics were updated
             metrics = transport.get_metrics()
@@ -83,16 +87,20 @@ class TestHTTPStreamableTransport:
     @pytest.mark.asyncio
     async def test_initialize_ping_fails(self, transport):
         """Test HTTP Streamable initialization when ping fails but connection succeeds."""
-        mock_context = AsyncMock()
-        mock_streams = (Mock(), Mock())
+        mock_http_transport = AsyncMock()
+        mock_read_stream = Mock()
+        mock_write_stream = Mock()
 
         with (
-            patch("chuk_tool_processor.mcp.transport.http_streamable_transport.http_client", return_value=mock_context),
+            patch(
+                "chuk_tool_processor.mcp.transport.http_streamable_transport.ChukHTTPTransport",
+                return_value=mock_http_transport,
+            ),
             patch(
                 "chuk_tool_processor.mcp.transport.http_streamable_transport.send_ping", AsyncMock(return_value=False)
             ),
         ):
-            mock_context.__aenter__.return_value = mock_streams
+            mock_http_transport.get_streams.return_value = (mock_read_stream, mock_write_stream)
 
             result = await transport.initialize()
 
@@ -103,13 +111,14 @@ class TestHTTPStreamableTransport:
     @pytest.mark.asyncio
     async def test_initialize_timeout(self, transport):
         """Test HTTP Streamable transport initialization timeout."""
-        mock_context = AsyncMock()
+        mock_http_transport = AsyncMock()
 
         with patch(
-            "chuk_tool_processor.mcp.transport.http_streamable_transport.http_client", return_value=mock_context
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.ChukHTTPTransport",
+            return_value=mock_http_transport,
         ):
             # Simulate timeout during context entry
-            mock_context.__aenter__.side_effect = TimeoutError()
+            mock_http_transport.__aenter__.side_effect = TimeoutError()
 
             result = await transport.initialize()
 
@@ -393,16 +402,16 @@ class TestHTTPStreamableTransport:
         transport._metrics["successful_calls"] = 4
         transport._metrics["failed_calls"] = 1
 
-        mock_context = AsyncMock()
-        transport._http_context = mock_context
+        mock_http_transport = AsyncMock()
+        transport._http_transport = mock_http_transport
 
         await transport.close()
 
         assert transport._initialized is False
-        assert transport._http_context is None
+        assert transport._http_transport is None
         assert transport._read_stream is None
         assert transport._write_stream is None
-        mock_context.__aexit__.assert_called_once_with(None, None, None)
+        mock_http_transport.__aexit__.assert_called_once_with(None, None, None)
 
     @pytest.mark.asyncio
     async def test_close_no_context(self, transport):
@@ -531,7 +540,7 @@ class TestHTTPStreamableTransport:
     async def test_initialize_with_exception(self, transport):
         """Test initialization with general exception."""
         with patch(
-            "chuk_tool_processor.mcp.transport.http_streamable_transport.http_client",
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.ChukHTTPTransport",
             side_effect=Exception("Connection error"),
         ):
             result = await transport.initialize()
@@ -690,7 +699,7 @@ class TestHTTPStreamableTransport:
         transport._initialized = True
         transport._metrics["total_calls"] = 10
         transport._metrics["successful_calls"] = 8
-        transport._http_context = AsyncMock()
+        transport._http_transport = AsyncMock()
 
         await transport.close()
         assert transport._initialized is False
@@ -699,9 +708,9 @@ class TestHTTPStreamableTransport:
     async def test_close_with_exception(self, transport):
         """Test close when context exit raises exception."""
         transport._initialized = True
-        mock_context = AsyncMock()
-        transport._http_context = mock_context
-        mock_context.__aexit__.side_effect = Exception("Exit error")
+        mock_http_transport = AsyncMock()
+        transport._http_transport = mock_http_transport
+        mock_http_transport.__aexit__.side_effect = Exception("Exit error")
 
         await transport.close()
         assert transport._initialized is False
@@ -767,7 +776,7 @@ class TestHTTPStreamableTransport:
     async def test_initialize_connection_error_increments_metric(self, transport):
         """Test initialize increments connection error metric on failure."""
         with patch(
-            "chuk_tool_processor.mcp.transport.http_streamable_transport.http_client",
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.ChukHTTPTransport",
             side_effect=Exception("Connection error"),
         ):
             result = await transport.initialize()
