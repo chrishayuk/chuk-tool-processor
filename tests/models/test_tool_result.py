@@ -64,7 +64,7 @@ def test_is_success_property():
 
 def test_duration_property():
     """Test duration property calculates correctly."""
-    from datetime import datetime, timedelta
+    from datetime import datetime
 
     start = datetime(2024, 1, 1, 12, 0, 0)
     end = datetime(2024, 1, 1, 12, 0, 5)  # 5 seconds later
@@ -101,7 +101,7 @@ async def test_to_dict():
         cached=True,
         attempts=2,
         stream_id="stream-123",
-        is_partial=False
+        is_partial=False,
     )
 
     result_dict = await res.to_dict()
@@ -132,11 +132,7 @@ def test_create_stream_chunk():
 
 def test_create_stream_chunk_with_id():
     """Test creating stream chunk with custom stream_id."""
-    chunk = ToolResult.create_stream_chunk(
-        tool="streaming_tool",
-        result={"chunk": 1},
-        stream_id="custom-stream-id"
-    )
+    chunk = ToolResult.create_stream_chunk(tool="streaming_tool", result={"chunk": 1}, stream_id="custom-stream-id")
 
     assert chunk.stream_id == "custom-stream-id"
     assert chunk.is_partial is True
@@ -157,7 +153,7 @@ async def test_from_dict():
         "cached": False,
         "attempts": 1,
         "stream_id": None,
-        "is_partial": False
+        "is_partial": False,
     }
 
     res = await ToolResult.from_dict(data)

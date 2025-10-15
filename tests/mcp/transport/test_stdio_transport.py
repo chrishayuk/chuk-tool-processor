@@ -626,7 +626,7 @@ class TestStdioTransport:
         assert transport.is_connected() is False
 
     @pytest.mark.asyncio
-    async def test_get_tools_not_initialized(self, transport):
+    async def test_get_tools_not_initialized_returns_empty(self, transport):
         """Test get_tools when not initialized."""
         transport._initialized = False
         tools = await transport.get_tools()
@@ -673,7 +673,7 @@ class TestStdioTransport:
             assert tools == []
 
     @pytest.mark.asyncio
-    async def test_call_tool_not_initialized(self, transport):
+    async def test_call_tool_not_initialized_returns_error(self, transport):
         """Test call_tool when not initialized."""
         result = await transport.call_tool("test", {})
         assert result["isError"] is True
@@ -712,7 +712,7 @@ class TestStdioTransport:
             assert result["content"] == {"data": "value"}
 
     @pytest.mark.asyncio
-    async def test_list_resources_not_initialized(self, transport):
+    async def test_list_resources_not_initialized_returns_empty(self, transport):
         """Test list_resources when not initialized."""
         result = await transport.list_resources()
         assert result == {}
@@ -800,7 +800,7 @@ class TestStdioTransport:
         ):
             mock_context.__aenter__.return_value = mock_streams
 
-            result = await transport._attempt_recovery()
+            await transport._attempt_recovery()
             assert transport._metrics["recovery_attempts"] == 1
             assert transport._metrics["process_restarts"] == 1
 

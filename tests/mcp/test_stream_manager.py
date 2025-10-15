@@ -390,9 +390,7 @@ class TestStreamManager:
             mock_transport.get_tools = AsyncMock(return_value=[])
             mock_sse.return_value = mock_transport
 
-            stream_manager = await StreamManager.create_with_sse(
-                servers=[{"name": "test", "url": "http://test.com"}]
-            )
+            stream_manager = await StreamManager.create_with_sse(servers=[{"name": "test", "url": "http://test.com"}])
 
             assert stream_manager is not None
             assert isinstance(stream_manager, StreamManager)
@@ -762,9 +760,7 @@ class TestStreamManager:
             mock_transport.initialize = AsyncMock(return_value=False)
             mock_http.return_value = mock_transport
 
-            await stream_manager.initialize_with_http_streamable(
-                servers=[{"name": "test", "url": "http://test.com"}]
-            )
+            await stream_manager.initialize_with_http_streamable(servers=[{"name": "test", "url": "http://test.com"}])
 
             assert "test" not in stream_manager.transports
 
@@ -798,21 +794,30 @@ class TestStreamManager:
             assert "test" not in stream_manager.transports
 
     @pytest.mark.asyncio
-    async def test_initialize_with_http_streamable_headers_warning(self, stream_manager):
-        """Test initialize_with_http_streamable logs warning for headers."""
+    async def test_initialize_with_http_streamable_headers_support(self, stream_manager):
+        """Test initialize_with_http_streamable passes headers correctly."""
         with patch("chuk_tool_processor.mcp.stream_manager.HTTPStreamableTransport") as mock_http:
             mock_transport = AsyncMock(spec=MCPBaseTransport)
             mock_transport.initialize = AsyncMock(return_value=True)
+            mock_transport.send_ping = AsyncMock(return_value=True)
             mock_transport.get_tools = AsyncMock(return_value=[])
             mock_http.return_value = mock_transport
 
             await stream_manager.initialize_with_http_streamable(
-                servers=[{"name": "test", "url": "http://test.com", "headers": {"Custom": "Header"}}]
+                servers=[
+                    {
+                        "name": "test",
+                        "url": "http://test.com",
+                        "headers": {"Custom": "Header", "Authorization": "Bearer token"},
+                    }
+                ]
             )
 
-            # Headers should not be passed (not supported yet)
+            # Headers should now be passed
             call_kwargs = mock_http.call_args[1]
-            assert "headers" not in call_kwargs
+            assert "headers" in call_kwargs
+            assert call_kwargs["headers"]["Custom"] == "Header"
+            assert call_kwargs["headers"]["Authorization"] == "Bearer token"
 
     # ------------------------------------------------------------------ #
     # Query methods tests                                                #
@@ -1152,10 +1157,7 @@ class TestStreamManager:
     def test_get_streams_fallback_to_attributes(self, stream_manager):
         """Test get_streams falls back to read/write stream attributes."""
         # Create mock that doesn't have get_streams but has read/write_stream attributes
-        mock_transport = type('MockTransport', (), {
-            'read_stream': 'read',
-            'write_stream': 'write'
-        })()
+        mock_transport = type("MockTransport", (), {"read_stream": "read", "write_stream": "write"})()
         stream_manager.transports["server1"] = mock_transport
 
         streams = stream_manager.get_streams()

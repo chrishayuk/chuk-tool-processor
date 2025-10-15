@@ -13,11 +13,7 @@ class ConcreteStrategy(ExecutionStrategy):
         """Execute calls and return results."""
         results = []
         for call in calls:
-            result = ToolResult(
-                tool=call.tool,
-                result={"executed": True, "timeout": timeout},
-                error=None
-            )
+            result = ToolResult(tool=call.tool, result={"executed": True, "timeout": timeout}, error=None)
             results.append(result)
         return results
 
@@ -29,11 +25,7 @@ class StreamingStrategy(ExecutionStrategy):
         """Execute calls and return results."""
         results = []
         for call in calls:
-            result = ToolResult(
-                tool=call.tool,
-                result={"executed": True, "streaming": True},
-                error=None
-            )
+            result = ToolResult(tool=call.tool, result={"executed": True, "streaming": True}, error=None)
             results.append(result)
         return results
 

@@ -369,12 +369,11 @@ class StreamManager:
                         "session_id": cfg.get("session_id"),
                     }
 
-                    # Handle headers if provided (for future HTTPStreamableTransport support)
+                    # Handle headers if provided
                     headers = cfg.get("headers", {})
                     if headers:
-                        logger.debug("HTTP Streamable %s: Headers provided but not yet supported in transport", name)
-                        # TODO: Add headers support when HTTPStreamableTransport is updated
-                        # transport_params['headers'] = headers
+                        transport_params["headers"] = headers
+                        logger.debug("HTTP Streamable %s: Custom headers configured: %s", name, list(headers.keys()))
 
                     transport = HTTPStreamableTransport(**transport_params)
 

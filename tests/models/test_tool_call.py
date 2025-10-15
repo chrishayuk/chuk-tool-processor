@@ -64,12 +64,7 @@ async def test_to_dict():
 @pytest.mark.asyncio
 async def test_from_dict():
     """Test creating ToolCall from dictionary."""
-    data = {
-        "id": "test-id-123",
-        "tool": "my_tool",
-        "namespace": "my_namespace",
-        "arguments": {"param": 42}
-    }
+    data = {"id": "test-id-123", "tool": "my_tool", "namespace": "my_namespace", "arguments": {"param": 42}}
     call = await ToolCall.from_dict(data)
 
     assert call.id == "test-id-123"

@@ -256,8 +256,8 @@ class TestWithValidation:
     @pytest.mark.asyncio
     async def test_with_validation_invalid_args(self):
         """Test with_validation catches invalid arguments."""
-        from chuk_tool_processor.models.validated_tool import with_validation
         from chuk_tool_processor.core.exceptions import ToolValidationError
+        from chuk_tool_processor.models.validated_tool import with_validation
 
         @with_validation
         class TypedTool:
@@ -271,8 +271,8 @@ class TestWithValidation:
     @pytest.mark.asyncio
     async def test_with_validation_invalid_result(self):
         """Test with_validation catches invalid return values."""
-        from chuk_tool_processor.models.validated_tool import with_validation
         from chuk_tool_processor.core.exceptions import ToolValidationError
+        from chuk_tool_processor.models.validated_tool import with_validation
 
         @with_validation
         class StrictReturnTool:

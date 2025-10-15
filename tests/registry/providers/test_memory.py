@@ -135,3 +135,141 @@ async def test_metadata_override_fields(registry):
     assert meta.version == "9.9"
     assert meta.tags == {"a", "b"}
     assert meta.argument_schema == {"type": "object"}
+
+
+@pytest.mark.asyncio
+async def test_get_tool_strict_success(registry):
+    """Test get_tool_strict when tool exists."""
+    await registry.register_tool(AsyncTool, name="StrictTool")
+
+    # Should return the tool without raising
+    tool = await registry.get_tool_strict("StrictTool")
+    assert tool is AsyncTool
+
+
+@pytest.mark.asyncio
+async def test_get_tool_strict_raises_on_missing(registry):
+    """Test get_tool_strict raises ToolNotFoundError - line 89."""
+    # Try to get a tool that doesn't exist
+    with pytest.raises(ToolNotFoundError) as exc_info:
+        await registry.get_tool_strict("NonExistentTool", namespace="default")
+
+    # Verify the error message includes the namespace and name
+    assert "default.NonExistentTool" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_list_metadata_with_specific_namespace(registry):
+    """Test list_metadata with specific namespace - lines 127-128."""
+    # Register tools in different namespaces
+    await registry.register_tool(AsyncTool, name="Tool1", namespace="ns1")
+    await registry.register_tool(AsyncMulTool, name="Tool2", namespace="ns2")
+    await registry.register_tool(NoDocTool, name="Tool3", namespace="ns1")
+
+    # List metadata for specific namespace
+    ns1_metadata = await registry.list_metadata(namespace="ns1")
+
+    # Should only include tools from ns1
+    assert len(ns1_metadata) == 2
+    names = [meta.name for meta in ns1_metadata]
+    assert "Tool1" in names
+    assert "Tool3" in names
+    assert "Tool2" not in names
+
+    # All should be from ns1
+    assert all(meta.namespace == "ns1" for meta in ns1_metadata)
+
+
+@pytest.mark.asyncio
+async def test_list_metadata_all_namespaces(registry):
+    """Test list_metadata with no namespace filter - lines 131-134."""
+    # Register tools in different namespaces
+    await registry.register_tool(AsyncTool, name="ToolA", namespace="alpha")
+    await registry.register_tool(AsyncMulTool, name="ToolB", namespace="beta")
+    await registry.register_tool(NoDocTool, name="ToolC", namespace="gamma")
+
+    # List all metadata (namespace=None)
+    all_metadata = await registry.list_metadata(namespace=None)
+
+    # Should include all tools from all namespaces
+    assert len(all_metadata) >= 3
+    names = [meta.name for meta in all_metadata]
+    assert "ToolA" in names
+    assert "ToolB" in names
+    assert "ToolC" in names
+
+    # Should have tools from multiple namespaces
+    namespaces = {meta.namespace for meta in all_metadata}
+    assert "alpha" in namespaces
+    assert "beta" in namespaces
+    assert "gamma" in namespaces
+
+
+@pytest.mark.asyncio
+async def test_list_metadata_empty_namespace(registry):
+    """Test list_metadata for a namespace with no tools."""
+    # Don't register any tools in "empty_ns"
+    await registry.register_tool(AsyncTool, name="Tool", namespace="other")
+
+    # List metadata for empty namespace
+    empty_metadata = await registry.list_metadata(namespace="empty_ns")
+
+    # Should return empty list
+    assert empty_metadata == []
+
+
+@pytest.mark.asyncio
+async def test_get_tool_from_different_namespace(registry):
+    """Test getting tools from different namespaces."""
+    # Register same tool name in different namespaces
+    await registry.register_tool(AsyncTool, name="SameName", namespace="ns1")
+    await registry.register_tool(AsyncMulTool, name="SameName", namespace="ns2")
+
+    # Get from ns1
+    tool1 = await registry.get_tool("SameName", namespace="ns1")
+    assert tool1 is AsyncTool
+
+    # Get from ns2
+    tool2 = await registry.get_tool("SameName", namespace="ns2")
+    assert tool2 is AsyncMulTool
+
+    # They should be different
+    assert tool1 is not tool2
+
+
+@pytest.mark.asyncio
+async def test_get_metadata_from_nonexistent_namespace(registry):
+    """Test get_metadata from namespace that doesn't exist."""
+    result = await registry.get_metadata("AnyTool", namespace="nonexistent")
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_concurrent_registrations(registry):
+    """Test concurrent tool registrations work correctly."""
+    import asyncio
+
+    # Define multiple tools to register concurrently
+    class Tool1:
+        async def execute(self):
+            return 1
+
+    class Tool2:
+        async def execute(self):
+            return 2
+
+    class Tool3:
+        async def execute(self):
+            return 3
+
+    # Register tools concurrently
+    await asyncio.gather(
+        registry.register_tool(Tool1, name="Tool1"),
+        registry.register_tool(Tool2, name="Tool2"),
+        registry.register_tool(Tool3, name="Tool3"),
+    )
+
+    # All should be registered
+    assert await registry.get_tool("Tool1") is Tool1
+    assert await registry.get_tool("Tool2") is Tool2
+    assert await registry.get_tool("Tool3") is Tool3

@@ -670,16 +670,15 @@ class TestSSETransport:
         with (
             patch("httpx.AsyncClient", side_effect=[mock_stream_client, mock_send_client]),
             patch.object(transport, "_test_gateway_connectivity", AsyncMock(return_value=True)),
-        ):
-            # Mock SSE processing to raise exception
-            with patch.object(
+            patch.object(
                 transport,
                 "_process_sse_stream",
                 AsyncMock(side_effect=Exception("SSE died")),
-            ):
-                result = await transport.initialize()
-                await asyncio.sleep(0.2)  # Let task die
-                assert result is False
+            ),
+        ):
+            result = await transport.initialize()
+            await asyncio.sleep(0.2)  # Let task die
+            assert result is False
 
     @pytest.mark.asyncio
     async def test_initialize_init_response_has_error(self, transport):
@@ -709,16 +708,18 @@ class TestSSETransport:
         async_context = AsyncStreamContext(mock_sse_response)
         mock_stream_client.stream = Mock(return_value=async_context)
 
-        with patch("httpx.AsyncClient", side_effect=[mock_stream_client, mock_send_client]):
-            with patch.object(
+        with (
+            patch("httpx.AsyncClient", side_effect=[mock_stream_client, mock_send_client]),
+            patch.object(
                 transport,
                 "_send_request",
                 AsyncMock(return_value={"error": {"message": "Init failed"}}),
-            ):
-                with patch.object(transport, "_test_gateway_connectivity", AsyncMock(return_value=True)):
-                    result = await transport.initialize()
-                    await asyncio.sleep(0.2)
-                    assert result is False
+            ),
+            patch.object(transport, "_test_gateway_connectivity", AsyncMock(return_value=True)),
+        ):
+            result = await transport.initialize()
+            await asyncio.sleep(0.2)
+            assert result is False
 
     @pytest.mark.asyncio
     async def test_send_request_with_valid_timeout_param(self, transport):
@@ -802,7 +803,6 @@ class TestSSETransport:
         # Test without trailing slash
         t2 = SSETransport("http://test.com", api_key="key")
         assert t2.url == "http://test.com"
-
 
     @pytest.mark.asyncio
     async def test_call_tool_with_different_response_formats(self, transport):

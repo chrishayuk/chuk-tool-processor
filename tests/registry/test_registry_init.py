@@ -1,5 +1,6 @@
 # tests/registry/test_registry_init.py
 """Tests for registry/__init__.py module."""
+
 import pytest
 
 from chuk_tool_processor.registry import get_default_registry, initialize
@@ -62,9 +63,14 @@ class TestRegistryInit:
         # Initialize should process this registration
         registry = await initialize()
 
+        # Ensure we're using the real registry, not a mock
+        from chuk_tool_processor.registry.providers.memory import InMemoryToolRegistry
+        assert isinstance(registry, InMemoryToolRegistry), f"Expected InMemoryToolRegistry, got {type(registry)}"
+
         # Check if the tool was registered
         tool = await registry.get_tool("test_init_tool_unique", namespace="test_init_ns")
-        assert tool is not None
-        # Check if the tool is a class or has __name__ attribute
+        assert tool is not None, "Tool should be registered after initialize()"
+
+        # Check if the tool is the actual class (not a string identifier)
         assert hasattr(tool, "__name__"), f"Tool should have __name__, got {type(tool)}: {tool}"
-        assert tool.__name__ == "TestInitTool"
+        assert tool.__name__ == "TestInitTool", f"Expected TestInitTool, got {tool.__name__}"

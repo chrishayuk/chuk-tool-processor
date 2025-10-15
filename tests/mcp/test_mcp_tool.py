@@ -422,7 +422,6 @@ class TestMCPTool:
         assert result == "dict args work"
         mock_stream_manager.call_tool.assert_called_once()
 
-
     def test_serialization_preserves_recovery_config(self, simple_mcp_tool):
         """Test serialization preserves recovery config."""
         from chuk_tool_processor.mcp.mcp_tool import RecoveryConfig

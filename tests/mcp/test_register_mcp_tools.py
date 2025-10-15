@@ -451,7 +451,6 @@ class TestUpdateMCPToolsStreamManager:
     @pytest.fixture
     def mock_registry_with_tools(self):
         """Mock registry with some registered tools."""
-        from chuk_tool_processor.mcp.register_mcp_tools import update_mcp_tools_stream_manager
 
         reg = Mock(spec=ToolRegistryInterface)
         reg.list_tools = AsyncMock(return_value=[("mcp", "tool1"), ("mcp", "tool2"), ("other", "tool3")])

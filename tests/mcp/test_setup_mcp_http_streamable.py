@@ -38,9 +38,7 @@ class TestSetupMCPHTTPStreamable:
                 {"name": "geocoding", "url": "http://geo.com"},
             ]
 
-            processor, stream_manager = await setup_mcp_http_streamable(
-                servers=servers, namespace="http_test"
-            )
+            processor, stream_manager = await setup_mcp_http_streamable(servers=servers, namespace="http_test")
 
             assert processor == mock_processor
             assert stream_manager == mock_stream_manager
@@ -59,9 +57,7 @@ class TestSetupMCPHTTPStreamable:
                 "chuk_tool_processor.mcp.setup_mcp_http_streamable.register_mcp_tools",
                 AsyncMock(return_value=["tool1"]),
             ) as mock_register,
-            patch(
-                "chuk_tool_processor.mcp.setup_mcp_http_streamable.ToolProcessor"
-            ) as mock_processor_class,
+            patch("chuk_tool_processor.mcp.setup_mcp_http_streamable.ToolProcessor") as mock_processor_class,
         ):
             servers = [{"name": "test", "url": "http://test.com", "api_key": "test-key"}]
             server_names = {0: "custom_name"}
@@ -195,9 +191,7 @@ class TestSetupMCPHTTPStreamable:
                 "chuk_tool_processor.mcp.setup_mcp_http_streamable.register_mcp_tools",
                 AsyncMock(return_value=[]),
             ),
-            patch(
-                "chuk_tool_processor.mcp.setup_mcp_http_streamable.ToolProcessor"
-            ) as mock_processor_class,
+            patch("chuk_tool_processor.mcp.setup_mcp_http_streamable.ToolProcessor") as mock_processor_class,
         ):
             servers = [{"name": "test", "url": "http://test.com"}]
 

@@ -512,16 +512,12 @@ class TestHTTPStreamableTransport:
     def test_init_with_custom_headers(self):
         """Test initialization with custom headers."""
         custom_headers = {"X-Custom": "Value", "Authorization": "Bearer token"}
-        transport = HTTPStreamableTransport(
-            "http://test.com", headers=custom_headers, enable_metrics=True
-        )
+        transport = HTTPStreamableTransport("http://test.com", headers=custom_headers, enable_metrics=True)
         assert transport.configured_headers == custom_headers
 
     def test_init_with_session_id(self):
         """Test initialization with session ID."""
-        transport = HTTPStreamableTransport(
-            "http://test.com", session_id="test-session-123", enable_metrics=True
-        )
+        transport = HTTPStreamableTransport("http://test.com", session_id="test-session-123", enable_metrics=True)
         assert transport.session_id == "test-session-123"
 
     @pytest.mark.asyncio
@@ -609,7 +605,7 @@ class TestHTTPStreamableTransport:
             assert result["error"] == "Tool error"
 
     @pytest.mark.asyncio
-    async def test_list_resources_not_initialized(self, transport):
+    async def test_list_resources_not_initialized_returns_empty(self, transport):
         """Test list_resources when not initialized."""
         result = await transport.list_resources()
         assert result == {}
