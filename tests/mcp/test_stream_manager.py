@@ -356,7 +356,7 @@ class TestStreamManager:
 
     @pytest.mark.asyncio
     async def test_create_with_timeout(self):
-        """Test create factory method with initialization timeout."""
+        """Test create factory method with initialization timeout - graceful handling."""
         with (
             patch("chuk_tool_processor.mcp.stream_manager.load_config") as mock_load,
             patch("chuk_tool_processor.mcp.stream_manager.StdioTransport") as mock_stdio,
@@ -372,14 +372,17 @@ class TestStreamManager:
             mock_transport.initialize = slow_init
             mock_stdio.return_value = mock_transport
 
-            # Should timeout with short initialization_timeout
-            with pytest.raises(RuntimeError, match="timed out"):
-                await StreamManager.create(
-                    config_file="test.json",
-                    servers=["test"],
-                    transport_type="stdio",
-                    initialization_timeout=0.1,
-                )
+            # Should handle timeout gracefully (no exception, but no tools)
+            stream_manager = await StreamManager.create(
+                config_file="test.json",
+                servers=["test"],
+                transport_type="stdio",
+                initialization_timeout=0.1,
+            )
+
+            # Manager should be created but have no tools due to timeout
+            assert isinstance(stream_manager, StreamManager)
+            assert len(stream_manager.get_all_tools()) == 0
 
     @pytest.mark.asyncio
     async def test_create_with_sse_factory(self):
@@ -397,7 +400,7 @@ class TestStreamManager:
 
     @pytest.mark.asyncio
     async def test_create_with_sse_timeout(self):
-        """Test create_with_sse with timeout."""
+        """Test create_with_sse with timeout - graceful handling."""
         with patch("chuk_tool_processor.mcp.stream_manager.SSETransport") as mock_sse:
             mock_transport = AsyncMock(spec=MCPBaseTransport)
 
@@ -408,10 +411,14 @@ class TestStreamManager:
             mock_transport.initialize = slow_init
             mock_sse.return_value = mock_transport
 
-            with pytest.raises(RuntimeError, match="SSE.*timed out"):
-                await StreamManager.create_with_sse(
-                    servers=[{"name": "test", "url": "http://test.com"}], initialization_timeout=0.1
-                )
+            # Should handle timeout gracefully (no exception, but no tools)
+            stream_manager = await StreamManager.create_with_sse(
+                servers=[{"name": "test", "url": "http://test.com"}], initialization_timeout=0.1
+            )
+
+            # Manager should be created but have no tools due to timeout
+            assert isinstance(stream_manager, StreamManager)
+            assert len(stream_manager.get_all_tools()) == 0
 
     @pytest.mark.asyncio
     async def test_create_with_http_streamable_factory(self):
@@ -431,7 +438,7 @@ class TestStreamManager:
 
     @pytest.mark.asyncio
     async def test_create_with_http_streamable_timeout(self):
-        """Test create_with_http_streamable with timeout."""
+        """Test create_with_http_streamable with timeout - graceful handling."""
         with patch("chuk_tool_processor.mcp.stream_manager.HTTPStreamableTransport") as mock_http:
             mock_transport = AsyncMock(spec=MCPBaseTransport)
 
@@ -442,10 +449,14 @@ class TestStreamManager:
             mock_transport.initialize = slow_init
             mock_http.return_value = mock_transport
 
-            with pytest.raises(RuntimeError, match="HTTP Streamable.*timed out"):
-                await StreamManager.create_with_http_streamable(
-                    servers=[{"name": "test", "url": "http://test.com"}], initialization_timeout=0.1
-                )
+            # Should handle timeout gracefully (no exception, but no tools)
+            stream_manager = await StreamManager.create_with_http_streamable(
+                servers=[{"name": "test", "url": "http://test.com"}], initialization_timeout=0.1
+            )
+
+            # Manager should be created but have no tools due to timeout
+            assert isinstance(stream_manager, StreamManager)
+            assert len(stream_manager.get_all_tools()) == 0
 
     @pytest.mark.asyncio
     async def test_create_managed_context_manager(self):
@@ -663,7 +674,7 @@ class TestStreamManager:
             mock_stdio.return_value = mock_transport
 
             await stream_manager.initialize(
-                config_file="test.json", servers=["test"], transport_type="stdio", default_timeout=0.1
+                config_file="test.json", servers=["test"], transport_type="stdio", initialization_timeout=0.1
             )
 
             # Should not add the transport due to timeout
@@ -707,7 +718,7 @@ class TestStreamManager:
             mock_sse.return_value = mock_transport
 
             await stream_manager.initialize_with_sse(
-                servers=[{"name": "test", "url": "http://test.com"}], connection_timeout=0.1
+                servers=[{"name": "test", "url": "http://test.com"}], initialization_timeout=0.1
             )
 
             assert "test" not in stream_manager.transports
@@ -778,7 +789,7 @@ class TestStreamManager:
             mock_http.return_value = mock_transport
 
             await stream_manager.initialize_with_http_streamable(
-                servers=[{"name": "test", "url": "http://test.com"}], connection_timeout=0.1
+                servers=[{"name": "test", "url": "http://test.com"}], initialization_timeout=0.1
             )
 
             assert "test" not in stream_manager.transports

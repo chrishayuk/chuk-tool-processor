@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-Standalone example: OAuth authentication with Notion MCP server using chuk-tool-processor.
+Atlassian SSE OAuth transport example with chuk-tool-processor.
 
-This script:
-1. Performs MCP OAuth flow with Notion (RFC 8414 + RFC 7591 + PKCE)
-2. Uses the OAuth token with HTTPStreamableTransport
-3. Proves OAuth headers are preserved and not overwritten
+This script demonstrates:
+1. OAuth 2.1 authentication flow with Atlassian MCP server
+2. SSE transport connection with OAuth token
+3. Proper initialization_timeout handling for slow servers
 
 Usage:
     cd /Users/chrishay/chris-source/chuk-ai/chuk-tool-processor
-    uv run python examples/test_notion_oauth.py
+    uv run python examples/atlassian_sse.py
 """
 
 import asyncio
@@ -25,7 +25,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
 
-from chuk_tool_processor.mcp.setup_mcp_http_streamable import setup_mcp_http_streamable
+from chuk_tool_processor.mcp.setup_mcp_sse import setup_mcp_sse
 
 # Set up logging - WARNING level to reduce noise
 logging.basicConfig(
@@ -99,7 +99,7 @@ async def register_client(registration_endpoint: str) -> dict:
     print("\n[2/5] Registering OAuth client...")
 
     client_metadata = {
-        "client_name": "chuk-tool-processor-test",
+        "client_name": "chuk-tool-processor-atlassian-test",
         "redirect_uris": ["http://127.0.0.1:8765/callback"],
         "grant_types": ["authorization_code"],
         "response_types": ["code"],
@@ -200,39 +200,39 @@ async def exchange_code_for_token(
 
 
 async def test_with_chuk_tool_processor(access_token: str):
-    """Test OAuth token with chuk-tool-processor setup_mcp_http_streamable."""
+    """Test OAuth token with chuk-tool-processor SSE transport."""
     print("\n[5/5] Testing with chuk-tool-processor...")
     print("="*70)
 
-    notion_url = "https://mcp.notion.com/mcp"
+    atlassian_url = "https://mcp.atlassian.com/v1/sse"
 
-    print("\n✓ Test: Connecting to Notion MCP server with OAuth")
-    print(f"    URL: {notion_url}")
+    print("\n✓ Test: Connecting to Atlassian MCP server with OAuth via SSE")
+    print(f"    URL: {atlassian_url}")
     print("    Initializing connection (may take 60-120 seconds)...")
 
     try:
-        # Use setup_mcp_http_streamable with extended timeout for Notion
+        # Use setup_mcp_sse with OAuth token in headers
         servers = [
             {
-                "name": "notion",
-                "url": notion_url,
+                "name": "atlassian",
+                "url": atlassian_url,
                 "headers": {"Authorization": f"Bearer {access_token}"},
             }
         ]
 
-        # Notion is slow - use 120s initialization timeout
-        processor, stream_manager = await setup_mcp_http_streamable(
+        # Use 120s initialization timeout for potentially slow servers
+        processor, stream_manager = await setup_mcp_sse(
             servers=servers,
-            namespace="notion",
+            namespace="atlassian",
             connection_timeout=30.0,
             default_timeout=30.0,
-            initialization_timeout=120.0,  # Extended for Notion
+            initialization_timeout=120.0,  # Extended for slow servers
         )
 
         print("    ✅ Connection successful!")
 
         # Get tools
-        print("\n✓ Fetching tools from Notion")
+        print("\n✓ Fetching tools from Atlassian")
         tools = stream_manager.get_all_tools()
         print(f"    Retrieved {len(tools)} tools")
 
@@ -252,7 +252,7 @@ async def test_with_chuk_tool_processor(access_token: str):
         print("    ❌ Connection timed out after 120s")
         print("\n    Possible issues:")
         print("      • Token may be invalid or expired")
-        print("      • Notion MCP server not responding")
+        print("      • Atlassian MCP server not responding")
         print("      • Network connectivity issue")
         return False
 
@@ -266,18 +266,18 @@ async def main():
     """Main OAuth flow and test."""
     print("""
 ╔══════════════════════════════════════════════════════════════════════╗
-║          Notion OAuth Test with chuk-tool-processor                   ║
+║          Atlassian SSE OAuth Test with chuk-tool-processor            ║
 ║                                                                       ║
-║  This script performs complete MCP OAuth flow and tests               ║
-║  that OAuth tokens are correctly preserved in HTTPStreamableTransport ║
+║  This script performs complete OAuth 2.1 flow and tests               ║
+║  that OAuth tokens work correctly with SSE transport                  ║
 ╚══════════════════════════════════════════════════════════════════════╝
 """)
 
-    server_url = "https://mcp.notion.com"
-
     try:
-        # Step 1: Discover OAuth metadata
-        metadata = await discover_oauth_metadata(server_url)
+        atlassian_server = "https://mcp.atlassian.com"
+
+        # Step 1: Discover OAuth server
+        metadata = await discover_oauth_metadata(atlassian_server)
 
         # Step 2: Register client
         registration = await register_client(metadata['registration_endpoint'])
@@ -293,14 +293,13 @@ async def main():
             code_challenge
         )
 
-        # Step 5: Exchange for token
+        # Step 5: Exchange for access token
         tokens = await exchange_code_for_token(
             metadata['token_endpoint'],
             client_id,
             auth_code,
             code_verifier
         )
-
         access_token = tokens['access_token']
 
         # Step 6: Test with chuk-tool-processor
@@ -308,14 +307,14 @@ async def main():
 
         if success:
             print("\n" + "="*70)
-            print("✅ SUCCESS! OAuth + initialization_timeout working correctly")
+            print("✅ SUCCESS! OAuth + SSE + initialization_timeout working correctly")
             print("="*70)
             print("\nKey points proven:")
-            print("  ✓ Complete MCP OAuth flow (RFC 8414 + RFC 7591 + PKCE)")
-            print("  ✓ OAuth token passed via headers to setup_mcp_http_streamable")
-            print("  ✓ Extended initialization_timeout (120s) allows Notion to initialize")
-            print("  ✓ Successfully connected to Notion MCP server")
-            print("  ✓ Retrieved tools from Notion")
+            print("  ✓ Complete OAuth 2.1 flow (RFC 8414 + RFC 7591 + PKCE)")
+            print("  ✓ OAuth token passed via headers to SSE transport")
+            print("  ✓ Extended initialization_timeout (120s) allows slow servers to initialize")
+            print("  ✓ Successfully connected to Atlassian MCP server")
+            print("  ✓ Retrieved tools from Atlassian")
             return 0
         else:
             print("\n" + "="*70)

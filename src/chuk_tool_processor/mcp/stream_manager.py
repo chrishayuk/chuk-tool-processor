@@ -62,16 +62,16 @@ class StreamManager:
         initialization_timeout: float = 60.0,  # NEW: Timeout for entire initialization
     ) -> StreamManager:
         """Create StreamManager with timeout protection."""
-        try:
-            inst = cls()
-            await asyncio.wait_for(
-                inst.initialize(config_file, servers, server_names, transport_type, default_timeout=default_timeout),
-                timeout=initialization_timeout,
-            )
-            return inst
-        except TimeoutError:
-            logger.error("StreamManager initialization timed out after %ss", initialization_timeout)
-            raise RuntimeError(f"StreamManager initialization timed out after {initialization_timeout}s")
+        inst = cls()
+        await inst.initialize(
+            config_file,
+            servers,
+            server_names,
+            transport_type,
+            default_timeout=default_timeout,
+            initialization_timeout=initialization_timeout,
+        )
+        return inst
 
     @classmethod
     async def create_with_sse(
@@ -83,18 +83,15 @@ class StreamManager:
         initialization_timeout: float = 60.0,  # NEW
     ) -> StreamManager:
         """Create StreamManager with SSE transport and timeout protection."""
-        try:
-            inst = cls()
-            await asyncio.wait_for(
-                inst.initialize_with_sse(
-                    servers, server_names, connection_timeout=connection_timeout, default_timeout=default_timeout
-                ),
-                timeout=initialization_timeout,
-            )
-            return inst
-        except TimeoutError:
-            logger.error("SSE StreamManager initialization timed out after %ss", initialization_timeout)
-            raise RuntimeError(f"SSE StreamManager initialization timed out after {initialization_timeout}s")
+        inst = cls()
+        await inst.initialize_with_sse(
+            servers,
+            server_names,
+            connection_timeout=connection_timeout,
+            default_timeout=default_timeout,
+            initialization_timeout=initialization_timeout,
+        )
+        return inst
 
     @classmethod
     async def create_with_http_streamable(
@@ -106,20 +103,15 @@ class StreamManager:
         initialization_timeout: float = 60.0,  # NEW
     ) -> StreamManager:
         """Create StreamManager with HTTP Streamable transport and timeout protection."""
-        try:
-            inst = cls()
-            await asyncio.wait_for(
-                inst.initialize_with_http_streamable(
-                    servers, server_names, connection_timeout=connection_timeout, default_timeout=default_timeout
-                ),
-                timeout=initialization_timeout,
-            )
-            return inst
-        except TimeoutError:
-            logger.error("HTTP Streamable StreamManager initialization timed out after %ss", initialization_timeout)
-            raise RuntimeError(
-                f"HTTP Streamable StreamManager initialization timed out after {initialization_timeout}s"
-            )
+        inst = cls()
+        await inst.initialize_with_http_streamable(
+            servers,
+            server_names,
+            connection_timeout=connection_timeout,
+            default_timeout=default_timeout,
+            initialization_timeout=initialization_timeout,
+        )
+        return inst
 
     # ------------------------------------------------------------------ #
     #  NEW: Context manager support for automatic cleanup               #
@@ -167,6 +159,7 @@ class StreamManager:
         server_names: dict[int, str] | None = None,
         transport_type: str = "stdio",
         default_timeout: float = 30.0,
+        initialization_timeout: float = 60.0,
     ) -> None:
         """Initialize with graceful headers handling for all transport types."""
         if self._closed:
@@ -179,7 +172,11 @@ class StreamManager:
                 try:
                     if transport_type == "stdio":
                         params = await load_config(config_file, server_name)
-                        transport: MCPBaseTransport = StdioTransport(params)
+                        # Use initialization_timeout for connection_timeout since subprocess
+                        # launch can take time (e.g., uvx downloading packages)
+                        transport: MCPBaseTransport = StdioTransport(
+                            params, connection_timeout=initialization_timeout, default_timeout=default_timeout
+                        )
                     elif transport_type == "sse":
                         logger.warning(
                             "Using SSE transport in initialize() - consider using initialize_with_sse() instead"
@@ -241,15 +238,19 @@ class StreamManager:
                         continue
 
                     # Initialize with timeout protection
-                    if not await asyncio.wait_for(transport.initialize(), timeout=default_timeout):
-                        logger.error("Failed to init %s", server_name)
+                    try:
+                        if not await asyncio.wait_for(transport.initialize(), timeout=initialization_timeout):
+                            logger.error("Failed to init %s", server_name)
+                            continue
+                    except TimeoutError:
+                        logger.error("Timeout initialising %s (timeout=%ss)", server_name, initialization_timeout)
                         continue
 
                     self.transports[server_name] = transport
 
-                    # Ping and get tools with timeout protection
-                    status = "Up" if await asyncio.wait_for(transport.send_ping(), timeout=5.0) else "Down"
-                    tools = await asyncio.wait_for(transport.get_tools(), timeout=10.0)
+                    # Ping and get tools with timeout protection (use longer timeouts for slow servers)
+                    status = "Up" if await asyncio.wait_for(transport.send_ping(), timeout=30.0) else "Down"
+                    tools = await asyncio.wait_for(transport.get_tools(), timeout=30.0)
 
                     for t in tools:
                         name = t.get("name")
@@ -283,6 +284,7 @@ class StreamManager:
         server_names: dict[int, str] | None = None,
         connection_timeout: float = 10.0,
         default_timeout: float = 30.0,
+        initialization_timeout: float = 60.0,
     ) -> None:
         """Initialize with SSE transport with optional headers support."""
         if self._closed:
@@ -313,13 +315,18 @@ class StreamManager:
 
                     transport = SSETransport(**transport_params)
 
-                    if not await asyncio.wait_for(transport.initialize(), timeout=connection_timeout):
-                        logger.error("Failed to init SSE %s", name)
+                    try:
+                        if not await asyncio.wait_for(transport.initialize(), timeout=initialization_timeout):
+                            logger.error("Failed to init SSE %s", name)
+                            continue
+                    except TimeoutError:
+                        logger.error("Timeout initialising SSE %s (timeout=%ss)", name, initialization_timeout)
                         continue
 
                     self.transports[name] = transport
-                    status = "Up" if await asyncio.wait_for(transport.send_ping(), timeout=5.0) else "Down"
-                    tools = await asyncio.wait_for(transport.get_tools(), timeout=10.0)
+                    # Use longer timeouts for slow servers (ping can take time after initialization)
+                    status = "Up" if await asyncio.wait_for(transport.send_ping(), timeout=30.0) else "Down"
+                    tools = await asyncio.wait_for(transport.get_tools(), timeout=30.0)
 
                     for t in tools:
                         tname = t.get("name")
@@ -346,10 +353,13 @@ class StreamManager:
         server_names: dict[int, str] | None = None,
         connection_timeout: float = 30.0,
         default_timeout: float = 30.0,
+        initialization_timeout: float = 60.0,
     ) -> None:
         """Initialize with HTTP Streamable transport with graceful headers handling."""
         if self._closed:
             raise RuntimeError("Cannot initialize a closed StreamManager")
+
+        logger.debug(f"initialize_with_http_streamable: initialization_timeout={initialization_timeout}")
 
         async with self._lock:
             self.server_names = server_names or {}
@@ -377,13 +387,22 @@ class StreamManager:
 
                     transport = HTTPStreamableTransport(**transport_params)
 
-                    if not await asyncio.wait_for(transport.initialize(), timeout=connection_timeout):
-                        logger.error("Failed to init HTTP Streamable %s", name)
+                    logger.debug(f"Calling transport.initialize() for {name} with timeout={initialization_timeout}s")
+                    try:
+                        if not await asyncio.wait_for(transport.initialize(), timeout=initialization_timeout):
+                            logger.error("Failed to init HTTP Streamable %s", name)
+                            continue
+                    except TimeoutError:
+                        logger.error(
+                            "Timeout initialising HTTP Streamable %s (timeout=%ss)", name, initialization_timeout
+                        )
                         continue
+                    logger.debug(f"Successfully initialized {name}")
 
                     self.transports[name] = transport
-                    status = "Up" if await asyncio.wait_for(transport.send_ping(), timeout=5.0) else "Down"
-                    tools = await asyncio.wait_for(transport.get_tools(), timeout=10.0)
+                    # Use longer timeouts for slow servers (ping can take time after initialization)
+                    status = "Up" if await asyncio.wait_for(transport.send_ping(), timeout=30.0) else "Down"
+                    tools = await asyncio.wait_for(transport.get_tools(), timeout=30.0)
 
                     for t in tools:
                         tname = t.get("name")

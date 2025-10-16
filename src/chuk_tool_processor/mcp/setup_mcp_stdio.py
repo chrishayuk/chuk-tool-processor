@@ -30,6 +30,7 @@ async def setup_mcp_stdio(  # noqa: C901 - long but just a config facade
     servers: list[str],
     server_names: dict[int, str] | None = None,
     default_timeout: float = 10.0,
+    initialization_timeout: float = 60.0,
     max_concurrency: int | None = None,
     enable_caching: bool = True,
     cache_ttl: int = 300,
@@ -53,6 +54,7 @@ async def setup_mcp_stdio(  # noqa: C901 - long but just a config facade
         server_names=server_names,
         transport_type="stdio",
         default_timeout=default_timeout,  # 🔧 ADD THIS LINE
+        initialization_timeout=initialization_timeout,
     )
 
     # 2️⃣  pull the remote tool list and register each one locally

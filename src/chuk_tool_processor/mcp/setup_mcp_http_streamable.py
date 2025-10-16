@@ -34,6 +34,7 @@ async def setup_mcp_http_streamable(
     server_names: dict[int, str] | None = None,
     connection_timeout: float = 30.0,
     default_timeout: float = 30.0,
+    initialization_timeout: float = 60.0,
     max_concurrency: int | None = None,
     enable_caching: bool = True,
     cache_ttl: int = 300,
@@ -58,6 +59,7 @@ async def setup_mcp_http_streamable(
         server_names: Optional mapping of server indices to names
         connection_timeout: Timeout for initial HTTP connection setup
         default_timeout: Default timeout for tool execution
+        initialization_timeout: Timeout for complete initialization (default 60s, increase to 120s+ for slow servers like Notion)
         max_concurrency: Maximum concurrent operations
         enable_caching: Whether to enable response caching
         cache_ttl: Cache time-to-live in seconds
@@ -90,6 +92,7 @@ async def setup_mcp_http_streamable(
         server_names=server_names,
         connection_timeout=connection_timeout,
         default_timeout=default_timeout,
+        initialization_timeout=initialization_timeout,
     )
 
     # 2️⃣  pull the remote tool list and register each one locally

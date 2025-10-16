@@ -84,6 +84,7 @@ class TestSetupMCPHTTPStreamable:
                 server_names=server_names,
                 connection_timeout=60.0,
                 default_timeout=45.0,
+                initialization_timeout=60.0,
             )
 
             # Verify register_mcp_tools was called with correct namespace
