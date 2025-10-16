@@ -1,5 +1,9 @@
 # CHUK Tool Processor
 
+[![PyPI](https://img.shields.io/pypi/v/chuk-tool-processor.svg)](https://pypi.org/project/chuk-tool-processor/)
+[![Python](https://img.shields.io/pypi/pyversions/chuk-tool-processor.svg)](https://pypi.org/project/chuk-tool-processor/)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 **The missing link between LLM tool calls and reliable execution.**
 
 CHUK Tool Processor is a focused, production-ready framework that solves one problem exceptionally well: **processing tool calls from LLM outputs**. It's not a chatbot framework or LLM orchestration platform—it's the glue layer that bridges LLM responses and actual tool execution.
@@ -8,7 +12,7 @@ CHUK Tool Processor is a focused, production-ready framework that solves one pro
 
 When you build LLM applications, you face a gap:
 
-1. **LLM generates tool calls** in various formats (XML tags, OpenAI function calling, JSON)
+1. **LLM generates tool calls** in various formats (XML tags, OpenAI `tool_calls`, JSON)
 2. **??? Mystery step ???** where you need to:
    - Parse those calls reliably
    - Handle timeouts, retries, failures
@@ -19,7 +23,7 @@ When you build LLM applications, you face a gap:
    - Log everything for debugging
 3. **Get results back** to continue the LLM conversation
 
-Most frameworks give you step 1 and 3, but step 2 is where the complexity lives. CHUK Tool Processor **is** step 2.
+Most frameworks give you steps 1 and 3, but step 2 is where the complexity lives. CHUK Tool Processor **is** step 2.
 
 ## Why chuk-tool-processor?
 
@@ -79,7 +83,12 @@ Each layer is **optional** and **configurable**. Mix and match what you need.
 
 ### Installation
 
+**Prerequisites:** Python 3.11+ • Works on macOS, Linux, Windows
+
 ```bash
+# Using pip
+pip install chuk-tool-processor
+
 # Using uv (recommended)
 uv pip install chuk-tool-processor
 
@@ -91,21 +100,25 @@ uv pip install -e .
 
 ### 3-Minute Example
 
+Copy-paste this into a file and run it:
+
 ```python
 import asyncio
-from chuk_tool_processor import ToolProcessor, register_tool, initialize
+from chuk_tool_processor.core.processor import ToolProcessor
+from chuk_tool_processor.registry import initialize, register_tool
 
 # Step 1: Define a tool
 @register_tool(name="calculator")
 class Calculator:
     async def execute(self, operation: str, a: float, b: float) -> dict:
         ops = {"add": a + b, "multiply": a * b, "subtract": a - b}
+        if operation not in ops:
+            raise ValueError(f"Unsupported operation: {operation}")
         return {"result": ops[operation]}
 
 # Step 2: Process LLM output
 async def main():
     await initialize()
-
     processor = ToolProcessor()
 
     # Your LLM returned this tool call
@@ -114,12 +127,32 @@ async def main():
     # Process it
     results = await processor.process(llm_output)
 
-    print(results[0].result)  # {'result': 345}
+    # Each result is a ToolExecutionResult with: tool, args, result, error, duration, cached
+    # results[0].result contains the tool output
+    # results[0].error contains any error message (None if successful)
+    if results[0].error:
+        print(f"Error: {results[0].error}")
+    else:
+        print(results[0].result)  # {'result': 345}
 
 asyncio.run(main())
 ```
 
 **That's it.** You now have production-ready tool execution with timeouts, retries, and caching.
+
+> **Why not just use OpenAI tool calls?**
+> OpenAI's function calling is great for parsing, but you still need: parsing multiple formats (Anthropic XML, etc.), timeouts, retries, rate limits, caching, subprocess isolation, and connecting to external MCP servers. CHUK Tool Processor **is** that missing middle layer.
+
+## Choose Your Path
+
+| Your Goal | What You Need | Where to Look |
+|-----------|---------------|---------------|
+| ☕ **Just process LLM tool calls** | Basic tool registration + processor | [3-Minute Example](#3-minute-example) |
+| 🔌 **Connect to external tools** | MCP integration (HTTP/STDIO/SSE) | [MCP Integration](#5-mcp-integration-external-tools) |
+| 🛡️ **Production deployment** | Timeouts, retries, rate limits, caching | [Production Configuration](#using-the-processor) |
+| 🔒 **Run untrusted code safely** | Subprocess isolation strategy | [Subprocess Strategy](#using-subprocess-strategy) |
+| 📊 **Monitor and observe** | Structured logging and metrics | [Observability](#observability) |
+| 🌊 **Stream incremental results** | StreamingTool pattern | [StreamingTool](#streamingtool-real-time-results) |
 
 ### Real-World Quick Start
 
@@ -127,74 +160,103 @@ Here are the most common patterns you'll use:
 
 **Pattern 1: Local tools only**
 ```python
-from chuk_tool_processor import ToolProcessor, register_tool, initialize
+import asyncio
+from chuk_tool_processor.core.processor import ToolProcessor
+from chuk_tool_processor.registry import initialize, register_tool
 
 @register_tool(name="my_tool")
 class MyTool:
     async def execute(self, arg: str) -> dict:
         return {"result": f"Processed: {arg}"}
 
-await initialize()
-processor = ToolProcessor()
-results = await processor.process(llm_output)
+async def main():
+    await initialize()
+    processor = ToolProcessor()
+
+    llm_output = '<tool name="my_tool" args=\'{"arg": "hello"}\'/>'
+    results = await processor.process(llm_output)
+    print(results[0].result)  # {'result': 'Processed: hello'}
+
+asyncio.run(main())
 ```
 
 **Pattern 2: Mix local + remote MCP tools (Notion)**
 ```python
+import asyncio
+from chuk_tool_processor.registry import initialize, register_tool
 from chuk_tool_processor.mcp import setup_mcp_http_streamable
 
-# Register local tools first
 @register_tool(name="local_calculator")
 class Calculator:
     async def execute(self, a: int, b: int) -> int:
         return a + b
 
-# Then add remote Notion tools
-processor, manager = await setup_mcp_http_streamable(
-    servers=[{
-        "name": "notion",
-        "url": "https://mcp.notion.com/mcp",
-        "headers": {"Authorization": f"Bearer {oauth_token}"}
-    }],
-    namespace="notion"
-)
+async def main():
+    # Register local tools first
+    await initialize()
 
-# Now you have both local and remote tools!
-results = await processor.process('''
-    <tool name="local_calculator" args='{"a": 5, "b": 3}'/>
-    <tool name="notion.search_pages" args='{"query": "project docs"}'/>
-''')
+    # Then add Notion MCP tools (requires OAuth token)
+    processor, manager = await setup_mcp_http_streamable(
+        servers=[{
+            "name": "notion",
+            "url": "https://mcp.notion.com/mcp",
+            "headers": {"Authorization": f"Bearer {access_token}"}
+        }],
+        namespace="notion",
+        initialization_timeout=120.0
+    )
+
+    # Now you have both local and remote tools!
+    results = await processor.process('''
+        <tool name="local_calculator" args='{"a": 5, "b": 3}'/>
+        <tool name="notion.search_pages" args='{"query": "project docs"}'/>
+    ''')
+    print(f"Local result: {results[0].result}")
+    print(f"Notion result: {results[1].result}")
+
+asyncio.run(main())
 ```
 
-**Pattern 3: Local database via STDIO**
-```python
-from chuk_tool_processor.mcp import setup_mcp_stdio
-import json
+See `examples/notion_oauth.py` for complete OAuth flow.
 
-config = {
-    "mcpServers": {
-        "sqlite": {
-            "command": "uvx",
-            "args": ["mcp-server-sqlite", "--db-path", "./app.db"],
-            "transport": "stdio"
+**Pattern 3: Local SQLite database via STDIO**
+```python
+import asyncio
+import json
+from chuk_tool_processor.mcp import setup_mcp_stdio
+
+async def main():
+    # Configure SQLite MCP server (runs locally)
+    config = {
+        "mcpServers": {
+            "sqlite": {
+                "command": "uvx",
+                "args": ["mcp-server-sqlite", "--db-path", "./app.db"],
+                "transport": "stdio"
+            }
         }
     }
-}
 
-with open("config.json", "w") as f:
-    json.dump(config, f)
+    with open("mcp_config.json", "w") as f:
+        json.dump(config, f)
 
-processor, manager = await setup_mcp_stdio(
-    config_file="config.json",
-    servers=["sqlite"],
-    namespace="db"
-)
+    processor, manager = await setup_mcp_stdio(
+        config_file="mcp_config.json",
+        servers=["sqlite"],
+        namespace="db",
+        initialization_timeout=120.0  # First run downloads the package
+    )
 
-# Query your database
-results = await processor.process(
-    '<tool name="db.query" args=\'{"sql": "SELECT * FROM users"}\'/>'
-)
+    # Query your local database via MCP
+    results = await processor.process(
+        '<tool name="db.query" args=\'{"sql": "SELECT * FROM users LIMIT 10"}\'/>'
+    )
+    print(results[0].result)
+
+asyncio.run(main())
 ```
+
+See `examples/stdio_sqlite.py` for complete working example.
 
 ## Core Concepts
 
@@ -208,7 +270,8 @@ The **registry** is where you register tools for execution. Tools can be:
 - **Functions** registered via `register_fn_tool()`
 
 ```python
-from chuk_tool_processor import register_tool, ValidatedTool
+from chuk_tool_processor.registry import register_tool
+from chuk_tool_processor.models.validated_tool import ValidatedTool
 from pydantic import BaseModel, Field
 
 @register_tool(name="weather")
@@ -236,15 +299,23 @@ class WeatherTool(ValidatedTool):
 | **SubprocessStrategy** | Untrusted or risky code | Isolation ✅, Speed ❌ |
 
 ```python
-from chuk_tool_processor import ToolProcessor
-from chuk_tool_processor.execution.strategies import SubprocessStrategy
+import asyncio
+from chuk_tool_processor.core.processor import ToolProcessor
+from chuk_tool_processor.execution.strategies.subprocess_strategy import SubprocessStrategy
+from chuk_tool_processor.registry import get_default_registry
 
-processor = ToolProcessor(
-    strategy=SubprocessStrategy(
-        max_workers=4,
-        default_timeout=30.0
+async def main():
+    registry = await get_default_registry()
+    processor = ToolProcessor(
+        strategy=SubprocessStrategy(
+            registry=registry,
+            max_workers=4,
+            default_timeout=30.0
+        )
     )
-)
+    # Use processor...
+
+asyncio.run(main())
 ```
 
 ### 3. Execution Wrappers (Middleware)
@@ -268,18 +339,43 @@ The processor stacks them automatically: **Cache → Rate Limit → Retry → St
 
 **Parsers** extract tool calls from various LLM output formats:
 
-```python
-# XML Tags (Anthropic-style)
-'<tool name="search" args=\'{"query": "Python"}\'/>'
+**XML Tags (Anthropic-style)**
+```xml
+<tool name="search" args='{"query": "Python"}'/>
+```
 
-# OpenAI Function Calling
-{"tool_calls": [{"function": {"name": "search", "arguments": '{"query": "Python"}'}}]}
+**OpenAI `tool_calls` (JSON)**
+```json
+{
+  "tool_calls": [
+    {
+      "type": "function",
+      "function": {
+        "name": "search",
+        "arguments": "{\"query\": \"Python\"}"
+      }
+    }
+  ]
+}
+```
 
-# Direct JSON
-[{"tool": "search", "arguments": {"query": "Python"}}]
+**Direct JSON (array of calls)**
+```json
+[
+  { "tool": "search", "arguments": { "query": "Python" } }
+]
 ```
 
 All formats work automatically—no configuration needed.
+
+**Input Format Compatibility:**
+
+| Format | Example | Use Case |
+|--------|---------|----------|
+| **XML Tool Tag** | `<tool name="search" args='{"q":"Python"}'/>`| Anthropic Claude, XML-based LLMs |
+| **OpenAI tool_calls** | JSON object (above) | OpenAI GPT-4 function calling |
+| **Direct JSON** | `[{"tool": "search", "arguments": {"q": "Python"}}]` | Generic API integrations |
+| **Single dict** | `{"tool": "search", "arguments": {"q": "Python"}}` | Programmatic calls |
 
 ### 5. MCP Integration (External Tools)
 
@@ -297,11 +393,11 @@ servers = [
     {
         "name": "notion",
         "url": "https://mcp.notion.com/mcp",
-        "headers": {"Authorization": f"Bearer {your_oauth_token}"}
+        "headers": {"Authorization": f"Bearer {access_token}"}
     }
 ]
 
-processor, stream_manager = await setup_mcp_http_streamable(
+processor, manager = await setup_mcp_http_streamable(
     servers=servers,
     namespace="notion",
     initialization_timeout=120.0,  # Some services need time to initialize
@@ -340,7 +436,7 @@ with open("mcp_config.json", "w") as f:
     json.dump(config, f)
 
 # Connect to local SQLite server
-processor, stream_manager = await setup_mcp_stdio(
+processor, manager = await setup_mcp_stdio(
     config_file="mcp_config.json",
     servers=["sqlite"],
     namespace="db",
@@ -365,11 +461,11 @@ servers = [
     {
         "name": "atlassian",
         "url": "https://mcp.atlassian.com/v1/sse",
-        "headers": {"Authorization": f"Bearer {oauth_token}"}
+        "headers": {"Authorization": f"Bearer {access_token}"}
     }
 ]
 
-processor, stream_manager = await setup_mcp_sse(
+processor, manager = await setup_mcp_sse(
     servers=servers,
     namespace="atlassian",
     initialization_timeout=120.0
@@ -378,11 +474,11 @@ processor, stream_manager = await setup_mcp_sse(
 
 **Transport Comparison:**
 
-| Transport | Use Case | Examples |
-|-----------|----------|----------|
-| **HTTP Streamable** | Cloud APIs, SaaS services | Notion, GitHub, modern APIs |
-| **STDIO** | Local tools, databases | SQLite, filesystem, echo server |
-| **SSE** | Legacy cloud services | Older MCP implementations |
+| Transport | Use Case | Real Examples |
+|-----------|----------|---------------|
+| **HTTP Streamable** | Cloud APIs, SaaS services | Notion (`mcp.notion.com`) |
+| **STDIO** | Local tools, databases | SQLite (`mcp-server-sqlite`), Echo (`chuk-mcp-echo`) |
+| **SSE** | Legacy cloud services | Atlassian (`mcp.atlassian.com`) |
 
 **Relationship with [chuk-mcp](https://github.com/chrishayuk/chuk-mcp):**
 - `chuk-mcp` is a low-level MCP protocol client (handles transports, protocol negotiation)
@@ -398,18 +494,16 @@ CHUK Tool Processor supports multiple patterns for defining tools:
 #### Simple Function-Based Tools
 ```python
 from chuk_tool_processor.registry.auto_register import register_fn_tool
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
-async def get_current_time(timezone: str = "UTC") -> str:
+def get_current_time(timezone: str = "UTC") -> str:
     """Get the current time in the specified timezone."""
-    from datetime import datetime
-    import pytz
-    
-    tz = pytz.timezone(timezone)
-    current_time = datetime.now(tz)
-    return current_time.strftime("%Y-%m-%d %H:%M:%S %Z")
+    now = datetime.now(ZoneInfo(timezone))
+    return now.strftime("%Y-%m-%d %H:%M:%S %Z")
 
-# Register the function as a tool
-await register_fn_tool(get_current_time, namespace="utilities")
+# Register the function as a tool (sync — no await needed)
+register_fn_tool(get_current_time, namespace="utilities")
 ```
 
 #### ValidatedTool (Pydantic Type Safety)
@@ -453,26 +547,55 @@ class FileProcessor(StreamingTool):
                 yield self.Result(line=i, content=line.strip())
 ```
 
+**Consuming streaming results:**
+
+```python
+import asyncio
+from chuk_tool_processor.core.processor import ToolProcessor
+from chuk_tool_processor.registry import initialize
+
+async def main():
+    await initialize()
+    processor = ToolProcessor()
+    async for event in processor.astream('<tool name="file_processor" args=\'{"file_path":"README.md"}\'/>'):
+        # 'event' is a streamed chunk (either your Result model instance or a dict)
+        line = event["line"] if isinstance(event, dict) else getattr(event, "line", None)
+        content = event["content"] if isinstance(event, dict) else getattr(event, "content", None)
+        print(f"Line {line}: {content}")
+
+asyncio.run(main())
+```
+
 ### Using the Processor
 
 #### Basic Usage
 
+Call `await initialize()` once at startup to load your registry.
+
 ```python
-from chuk_tool_processor import ToolProcessor
+import asyncio
+from chuk_tool_processor.core.processor import ToolProcessor
+from chuk_tool_processor.registry import initialize
 
-processor = ToolProcessor()
-results = await processor.process(llm_output)
+async def main():
+    await initialize()
+    processor = ToolProcessor()
+    llm_output = '<tool name="calculator" args=\'{"operation":"add","a":2,"b":3}\'/>'
+    results = await processor.process(llm_output)
+    for result in results:
+        if result.error:
+            print(f"Error: {result.error}")
+        else:
+            print(f"Success: {result.result}")
 
-for result in results:
-    if result.error:
-        print(f"Error: {result.error}")
-    else:
-        print(f"Success: {result.result}")
+asyncio.run(main())
 ```
 
 #### Production Configuration
 
 ```python
+from chuk_tool_processor.core.processor import ToolProcessor
+
 processor = ToolProcessor(
     # Execution settings
     default_timeout=30.0,
@@ -492,17 +615,28 @@ processor = ToolProcessor(
 
 ### Using Subprocess Strategy
 
+Use `SubprocessStrategy` when running untrusted, third-party, or potentially unsafe code that shouldn't share the same process as your main app.
+
 For isolation and safety when running untrusted code:
 
 ```python
-from chuk_tool_processor.execution.strategies import SubprocessStrategy
+import asyncio
+from chuk_tool_processor.core.processor import ToolProcessor
+from chuk_tool_processor.execution.strategies.subprocess_strategy import SubprocessStrategy
+from chuk_tool_processor.registry import get_default_registry
 
-processor = ToolProcessor(
-    strategy=SubprocessStrategy(
-        max_workers=4,
-        default_timeout=30.0
+async def main():
+    registry = await get_default_registry()
+    processor = ToolProcessor(
+        strategy=SubprocessStrategy(
+            registry=registry,
+            max_workers=4,
+            default_timeout=30.0
+        )
     )
-)
+    # Use processor...
+
+asyncio.run(main())
 ```
 
 ### Real-World MCP Examples
@@ -608,19 +742,70 @@ results = await processor.process(
 
 See `examples/notion_oauth.py`, `examples/stdio_sqlite.py`, and `examples/stdio_echo.py` for complete working implementations.
 
-### Structured Logging
+### Observability
+
+#### Structured Logging
+
+Enable JSON logging for production observability:
 
 ```python
-from chuk_tool_processor.logging import setup_logging
+import asyncio
+from chuk_tool_processor.logging import setup_logging, get_logger
 
-await setup_logging(
-    level="INFO",
-    structured=True,  # JSON output for production
-    log_file="tool_processor.log"
-)
+async def main():
+    await setup_logging(
+        level="INFO",
+        structured=True,  # JSON output (structured=False for human-readable)
+        log_file="tool_processor.log"
+    )
+    logger = get_logger("my_app")
+    logger.info("logging ready")
+
+asyncio.run(main())
 ```
 
-Metrics are automatically collected for tool execution, caching, and parsing.
+When `structured=True`, logs are output as JSON. When `structured=False`, they're human-readable text.
+
+Example JSON log output:
+
+```json
+{
+  "timestamp": "2025-01-15T10:30:45.123Z",
+  "level": "INFO",
+  "tool": "calculator",
+  "status": "success",
+  "duration_ms": 4.2,
+  "cached": false,
+  "attempts": 1
+}
+```
+
+#### Automatic Metrics
+
+Metrics are automatically collected for:
+- ✅ Tool execution (success/failure rates, duration)
+- ✅ Cache performance (hit/miss rates)
+- ✅ Parser accuracy (which parsers succeeded)
+- ✅ Retry attempts (how many retries per tool)
+
+Access metrics programmatically:
+
+```python
+import asyncio
+from chuk_tool_processor.logging import metrics
+
+async def main():
+    # Metrics are logged automatically, but you can also access them
+    await metrics.log_tool_execution(
+        tool="custom_tool",
+        success=True,
+        duration=1.5,
+        cached=False,
+        attempts=1
+    )
+
+asyncio.run(main())
+```
 
 ### Error Handling
 
@@ -639,7 +824,8 @@ for result in results:
 
 ```python
 import pytest
-from chuk_tool_processor import ToolProcessor, initialize
+from chuk_tool_processor.core.processor import ToolProcessor
+from chuk_tool_processor.registry import initialize
 
 @pytest.mark.asyncio
 async def test_calculator():
@@ -674,9 +860,91 @@ processor = ToolProcessor(
     enable_caching=True,            # Result caching
     cache_ttl=300,                  # Cache TTL (seconds)
     enable_rate_limiting=False,     # Rate limiting
+    global_rate_limit=None,         # (requests per minute) global cap
     enable_retries=True,            # Auto-retry failures
-    max_retries=3                   # Max retry attempts
+    max_retries=3,                  # Max retry attempts
+    # Optional per-tool rate limits: {"tool.name": (requests, per_seconds)}
+    tool_rate_limits=None
 )
+```
+
+### Performance & Tuning
+
+| Parameter | Default | When to Adjust |
+|-----------|---------|----------------|
+| `default_timeout` | `30.0` | Increase for slow tools (e.g., AI APIs) |
+| `max_concurrency` | `10` | Increase for I/O-bound tools, decrease for CPU-bound |
+| `enable_caching` | `True` | Keep on for deterministic tools |
+| `cache_ttl` | `300` | Longer for stable data, shorter for real-time |
+| `enable_rate_limiting` | `False` | Enable when hitting API rate limits |
+| `global_rate_limit` | `None` | Set a global requests/min cap across all tools |
+| `enable_retries` | `True` | Disable for non-idempotent operations |
+| `max_retries` | `3` | Increase for flaky external APIs |
+| `tool_rate_limits` | `None` | Dict mapping tool name → (max_requests, window_seconds). Overrides `global_rate_limit` per tool |
+
+**Per-tool rate limiting example:**
+
+```python
+processor = ToolProcessor(
+    enable_rate_limiting=True,
+    global_rate_limit=100,  # 100 requests/minute across all tools
+    tool_rate_limits={
+        "notion.search_pages": (10, 60),  # 10 requests per 60 seconds
+        "expensive_api": (5, 60),          # 5 requests per minute
+        "local_tool": (1000, 60),          # 1000 requests per minute (local is fast)
+    }
+)
+```
+
+### Security Model
+
+CHUK Tool Processor provides multiple layers of safety:
+
+| Concern | Protection | Configuration |
+|---------|------------|---------------|
+| **Timeouts** | Every tool has a timeout | `default_timeout=30.0` |
+| **Process Isolation** | Run tools in separate processes | `strategy=SubprocessStrategy()` |
+| **Rate Limiting** | Prevent abuse and API overuse | `enable_rate_limiting=True` |
+| **Input Validation** | Pydantic validation on arguments | Use `ValidatedTool` |
+| **Error Containment** | Failures don't crash the processor | Built-in exception handling |
+| **Retry Limits** | Prevent infinite retry loops | `max_retries=3` |
+
+**Important Security Notes:**
+- **Environment Variables**: Subprocess strategy inherits the parent process environment by default. For stricter isolation, use container-level controls (Docker, cgroups).
+- **Network Access**: Tools inherit network access from the host. For network isolation, use OS-level sandboxing (containers, network namespaces, firewalls).
+- **Resource Limits**: For hard CPU/memory caps, use OS-level controls (cgroups on Linux, Job Objects on Windows, or Docker resource limits).
+- **Secrets**: Never injected automatically. Pass secrets explicitly via tool arguments or environment variables, and prefer scoped env vars for subprocess tools to minimize exposure.
+
+Example security-focused setup for untrusted code:
+
+```python
+import asyncio
+from chuk_tool_processor.core.processor import ToolProcessor
+from chuk_tool_processor.execution.strategies.subprocess_strategy import SubprocessStrategy
+from chuk_tool_processor.registry import get_default_registry
+
+async def create_secure_processor():
+    # Maximum isolation for untrusted code
+    # Runs each tool in a separate process
+    registry = await get_default_registry()
+
+    processor = ToolProcessor(
+        strategy=SubprocessStrategy(
+            registry=registry,
+            max_workers=4,
+            default_timeout=10.0
+        ),
+        default_timeout=10.0,
+        enable_rate_limiting=True,
+        global_rate_limit=50,  # 50 requests/minute
+        max_retries=2
+    )
+    return processor
+
+# For even stricter isolation:
+# - Run the entire processor inside a Docker container with resource limits
+# - Use network policies to restrict outbound connections
+# - Use read-only filesystems where possible
 ```
 
 ## Architecture Principles
@@ -711,6 +979,62 @@ Check out the [`examples/`](examples/) directory for complete working examples:
 - **STDIO**: `examples/mcp_stdio_example.py`
 - **SSE**: `examples/mcp_sse_example.py`
 - **Plugin system**: `examples/plugins_builtins_demo.py`, `examples/plugins_custom_parser_demo.py`
+
+## FAQ
+
+**Q: What happens if a tool takes too long?**
+A: The tool is cancelled after `default_timeout` seconds and returns an error result. The processor continues with other tools.
+
+**Q: Can I mix local and remote (MCP) tools?**
+A: Yes! Register local tools first, then use `setup_mcp_*` to add remote tools. They all work in the same processor.
+
+**Q: How do I handle malformed LLM outputs?**
+A: The processor is resilient—invalid tool calls are logged and return error results without crashing.
+
+**Q: What about API rate limits?**
+A: Use `enable_rate_limiting=True` and set `tool_rate_limits` per tool or `global_rate_limit` for all tools.
+
+**Q: Can tools return files or binary data?**
+A: Yes—tools can return any JSON-serializable data including base64-encoded files, URLs, or structured data.
+
+**Q: How do I test my tools?**
+A: Use pytest with `@pytest.mark.asyncio`. See [Testing Tools](#testing-tools) for examples.
+
+**Q: Does this work with streaming LLM responses?**
+A: Yes—as tool calls appear in the stream, extract and process them. The processor handles partial/incremental tool call lists.
+
+**Q: What's the difference between InProcess and Subprocess strategies?**
+A: InProcess is faster (same process), Subprocess is safer (isolated process). Use InProcess for trusted code, Subprocess for untrusted.
+
+## Comparison with Other Tools
+
+| Feature | chuk-tool-processor | LangChain Tools | OpenAI Tools | MCP SDK |
+|---------|-------------------|-----------------|--------------|---------|
+| **Async-native** | ✅ | ⚠️ Partial | ✅ | ✅ |
+| **Process isolation** | ✅ SubprocessStrategy | ❌ | ❌ | ⚠️ |
+| **Built-in retries** | ✅ | ❌ † | ❌ | ❌ |
+| **Rate limiting** | ✅ | ❌ † | ⚠️ ‡ | ❌ |
+| **Caching** | ✅ | ⚠️ † | ❌ ‡ | ❌ |
+| **Multiple parsers** | ✅ (XML, OpenAI, JSON) | ⚠️ | ✅ | ✅ |
+| **Streaming tools** | ✅ | ⚠️ | ⚠️ | ✅ |
+| **MCP integration** | ✅ All transports | ❌ | ❌ | ✅ (protocol only) |
+| **Zero-config start** | ✅ | ❌ | ✅ | ⚠️ |
+| **Production-ready** | ✅ Timeouts, metrics | ⚠️ | ⚠️ | ⚠️ |
+
+**Notes:**
+- † LangChain offers caching and rate-limiting through separate libraries (`langchain-cache`, external rate limiters), but they're not core features.
+- ‡ OpenAI Tools can be combined with external rate limiters and caches, but tool execution itself doesn't include these features.
+
+**When to use chuk-tool-processor:**
+- You need production-ready tool execution (timeouts, retries, caching)
+- You want to connect to MCP servers (local or remote)
+- You need to run untrusted code safely (subprocess isolation)
+- You're building a custom LLM application (not using a framework)
+
+**When to use alternatives:**
+- **LangChain**: You want a full-featured LLM framework with chains, agents, and memory
+- **OpenAI Tools**: You only use OpenAI and don't need advanced execution features
+- **MCP SDK**: You're building an MCP server, not a client
 
 ## Related Projects
 
