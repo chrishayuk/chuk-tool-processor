@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chuk-tool-processor"
-version = "0.6.22"
+version = "0.6.24"
 description = "Async-native framework for registering, discovering, and executing tools referenced in LLM responses"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -41,7 +41,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "chuk-mcp>=0.5.4",
+    "chuk-mcp>=0.6",
     "dotenv>=0.9.9",
     "psutil>=7.0.0",
     "pydantic>=2.11.3",
@@ -73,6 +73,7 @@ dev = [
     "langchain>=0.3.25",
     "ruff>=0.7.1",
     "mypy>=1.13.0",
+    "bandit>=1.7.0",
     "pre-commit>=3.8.0",
     "coverage[toml]>=7.6.0",
 ]
