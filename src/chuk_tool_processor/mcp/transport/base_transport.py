@@ -5,8 +5,12 @@ Abstract base class for MCP transports with complete interface definition.
 
 from __future__ import annotations
 
+import json
 from abc import ABC, abstractmethod
 from typing import Any
+
+from chuk_mcp.protocol import Resource, Tool, ToolResult  # type: ignore[import-untyped]
+from chuk_mcp.protocol.types.content import TextContent  # type: ignore[import-untyped]
 
 
 class MCPBaseTransport(ABC):
@@ -62,19 +66,17 @@ class MCPBaseTransport(ABC):
     #  Core MCP operations                                               #
     # ------------------------------------------------------------------ #
     @abstractmethod
-    async def get_tools(self) -> list[dict[str, Any]]:
+    async def get_tools(self) -> list[Tool]:
         """
         Get the list of available tools from the server.
 
         Returns:
-            List of tool definitions.
+            List of Tool objects.
         """
         pass
 
     @abstractmethod
-    async def call_tool(
-        self, tool_name: str, arguments: dict[str, Any], timeout: float | None = None
-    ) -> dict[str, Any]:
+    async def call_tool(self, tool_name: str, arguments: dict[str, Any], timeout: float | None = None) -> ToolResult:
         """
         Call a tool with the given arguments.
 
@@ -84,17 +86,17 @@ class MCPBaseTransport(ABC):
             timeout: Optional timeout for the operation
 
         Returns:
-            Dictionary with 'isError' boolean and either 'content' or 'error'
+            ToolResult object with content and error status.
         """
         pass
 
     @abstractmethod
-    async def list_resources(self) -> dict[str, Any]:
+    async def list_resources(self) -> list[Resource]:
         """
         List available resources from the server.
 
         Returns:
-            Dictionary containing resources list or empty dict if not supported.
+            List of Resource objects, or empty list if not supported.
         """
         pass
 
@@ -155,9 +157,9 @@ class MCPBaseTransport(ABC):
     # ------------------------------------------------------------------ #
     #  Shared helper methods for response normalization                  #
     # ------------------------------------------------------------------ #
-    def _normalize_mcp_response(self, response: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_mcp_response(self, response: dict[str, Any]) -> ToolResult:
         """
-        Normalize MCP response to consistent format.
+        Normalize MCP response to ToolResult.
 
         This provides shared logic for all transports to ensure consistent
         response format regardless of transport type.
@@ -167,23 +169,41 @@ class MCPBaseTransport(ABC):
             error_info = response["error"]
             error_msg = error_info.get("message", "Unknown error") if isinstance(error_info, dict) else str(error_info)
 
-            return {"isError": True, "error": error_msg}
+            return ToolResult(
+                content=[TextContent(type="text", text=error_msg).model_dump()],
+                isError=True,
+            )
 
         # Handle successful response with result
         if "result" in response:
             result = response["result"]
 
             if isinstance(result, dict) and "content" in result:
-                return {"isError": False, "content": self._extract_mcp_content(result["content"])}
+                content_list = result["content"]
+                # Ensure content is a list
+                if not isinstance(content_list, list):
+                    content_list = [TextContent(type="text", text=str(content_list)).model_dump()]
+                return ToolResult(content=content_list, isError=False)
             else:
-                return {"isError": False, "content": result}
+                # Wrap non-standard result in text content
+                return ToolResult(
+                    content=[TextContent(type="text", text=json.dumps(result)).model_dump()],
+                    isError=False,
+                )
 
         # Handle direct content-based response
         if "content" in response:
-            return {"isError": False, "content": self._extract_mcp_content(response["content"])}
+            content_list = response["content"]
+            # Ensure content is a list
+            if not isinstance(content_list, list):
+                content_list = [TextContent(type="text", text=str(content_list)).model_dump()]
+            return ToolResult(content=content_list, isError=response.get("isError", False))
 
-        # Fallback
-        return {"isError": False, "content": response}
+        # Fallback - wrap entire response as text
+        return ToolResult(
+            content=[TextContent(type="text", text=json.dumps(response)).model_dump()],
+            isError=False,
+        )
 
     def _extract_mcp_content(self, content_list: Any) -> Any:
         """

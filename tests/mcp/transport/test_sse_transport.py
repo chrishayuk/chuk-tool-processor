@@ -191,12 +191,19 @@ class TestSSETransport:
         transport._initialized = True
         transport.message_url = "http://test.com/messages/test"
 
+        # Complete Tool dictionaries with all required fields
+        full_tools = [
+            {"name": "search", "description": "Search tool", "inputSchema": {"type": "object", "properties": {}}},
+            {"name": "research", "description": "Research tool", "inputSchema": {"type": "object", "properties": {}}},
+        ]
         expected_tools = [{"name": "search"}, {"name": "research"}]
-        response = {"result": {"tools": expected_tools}}
+        response = {"result": {"tools": full_tools}}
 
         with patch.object(transport, "_send_request", AsyncMock(return_value=response)):
             tools = await transport.get_tools()
-            assert tools == expected_tools
+            # Convert Tool objects to dicts for comparison
+            tools_as_dicts = [{"name": t.name} for t in tools]
+            assert tools_as_dicts == expected_tools
 
     @pytest.mark.asyncio
     async def test_get_tools_not_initialized(self, transport):
@@ -225,8 +232,8 @@ class TestSSETransport:
 
         with patch.object(transport, "_send_request", AsyncMock(return_value=response)):
             result = await transport.call_tool("search", {"query": "test"})
-            assert result["isError"] is False
-            assert result["content"]["answer"] == "success"
+            assert result.isError is False
+            assert result.content == [{"type": "text", "text": '{"answer": "success"}'}]
 
             # Check metrics were updated
             metrics = transport.get_metrics()
@@ -243,7 +250,7 @@ class TestSSETransport:
 
         with patch.object(transport, "_send_request", AsyncMock(return_value=response)) as mock_send:
             result = await transport.call_tool("search", {"query": "test"}, timeout=15.0)
-            assert result["isError"] is False
+            assert result.isError is False
 
             # Verify timeout was passed to _send_request
             mock_send.assert_called_once()
@@ -255,8 +262,8 @@ class TestSSETransport:
         """Test SSE call tool when not initialized."""
         assert transport._initialized is False
         result = await transport.call_tool("test", {})
-        assert result["isError"] is True
-        assert result["error"] == "Transport not initialized"
+        assert result.isError is True
+        assert result.content[0]["text"] == "Transport not initialized"
 
     @pytest.mark.asyncio
     async def test_call_tool_error_response(self, transport):
@@ -267,8 +274,8 @@ class TestSSETransport:
 
         with patch.object(transport, "_send_request", AsyncMock(return_value=response)):
             result = await transport.call_tool("search", {})
-            assert result["isError"] is True
-            assert result["error"] == "Tool failed"
+            assert result.isError is True
+            assert result.content[0]["text"] == "Tool failed"
 
             # Check failure metrics were updated
             metrics = transport.get_metrics()
@@ -283,8 +290,8 @@ class TestSSETransport:
 
         with patch.object(transport, "_send_request", AsyncMock(side_effect=asyncio.TimeoutError)):
             result = await transport.call_tool("search", {}, timeout=1.0)
-            assert result["isError"] is True
-            assert "timed out" in result["error"].lower()
+            assert result.isError is True
+            assert "timed out" in result.content[0]["text"].lower()
 
             # Check timeout failure metrics
             metrics = transport.get_metrics()
@@ -455,18 +462,22 @@ class TestSSETransport:
         """Test listing resources when initialized."""
         transport._initialized = True
         transport.message_url = "http://test.com/messages/test"
-        expected_resources = {"resources": [{"name": "resource1"}]}
+        # Complete Resource dictionaries with all required fields
+        full_resources = [{"name": "resource1", "uri": "test://resource1"}]
+        expected_resources = {"resources": full_resources}
 
         with patch.object(transport, "_send_request", AsyncMock(return_value={"result": expected_resources})):
             result = await transport.list_resources()
-            assert result == expected_resources
+            # Now returns list[Resource] objects
+            assert len(result) == 1
+            assert result[0].name == "resource1"
 
     @pytest.mark.asyncio
     async def test_list_resources_not_initialized(self, transport):
         """Test listing resources when not initialized."""
         transport._initialized = False
         result = await transport.list_resources()
-        assert result == {}
+        assert result == []
 
     @pytest.mark.asyncio
     async def test_list_prompts_success(self, transport):
@@ -576,21 +587,26 @@ class TestSSETransport:
             # Standard MCP content format
             {
                 "input": {"result": {"content": [{"type": "text", "text": '{"result": "success"}'}]}},
-                "expected": {"isError": False, "content": {"result": "success"}},
+                "check": lambda r: r.isError is False
+                and r.content[0]["type"] == "text"
+                and r.content[0]["text"] == '{"result": "success"}',
             },
             # Plain text content
             {
                 "input": {"result": {"content": [{"type": "text", "text": "plain text"}]}},
-                "expected": {"isError": False, "content": "plain text"},
+                "check": lambda r: r.isError is False and r.content[0]["text"] == "plain text",
             },
-            # Direct result
-            {"input": {"result": {"value": 42}}, "expected": {"isError": False, "content": {"value": 42}}},
+            # Direct result (wrapped in json.dumps)
+            {
+                "input": {"result": {"value": 42}},
+                "check": lambda r: r.isError is False and r.content[0]["text"] == '{"value": 42}',
+            },
         ]
 
         for case in test_cases:
             with patch.object(transport, "_send_request", AsyncMock(return_value=case["input"])):
                 result = await transport.call_tool("test", {})
-                assert result == case["expected"]
+                assert case["check"](result)
 
     @pytest.mark.asyncio
     async def test_initialize_already_initialized(self, transport):
@@ -817,7 +833,7 @@ class TestSSETransport:
             AsyncMock(return_value={"error": {"message": "Tool error"}}),
         ):
             result = await transport.call_tool("test", {})
-            assert result["isError"] is True
+            assert result.isError is True
 
         # Test with successful response
         with patch.object(
@@ -826,7 +842,7 @@ class TestSSETransport:
             AsyncMock(return_value={"result": {"content": "success"}}),
         ):
             result = await transport.call_tool("test", {})
-            assert result["isError"] is False
+            assert result.isError is False
 
     @pytest.mark.asyncio
     async def test_is_connected_with_stale_session(self, transport):
@@ -861,7 +877,7 @@ class TestSSETransport:
 
         with patch.object(transport, "_send_request", AsyncMock(side_effect=Exception("List error"))):
             result = await transport.list_resources()
-            assert result == {}
+            assert result == []
 
     @pytest.mark.asyncio
     async def test_list_prompts_with_error(self, transport):

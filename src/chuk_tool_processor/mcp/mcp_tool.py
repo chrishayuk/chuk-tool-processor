@@ -190,12 +190,14 @@ class MCPTool:
             logger.warning(f"MCP tool '{self.tool_name}' timed out after {effective_timeout}s")
             raise
 
-        if result.get("isError"):
-            err = result.get("error", "Unknown error")
+        if result.isError:
+            # Extract error message from content
+            err = result.content[0].get("text", "Unknown error") if result.content else "Unknown error"
             logger.error(f"Remote MCP error from '{self.tool_name}': {err}")
             raise RuntimeError(err)
 
-        return result.get("content")
+        # Extract text from content
+        return result.content[0].get("text") if result.content else None
 
     async def _resilient_execute(self, timeout: float | None = None, **kwargs: Any) -> Any:
         """Resilient execution with circuit breaker and health checks."""
@@ -283,11 +285,13 @@ class MCPTool:
                 timeout=(timeout + 5.0) if timeout else None,
             )
 
-            if result.get("isError"):
-                error = result.get("error", "Unknown error")
+            if result.isError:
+                # Extract error message from content
+                error = result.content[0].get("text", "Unknown error") if result.content else "Unknown error"
                 raise RuntimeError(f"Tool execution failed: {error}")
 
-            return result.get("content")
+            # Extract text from content
+            return result.content[0].get("text") if result.content else None
 
         except TimeoutError:
             self.connection_state = ConnectionState.DEGRADED

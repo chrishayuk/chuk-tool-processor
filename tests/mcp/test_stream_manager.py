@@ -4,6 +4,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from chuk_mcp.protocol import Tool
 
 from chuk_tool_processor.mcp.stream_manager import StreamManager
 from chuk_tool_processor.mcp.transport import MCPBaseTransport
@@ -26,7 +27,10 @@ class TestStreamManager:
         transport = AsyncMock(spec=MCPBaseTransport)
         transport.initialize = AsyncMock()
         transport.get_tools = AsyncMock(
-            return_value=[{"name": "tool1", "description": "Tool 1"}, {"name": "tool2", "description": "Tool 2"}]
+            return_value=[
+                Tool(name="tool1", description="Tool 1", inputSchema={"type": "object", "properties": {}}),
+                Tool(name="tool2", description="Tool 2", inputSchema={"type": "object", "properties": {}}),
+            ]
         )
         transport.call_tool = AsyncMock()
         transport.close = AsyncMock()
@@ -56,7 +60,12 @@ class TestStreamManager:
 
             mock_transport = AsyncMock(spec=MCPBaseTransport)
             mock_transport.initialize = AsyncMock(return_value=True)
-            mock_transport.get_tools = AsyncMock(return_value=[{"name": "stdio_tool", "description": "STDIO tool"}])
+            mock_transport.send_ping = AsyncMock(return_value=True)
+            mock_transport.get_tools = AsyncMock(
+                return_value=[
+                    Tool(name="stdio_tool", description="STDIO tool", inputSchema={"type": "object", "properties": {}})
+                ]
+            )
             mock_stdio.return_value = mock_transport
 
             # Initialize the stream manager with servers
@@ -79,8 +88,13 @@ class TestStreamManager:
         """Test initializing with SSE server."""
         with patch("chuk_tool_processor.mcp.stream_manager.SSETransport") as mock_sse:
             mock_transport = AsyncMock(spec=MCPBaseTransport)
-            mock_transport.initialize = AsyncMock()
-            mock_transport.get_tools = AsyncMock(return_value=[{"name": "sse_tool", "description": "SSE tool"}])
+            mock_transport.initialize = AsyncMock(return_value=True)
+            mock_transport.send_ping = AsyncMock(return_value=True)
+            mock_transport.get_tools = AsyncMock(
+                return_value=[
+                    Tool(name="sse_tool", description="SSE tool", inputSchema={"type": "object", "properties": {}})
+                ]
+            )
             mock_sse.return_value = mock_transport
 
             # Use initialize_with_sse method - pass list of dicts with name field
@@ -103,8 +117,13 @@ class TestStreamManager:
         """Test initializing with HTTP Streamable server."""
         with patch("chuk_tool_processor.mcp.stream_manager.HTTPStreamableTransport") as mock_http:
             mock_transport = AsyncMock(spec=MCPBaseTransport)
-            mock_transport.initialize = AsyncMock()
-            mock_transport.get_tools = AsyncMock(return_value=[{"name": "http_tool", "description": "HTTP tool"}])
+            mock_transport.initialize = AsyncMock(return_value=True)
+            mock_transport.send_ping = AsyncMock(return_value=True)
+            mock_transport.get_tools = AsyncMock(
+                return_value=[
+                    Tool(name="http_tool", description="HTTP tool", inputSchema={"type": "object", "properties": {}})
+                ]
+            )
             mock_http.return_value = mock_transport
 
             # Use initialize_with_http_streamable method - pass list of dicts with name field
@@ -168,8 +187,8 @@ class TestStreamManager:
         result = await stream_manager.call_tool("nonexistent_tool", {})
 
         # The actual error message says "No server found for tool"
-        assert result["isError"] is True
-        assert "No server found for tool" in result["error"]
+        assert result.isError is True
+        assert "No server found for tool" in result.content[0]["text"]
 
     def test_get_all_tools(self, stream_manager, mock_transport):
         """Test getting all tools."""
@@ -247,11 +266,21 @@ class TestStreamManager:
             # Create two different transports
             transport1 = AsyncMock(spec=MCPBaseTransport)
             transport1.initialize = AsyncMock(return_value=True)
-            transport1.get_tools = AsyncMock(return_value=[{"name": "tool_a", "description": "Tool A"}])
+            transport1.send_ping = AsyncMock(return_value=True)
+            transport1.get_tools = AsyncMock(
+                return_value=[
+                    Tool(name="tool_a", description="Tool A", inputSchema={"type": "object", "properties": {}})
+                ]
+            )
 
             transport2 = AsyncMock(spec=MCPBaseTransport)
             transport2.initialize = AsyncMock(return_value=True)
-            transport2.get_tools = AsyncMock(return_value=[{"name": "tool_b", "description": "Tool B"}])
+            transport2.send_ping = AsyncMock(return_value=True)
+            transport2.get_tools = AsyncMock(
+                return_value=[
+                    Tool(name="tool_b", description="Tool B", inputSchema={"type": "object", "properties": {}})
+                ]
+            )
 
             mock_stdio.side_effect = [transport1, transport2]
 
@@ -938,14 +967,16 @@ class TestStreamManager:
     @pytest.mark.asyncio
     async def test_list_resources(self, stream_manager, mock_transport):
         """Test list_resources method."""
+        from chuk_mcp.protocol import Resource
+
         stream_manager.transports["server1"] = mock_transport
-        mock_transport.list_resources = AsyncMock(return_value={"resources": [{"name": "res1"}]})
+        # Return list of Resource objects directly (not wrapped in dict)
+        mock_transport.list_resources = AsyncMock(return_value=[Resource(uri="test://res1", name="res1")])
 
         resources = await stream_manager.list_resources()
 
         assert len(resources) == 1
-        assert resources[0]["name"] == "res1"
-        assert resources[0]["server"] == "server1"
+        assert resources[0].name == "res1"
 
     @pytest.mark.asyncio
     async def test_list_resources_when_closed(self, stream_manager):
@@ -1009,8 +1040,8 @@ class TestStreamManager:
 
         result = await stream_manager.call_tool("tool1", {})
 
-        assert result["isError"] is True
-        assert "closed" in result["error"]
+        assert result.isError is True
+        assert "closed" in result.content[0]["text"]
 
     @pytest.mark.asyncio
     async def test_call_tool_with_explicit_server(self, stream_manager, mock_transport):
@@ -1048,8 +1079,8 @@ class TestStreamManager:
 
         result = await stream_manager.call_tool("test_tool", {}, timeout=0.1)
 
-        assert result["isError"] is True
-        assert "timed out" in result["error"]
+        assert result.isError is True
+        assert "timed out" in result.content[0]["text"]
 
     @pytest.mark.asyncio
     async def test_call_tool_transport_supports_timeout(self, stream_manager):

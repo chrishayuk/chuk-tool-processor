@@ -14,6 +14,8 @@ from typing import Any
 #  CHUK imports                                                               #
 # --------------------------------------------------------------------------- #
 from chuk_mcp.config import load_config  # type: ignore[import-untyped]
+from chuk_mcp.protocol import Resource, Tool, ToolResult  # type: ignore[import-untyped]
+from chuk_mcp.protocol.types.content import TextContent  # type: ignore[import-untyped]
 
 from chuk_tool_processor.logging import get_logger
 from chuk_tool_processor.mcp.transport import (
@@ -43,7 +45,7 @@ class StreamManager:
         self.server_info: list[dict[str, Any]] = []
         self.tool_to_server_map: dict[str, str] = {}
         self.server_names: dict[int, str] = {}
-        self.all_tools: list[dict[str, Any]] = []
+        self.all_tools: list[Tool] = []
         self._lock = asyncio.Lock()
         self._closed = False  # Track if we've been closed
         self._shutdown_timeout = 2.0  # Maximum time to spend on shutdown
@@ -252,10 +254,8 @@ class StreamManager:
                     status = "Up" if await asyncio.wait_for(transport.send_ping(), timeout=30.0) else "Down"
                     tools = await asyncio.wait_for(transport.get_tools(), timeout=30.0)
 
-                    for t in tools:
-                        name = t.get("name")
-                        if name:
-                            self.tool_to_server_map[name] = server_name
+                    for tool in tools:
+                        self.tool_to_server_map[tool.name] = server_name
                     self.all_tools.extend(tools)
 
                     self.server_info.append(
@@ -328,10 +328,8 @@ class StreamManager:
                     status = "Up" if await asyncio.wait_for(transport.send_ping(), timeout=30.0) else "Down"
                     tools = await asyncio.wait_for(transport.get_tools(), timeout=30.0)
 
-                    for t in tools:
-                        tname = t.get("name")
-                        if tname:
-                            self.tool_to_server_map[tname] = name
+                    for tool in tools:
+                        self.tool_to_server_map[tool.name] = name
                     self.all_tools.extend(tools)
 
                     self.server_info.append({"id": idx, "name": name, "tools": len(tools), "status": status})
@@ -404,10 +402,8 @@ class StreamManager:
                     status = "Up" if await asyncio.wait_for(transport.send_ping(), timeout=30.0) else "Down"
                     tools = await asyncio.wait_for(transport.get_tools(), timeout=30.0)
 
-                    for t in tools:
-                        tname = t.get("name")
-                        if tname:
-                            self.tool_to_server_map[tname] = name
+                    for tool in tools:
+                        self.tool_to_server_map[tool.name] = name
                     self.all_tools.extend(tools)
 
                     self.server_info.append({"id": idx, "name": name, "tools": len(tools), "status": status})
@@ -426,16 +422,19 @@ class StreamManager:
     # ------------------------------------------------------------------ #
     #  queries                                                           #
     # ------------------------------------------------------------------ #
-    def get_all_tools(self) -> list[dict[str, Any]]:
+    def get_all_tools(self) -> list[Tool]:
+        """Get all tools from all servers."""
         return self.all_tools
 
     def get_server_for_tool(self, tool_name: str) -> str | None:
+        """Get the server name that provides a specific tool."""
         return self.tool_to_server_map.get(tool_name)
 
     def get_server_info(self) -> list[dict[str, Any]]:
+        """Get information about all connected servers."""
         return self.server_info
 
-    async def list_tools(self, server_name: str) -> list[dict[str, Any]]:
+    async def list_tools(self, server_name: str) -> list[Tool]:
         """List all tools available from a specific server."""
         if self._closed:
             logger.warning("Cannot list tools: StreamManager is closed")
@@ -474,20 +473,19 @@ class StreamManager:
 
         return await asyncio.gather(*(_ping_one(n, t) for n, t in self.transports.items()), return_exceptions=True)
 
-    async def list_resources(self) -> list[dict[str, Any]]:
+    async def list_resources(self) -> list[Resource]:
+        """List all resources from all servers."""
         if self._closed:
             return []
 
-        out: list[dict[str, Any]] = []
+        out: list[Resource] = []
 
         async def _one(name: str, tr: MCPBaseTransport):
             try:
-                res = await asyncio.wait_for(tr.list_resources(), timeout=10.0)
-                resources = res.get("resources", []) if isinstance(res, dict) else res
-                for item in resources:
-                    item = dict(item)
-                    item["server"] = name
-                    out.append(item)
+                resources = await asyncio.wait_for(tr.list_resources(), timeout=10.0)
+                # Note: Resources from different servers may have the same URI
+                # We could add server name to metadata if needed
+                out.extend(resources)
             except Exception as exc:
                 logger.debug("resources/list failed for %s: %s", name, exc)
 
@@ -523,20 +521,20 @@ class StreamManager:
         arguments: dict[str, Any],
         server_name: str | None = None,
         timeout: float | None = None,
-    ) -> dict[str, Any]:
+    ) -> ToolResult:
         """Call a tool on the appropriate server with timeout support."""
         if self._closed:
-            return {
-                "isError": True,
-                "error": "StreamManager is closed",
-            }
+            return ToolResult(
+                content=[TextContent(type="text", text="StreamManager is closed").model_dump()],
+                isError=True,
+            )
 
         server_name = server_name or self.get_server_for_tool(tool_name)
         if not server_name or server_name not in self.transports:
-            return {
-                "isError": True,
-                "error": f"No server found for tool: {tool_name}",
-            }
+            return ToolResult(
+                content=[TextContent(type="text", text=f"No server found for tool: {tool_name}").model_dump()],
+                isError=True,
+            )
 
         transport = self.transports[server_name]
 
@@ -555,10 +553,10 @@ class StreamManager:
                     return await asyncio.wait_for(transport.call_tool(tool_name, arguments), timeout=timeout)
             except TimeoutError:
                 logger.warning("Tool '%s' timed out after %ss", tool_name, timeout)
-                return {
-                    "isError": True,
-                    "error": f"Tool call timed out after {timeout}s",
-                }
+                return ToolResult(
+                    content=[TextContent(type="text", text=f"Tool call timed out after {timeout}s").model_dump()],
+                    isError=True,
+                )
         else:
             return await transport.call_tool(tool_name, arguments)
 

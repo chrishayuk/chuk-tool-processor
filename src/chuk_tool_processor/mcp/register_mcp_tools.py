@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from chuk_mcp.protocol import Tool  # type: ignore[import-untyped]
+
 from chuk_tool_processor.logging import get_logger
 from chuk_tool_processor.mcp.mcp_tool import MCPTool, RecoveryConfig
 from chuk_tool_processor.mcp.stream_manager import StreamManager
@@ -52,20 +54,20 @@ async def register_mcp_tools(
     registered: list[str] = []
 
     # Get the remote tool catalogue
-    mcp_tools: list[dict[str, Any]] = stream_manager.get_all_tools()
+    mcp_tools: list[Tool] = stream_manager.get_all_tools()
 
     for tool_def in mcp_tools:
-        tool_name = tool_def.get("name")
+        tool_name = tool_def.name
         if not tool_name:
             logger.warning("Remote tool definition without a 'name' field - skipped")
             continue
 
-        description = tool_def.get("description") or f"MCP tool • {tool_name}"
+        description = tool_def.description or f"MCP tool • {tool_name}"
         meta: dict[str, Any] = {
             "description": description,
             "is_async": True,
             "tags": {"mcp", "remote"},
-            "argument_schema": tool_def.get("inputSchema", {}),
+            "argument_schema": tool_def.inputSchema,
         }
 
         try:

@@ -186,14 +186,21 @@ class TestHTTPStreamableTransport:
         transport._read_stream = Mock()
         transport._write_stream = Mock()
 
+        # Complete Tool dictionaries with all required fields
+        full_tools = [
+            {"name": "search", "description": "Search tool", "inputSchema": {"type": "object", "properties": {}}},
+            {"name": "research", "description": "Research tool", "inputSchema": {"type": "object", "properties": {}}},
+        ]
         expected_tools = [{"name": "search"}, {"name": "research"}]
 
         with patch(
             "chuk_tool_processor.mcp.transport.http_streamable_transport.send_tools_list",
-            AsyncMock(return_value={"tools": expected_tools}),
+            AsyncMock(return_value={"tools": full_tools}),
         ):
             tools = await transport.get_tools()
-            assert tools == expected_tools
+            # Convert Tool objects to dicts for comparison
+            tools_as_dicts = [{"name": t.name} for t in tools]
+            assert tools_as_dicts == expected_tools
 
     @pytest.mark.asyncio
     async def test_get_tools_list_response(self, transport):
@@ -202,14 +209,20 @@ class TestHTTPStreamableTransport:
         transport._read_stream = Mock()
         transport._write_stream = Mock()
 
+        # Complete Tool dictionary with all required fields
+        full_tools = [
+            {"name": "search", "description": "Search tool", "inputSchema": {"type": "object", "properties": {}}}
+        ]
         expected_tools = [{"name": "search"}]
 
         with patch(
             "chuk_tool_processor.mcp.transport.http_streamable_transport.send_tools_list",
-            AsyncMock(return_value=expected_tools),
+            AsyncMock(return_value=full_tools),
         ):
             tools = await transport.get_tools()
-            assert tools == expected_tools
+            # Convert Tool objects to dicts for comparison
+            tools_as_dicts = [{"name": t.name} for t in tools]
+            assert tools_as_dicts == expected_tools
 
     @pytest.mark.asyncio
     async def test_get_tools_not_initialized(self, transport):
@@ -232,8 +245,8 @@ class TestHTTPStreamableTransport:
             AsyncMock(return_value=response),
         ):
             result = await transport.call_tool("search", {"query": "test"})
-            assert result["isError"] is False
-            assert result["content"]["answer"] == "success"
+            assert result.isError is False
+            assert result.content == [{"type": "text", "text": '{"answer": "success"}'}]
 
             # Check metrics were updated
             metrics = transport.get_metrics()
@@ -255,7 +268,7 @@ class TestHTTPStreamableTransport:
             AsyncMock(return_value=response),
         ) as mock_send:
             result = await transport.call_tool("search", {"query": "test"}, timeout=15.0)
-            assert result["isError"] is False
+            assert result.isError is False
 
             # Verify the call was made with correct parameters
             mock_send.assert_called_once()
@@ -265,8 +278,8 @@ class TestHTTPStreamableTransport:
         """Test HTTP Streamable call tool when not initialized."""
         assert transport._initialized is False
         result = await transport.call_tool("test", {})
-        assert result["isError"] is True
-        assert result["error"] == "Transport not initialized"
+        assert result.isError is True
+        assert result.content[0]["text"] == "Transport not initialized"
 
     @pytest.mark.asyncio
     async def test_call_tool_timeout(self, transport):
@@ -280,8 +293,8 @@ class TestHTTPStreamableTransport:
             AsyncMock(side_effect=asyncio.TimeoutError),
         ):
             result = await transport.call_tool("search", {}, timeout=1.0)
-            assert result["isError"] is True
-            assert "timed out after 1.0s" in result["error"]
+            assert result.isError is True
+            assert "timed out after 1.0s" in result.content[0]["text"]
 
             # Check timeout failure metrics
             metrics = transport.get_metrics()
@@ -300,8 +313,8 @@ class TestHTTPStreamableTransport:
             AsyncMock(side_effect=Exception("Stream broken")),
         ):
             result = await transport.call_tool("search", {})
-            assert result["isError"] is True
-            assert "Stream broken" in result["error"]
+            assert result.isError is True
+            assert "Stream broken" in result.content[0]["text"]
 
             # Check failure metrics including stream error
             metrics = transport.get_metrics()
@@ -361,21 +374,25 @@ class TestHTTPStreamableTransport:
         transport._read_stream = Mock()
         transport._write_stream = Mock()
 
-        expected_resources = {"resources": [{"name": "resource1"}]}
+        # Complete Resource dictionaries with all required fields
+        full_resources = [{"name": "resource1", "uri": "test://resource1"}]
+        expected_resources = {"resources": full_resources}
 
         with patch(
             "chuk_tool_processor.mcp.transport.http_streamable_transport.send_resources_list",
             AsyncMock(return_value=expected_resources),
         ):
             result = await transport.list_resources()
-            assert result == expected_resources
+            # Now returns list[Resource] objects
+            assert len(result) == 1
+            assert result[0].name == "resource1"
 
     @pytest.mark.asyncio
     async def test_list_resources_not_initialized(self, transport):
         """Test listing resources when not initialized."""
         transport._initialized = False
         result = await transport.list_resources()
-        assert result == {}
+        assert result == []
 
     @pytest.mark.asyncio
     async def test_list_prompts_success(self, transport):
@@ -485,17 +502,23 @@ class TestHTTPStreamableTransport:
             # Standard MCP content format
             {
                 "result": {"content": [{"type": "text", "text": '{"result": "success"}'}]},
-                "expected": {"isError": False, "content": {"result": "success"}},
+                "check": lambda r: r.isError is False and r.content[0]["text"] == '{"result": "success"}',
             },
             # Plain text content
             {
                 "result": {"content": [{"type": "text", "text": "plain text"}]},
-                "expected": {"isError": False, "content": "plain text"},
+                "check": lambda r: r.isError is False and r.content[0]["text"] == "plain text",
             },
-            # Direct result
-            {"result": {"value": 42}, "expected": {"isError": False, "content": {"value": 42}}},
+            # Direct result (wrapped in json.dumps)
+            {
+                "result": {"value": 42},
+                "check": lambda r: r.isError is False and r.content[0]["text"] == '{"value": 42}',
+            },
             # Error response
-            {"error": {"message": "Tool failed"}, "expected": {"isError": True, "error": "Tool failed"}},
+            {
+                "error": {"message": "Tool failed"},
+                "check": lambda r: r.isError is True and r.content[0]["text"] == "Tool failed",
+            },
         ]
 
         for case in test_cases:
@@ -505,7 +528,7 @@ class TestHTTPStreamableTransport:
                 AsyncMock(return_value=case),
             ):
                 result = await transport.call_tool("test", {})
-                assert result == case["expected"]
+                assert case["check"](result)
 
     def test_http_parameters_creation(self, transport):
         """Test that HTTP parameters are created correctly."""
@@ -610,14 +633,14 @@ class TestHTTPStreamableTransport:
             AsyncMock(return_value={"error": {"message": "Tool error"}}),
         ):
             result = await transport.call_tool("test", {})
-            assert result["isError"] is True
-            assert result["error"] == "Tool error"
+            assert result.isError is True
+            assert result.content[0]["text"] == "Tool error"
 
     @pytest.mark.asyncio
     async def test_list_resources_not_initialized_returns_empty(self, transport):
         """Test list_resources when not initialized."""
         result = await transport.list_resources()
-        assert result == {}
+        assert result == []
 
     @pytest.mark.asyncio
     async def test_list_resources_with_exception(self, transport):
@@ -631,7 +654,7 @@ class TestHTTPStreamableTransport:
             AsyncMock(side_effect=Exception("List error")),
         ):
             result = await transport.list_resources()
-            assert result == {}
+            assert result == []
 
     @pytest.mark.asyncio
     async def test_list_prompts_not_initialized(self, transport):
@@ -657,7 +680,7 @@ class TestHTTPStreamableTransport:
     async def test_read_resource_not_initialized(self, transport):
         """Test read_resource when not initialized."""
         result = await transport.read_resource("test://uri")
-        assert result == {}
+        assert result is None
 
     @pytest.mark.asyncio
     async def test_read_resource_with_exception(self, transport):
@@ -671,7 +694,7 @@ class TestHTTPStreamableTransport:
             AsyncMock(side_effect=Exception("Read error")),
         ):
             result = await transport.read_resource("test://uri")
-            assert result == {}
+            assert result is None
 
     @pytest.mark.asyncio
     async def test_get_prompt_not_initialized(self, transport):
@@ -799,10 +822,12 @@ class TestHTTPStreamableTransport:
 
         with patch(
             "chuk_tool_processor.mcp.transport.http_streamable_transport.send_resources_read",
-            AsyncMock(return_value={"content": "resource data"}),
+            AsyncMock(return_value={"contents": [{"uri": "test://uri", "text": "resource data"}]}),
         ):
             result = await transport.read_resource("test://uri")
-            assert result == {"content": "resource data"}
+            # Now returns ResourceContent object
+            assert result is not None
+            assert result.uri == "test://uri"
 
     @pytest.mark.asyncio
     async def test_get_prompt_success(self, transport):
@@ -868,6 +893,6 @@ class TestHTTPStreamableTransport:
             AsyncMock(return_value={"result": {"content": "success"}}),
         ):
             result = await transport.call_tool("test", {})
-            assert result["isError"] is False
+            assert result.isError is False
             assert transport._metrics["total_calls"] == 1
             assert transport._metrics["successful_calls"] == 1

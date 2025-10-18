@@ -9,6 +9,7 @@ import time
 from typing import Any
 
 import psutil
+from chuk_mcp.protocol import Resource, ResourceContent, Tool, ToolResult  # type: ignore[import-untyped]
 from chuk_mcp.protocol.messages import (  # type: ignore[import-untyped]
     send_initialize,
     send_ping,
@@ -19,6 +20,7 @@ from chuk_mcp.protocol.messages import (  # type: ignore[import-untyped]
     send_tools_call,
     send_tools_list,
 )
+from chuk_mcp.protocol.types.content import TextContent  # type: ignore[import-untyped]
 from chuk_mcp.transports.stdio import stdio_client  # type: ignore[import-untyped]
 from chuk_mcp.transports.stdio.parameters import StdioParameters  # type: ignore[import-untyped]
 
@@ -379,7 +381,7 @@ class StdioTransport(MCPBaseTransport):
 
         return True
 
-    async def get_tools(self) -> list[dict[str, Any]]:
+    async def get_tools(self) -> list[Tool]:
         """Enhanced tools retrieval with recovery."""
         if not self._initialized:
             logger.error("Cannot get tools: transport not initialized")
@@ -391,12 +393,15 @@ class StdioTransport(MCPBaseTransport):
 
             # Normalize response
             if isinstance(response, dict):
-                tools = response.get("tools", [])
+                tools_data = response.get("tools", [])
             elif isinstance(response, list):
-                tools = response
+                tools_data = response
             else:
                 logger.warning("Unexpected tools response type: %s", type(response))
-                tools = []
+                tools_data = []
+
+            # Convert to Tool objects
+            tools = [Tool.model_validate(t) for t in tools_data]
 
             # Reset failure count on success
             self._consecutive_failures = 0
@@ -418,12 +423,13 @@ class StdioTransport(MCPBaseTransport):
                 self._metrics["pipe_errors"] += 1
             return []
 
-    async def call_tool(
-        self, tool_name: str, arguments: dict[str, Any], timeout: float | None = None
-    ) -> dict[str, Any]:
+    async def call_tool(self, tool_name: str, arguments: dict[str, Any], timeout: float | None = None) -> ToolResult:
         """Enhanced tool calling with recovery and process monitoring."""
         if not self._initialized:
-            return {"isError": True, "error": "Transport not initialized"}
+            return ToolResult(
+                content=[TextContent(type="text", text="Transport not initialized").model_dump()],
+                isError=True,
+            )
 
         tool_timeout = timeout or self.default_timeout
         start_time = time.time()
@@ -440,7 +446,10 @@ class StdioTransport(MCPBaseTransport):
                 if not await self._attempt_recovery():
                     if self.enable_metrics:
                         self._update_metrics(time.time() - start_time, False)
-                    return {"isError": True, "error": "Failed to recover connection"}
+                    return ToolResult(
+                        content=[TextContent(type="text", text="Failed to recover connection").model_dump()],
+                        isError=True,
+                    )
 
             response = await asyncio.wait_for(
                 send_tools_call(*self._streams, tool_name, arguments), timeout=tool_timeout
@@ -454,14 +463,14 @@ class StdioTransport(MCPBaseTransport):
             self._last_successful_ping = time.time()
 
             if self.enable_metrics:
-                self._update_metrics(response_time, not result.get("isError", False))
+                self._update_metrics(response_time, not result.isError)
 
-            if not result.get("isError", False):
+            if not result.isError:
                 logger.debug("Tool '%s' completed successfully in %.3fs", tool_name, response_time)
             else:
-                logger.warning(
-                    "Tool '%s' failed in %.3fs: %s", tool_name, response_time, result.get("error", "Unknown error")
-                )
+                # Extract error message from content
+                error_text = result.content[0].get("text", "Unknown error") if result.content else "Unknown error"
+                logger.warning("Tool '%s' failed in %.3fs: %s", tool_name, response_time, error_text)
 
             return result
 
@@ -473,7 +482,10 @@ class StdioTransport(MCPBaseTransport):
 
             error_msg = f"Tool execution timed out after {tool_timeout}s"
             logger.error("Tool '%s' %s", tool_name, error_msg)
-            return {"isError": True, "error": error_msg}
+            return ToolResult(
+                content=[TextContent(type="text", text=error_msg).model_dump()],
+                isError=True,
+            )
         except Exception as e:
             response_time = time.time() - start_time
             self._consecutive_failures += 1
@@ -491,7 +503,10 @@ class StdioTransport(MCPBaseTransport):
 
             error_msg = f"Tool execution failed: {str(e)}"
             logger.error("Tool '%s' error: %s", tool_name, error_msg)
-            return {"isError": True, "error": error_msg}
+            return ToolResult(
+                content=[TextContent(type="text", text=error_msg).model_dump()],
+                isError=True,
+            )
 
     def _update_metrics(self, response_time: float, success: bool) -> None:
         """Enhanced metrics tracking (like SSE)."""
@@ -504,7 +519,7 @@ class StdioTransport(MCPBaseTransport):
         if self._metrics["total_calls"] > 0:
             self._metrics["avg_response_time"] = self._metrics["total_time"] / self._metrics["total_calls"]
 
-    def _normalize_mcp_response(self, response: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_mcp_response(self, response: dict[str, Any]) -> ToolResult:
         """
         Enhanced response normalization with STDIO-specific handling.
 
@@ -515,20 +530,42 @@ class StdioTransport(MCPBaseTransport):
         if "error" in response:
             error_info = response["error"]
             error_msg = error_info.get("message", str(error_info)) if isinstance(error_info, dict) else str(error_info)
-            return {"isError": True, "error": error_msg}
+            return ToolResult(
+                content=[TextContent(type="text", text=error_msg).model_dump()],
+                isError=True,
+            )
 
         # Handle successful response with result
         if "result" in response:
             result = response["result"]
             if isinstance(result, dict) and "content" in result:
-                return {"isError": False, "content": self._extract_stdio_content(result["content"])}
-            return {"isError": False, "content": result}
+                content_list = result["content"]
+                # Ensure content is a list
+                if not isinstance(content_list, list):
+                    # Wrap extracted content in text block
+                    extracted = self._extract_stdio_content(
+                        [TextContent(type="text", text=str(content_list)).model_dump()]
+                    )
+                    content_list = [TextContent(type="text", text=str(extracted)).model_dump()]
+                return ToolResult(content=content_list, isError=False)
+            # Wrap non-standard result
+            return ToolResult(
+                content=[TextContent(type="text", text=json.dumps(result)).model_dump()],
+                isError=False,
+            )
 
         # Handle direct content-based response
         if "content" in response:
-            return {"isError": False, "content": self._extract_stdio_content(response["content"])}
+            content_list = response["content"]
+            if not isinstance(content_list, list):
+                content_list = [TextContent(type="text", text=str(content_list)).model_dump()]
+            return ToolResult(content=content_list, isError=response.get("isError", False))
 
-        return {"isError": False, "content": response}
+        # Fallback
+        return ToolResult(
+            content=[TextContent(type="text", text=str(response)).model_dump()],
+            isError=False,
+        )
 
     def _extract_stdio_content(self, content_list: Any) -> Any:
         """
@@ -563,22 +600,32 @@ class StdioTransport(MCPBaseTransport):
 
         return content_list
 
-    async def list_resources(self) -> dict[str, Any]:
+    async def list_resources(self) -> list[Resource]:
         """Enhanced resource listing with error handling."""
         if not self._initialized:
-            return {}
+            return []
         try:
             response = await asyncio.wait_for(send_resources_list(*self._streams), timeout=self.default_timeout)
             self._consecutive_failures = 0  # Reset on success
-            return response if isinstance(response, dict) else {}
+
+            # Extract resources from response
+            if isinstance(response, dict):
+                resources_data = response.get("resources", [])
+            elif isinstance(response, list):
+                resources_data = response
+            else:
+                resources_data = []
+
+            # Convert to Resource objects
+            return [Resource.model_validate(r) for r in resources_data]
         except TimeoutError:
             logger.error("List resources timed out")
             self._consecutive_failures += 1
-            return {}
+            return []
         except Exception as e:
             logger.debug("Error listing resources: %s", e)
             self._consecutive_failures += 1
-            return {}
+            return []
 
     async def list_prompts(self) -> dict[str, Any]:
         """Enhanced prompt listing with error handling."""
@@ -597,22 +644,29 @@ class StdioTransport(MCPBaseTransport):
             self._consecutive_failures += 1
             return {}
 
-    async def read_resource(self, uri: str) -> dict[str, Any]:
+    async def read_resource(self, uri: str) -> ResourceContent | None:
         """Read a specific resource."""
         if not self._initialized:
-            return {}
+            return None
         try:
             response = await asyncio.wait_for(send_resources_read(*self._streams, uri), timeout=self.default_timeout)
             self._consecutive_failures = 0  # Reset on success
-            return response if isinstance(response, dict) else {}
+
+            # Extract content from response
+            if isinstance(response, dict):
+                content_data = response.get("contents", [])
+                if content_data and len(content_data) > 0:
+                    # Return first content item (resources/read returns a list)
+                    return ResourceContent.model_validate(content_data[0])
+            return None
         except TimeoutError:
             logger.error("Read resource timed out")
             self._consecutive_failures += 1
-            return {}
+            return None
         except Exception as e:
             logger.debug("Error reading resource: %s", e)
             self._consecutive_failures += 1
-            return {}
+            return None
 
     async def get_prompt(self, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
         """Get a specific prompt."""

@@ -17,6 +17,8 @@ import uuid
 from typing import Any
 
 import httpx
+from chuk_mcp.protocol import Resource, Tool, ToolResult  # type: ignore[import-untyped]
+from chuk_mcp.protocol.types.content import TextContent  # type: ignore[import-untyped]
 
 from .base_transport import MCPBaseTransport
 
@@ -473,7 +475,7 @@ class SSETransport(MCPBaseTransport):
         logger.debug("No clear health indicators - defaulting to healthy")
         return True
 
-    async def get_tools(self) -> list[dict[str, Any]]:
+    async def get_tools(self) -> list[Tool]:
         """Get list of available tools from the server."""
         if not self._initialized:
             logger.error("Cannot get tools: transport not initialized")
@@ -487,7 +489,17 @@ class SSETransport(MCPBaseTransport):
                 logger.error("Error getting tools: %s", response["error"])
                 return []
 
-            tools = response.get("result", {}).get("tools", [])
+            # Extract tools from response
+            result = response.get("result", {})
+            if isinstance(result, dict):
+                tools_data = result.get("tools", [])
+            elif isinstance(result, list):
+                tools_data = result
+            else:
+                tools_data = []
+
+            # Convert to Tool objects
+            tools = [Tool.model_validate(t) for t in tools_data]
 
             if self.enable_metrics:
                 response_time = time.time() - start_time
@@ -499,12 +511,12 @@ class SSETransport(MCPBaseTransport):
             logger.error("Error getting tools: %s", e)
             return []
 
-    async def call_tool(
-        self, tool_name: str, arguments: dict[str, Any], timeout: float | None = None
-    ) -> dict[str, Any]:
+    async def call_tool(self, tool_name: str, arguments: dict[str, Any], timeout: float | None = None) -> ToolResult:
         """Execute a tool with the given arguments."""
         if not self._initialized:
-            return {"isError": True, "error": "Transport not initialized"}
+            return ToolResult(
+                content=[TextContent(type="text", text="Transport not initialized").model_dump()], isError=True
+            )
 
         start_time = time.time()
         if self.enable_metrics:
@@ -521,7 +533,12 @@ class SSETransport(MCPBaseTransport):
                 if self.enable_metrics:
                     self._update_metrics(time.time() - start_time, False)
 
-                return {"isError": True, "error": response["error"].get("message", "Unknown error")}
+                error_msg = (
+                    response["error"].get("message", "Unknown error")
+                    if isinstance(response["error"], dict)
+                    else str(response["error"])
+                )
+                return ToolResult(content=[TextContent(type="text", text=error_msg).model_dump()], isError=True)
 
             # Extract and normalize result using base class method
             result = response.get("result", {})
@@ -536,13 +553,15 @@ class SSETransport(MCPBaseTransport):
             if self.enable_metrics:
                 self._update_metrics(time.time() - start_time, False)
 
-            return {"isError": True, "error": "Tool execution timed out"}
+            return ToolResult(
+                content=[TextContent(type="text", text="Tool execution timed out").model_dump()], isError=True
+            )
         except Exception as e:
             if self.enable_metrics:
                 self._update_metrics(time.time() - start_time, False)
 
             logger.error("Error calling tool '%s': %s", tool_name, e)
-            return {"isError": True, "error": str(e)}
+            return ToolResult(content=[TextContent(type="text", text=str(e)).model_dump()], isError=True)
 
     def _update_metrics(self, response_time: float, success: bool) -> None:
         """Update performance metrics."""
@@ -555,20 +574,31 @@ class SSETransport(MCPBaseTransport):
         if self._metrics["total_calls"] > 0:
             self._metrics["avg_response_time"] = self._metrics["total_time"] / self._metrics["total_calls"]
 
-    async def list_resources(self) -> dict[str, Any]:
+    async def list_resources(self) -> list[Resource]:
         """List available resources from the server."""
         if not self._initialized:
-            return {}
+            return []
 
         try:
             response = await self._send_request("resources/list", {}, timeout=10.0)
             if "error" in response:
                 logger.debug("Resources not supported: %s", response["error"])
-                return {}
-            return response.get("result", {})
+                return []
+
+            # Extract resources from response
+            result = response.get("result", {})
+            if isinstance(result, dict):
+                resources_data = result.get("resources", [])
+            elif isinstance(result, list):
+                resources_data = result
+            else:
+                resources_data = []
+
+            # Convert to Resource objects
+            return [Resource.model_validate(r) for r in resources_data]
         except Exception as e:
             logger.debug("Error listing resources: %s", e)
-            return {}
+            return []
 
     async def list_prompts(self) -> dict[str, Any]:
         """List available prompts from the server."""

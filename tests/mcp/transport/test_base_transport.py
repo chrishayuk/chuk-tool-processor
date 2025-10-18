@@ -94,12 +94,14 @@ class TestMCPBaseTransport:
         # Dict error with message
         response = {"error": {"message": "Test error", "code": 123}}
         normalized = transport._normalize_mcp_response(response)
-        assert normalized == {"isError": True, "error": "Test error"}
+        assert normalized.isError is True
+        assert normalized.content[0]["text"] == "Test error"
 
         # String error
         response = {"error": "Simple error"}
         normalized = transport._normalize_mcp_response(response)
-        assert normalized == {"isError": True, "error": "Simple error"}
+        assert normalized.isError is True
+        assert normalized.content[0]["text"] == "Simple error"
 
     def test_normalize_mcp_response_with_result_content(self):
         """Test normalizing response with result containing content."""
@@ -107,7 +109,8 @@ class TestMCPBaseTransport:
 
         response = {"result": {"content": [{"type": "text", "text": "result"}]}}
         normalized = transport._normalize_mcp_response(response)
-        assert normalized == {"isError": False, "content": "result"}
+        assert normalized.isError is False
+        assert normalized.content == [{"type": "text", "text": "result"}]
 
     def test_normalize_mcp_response_with_result_direct(self):
         """Test normalizing response with direct result."""
@@ -115,7 +118,8 @@ class TestMCPBaseTransport:
 
         response = {"result": {"data": "value"}}
         normalized = transport._normalize_mcp_response(response)
-        assert normalized == {"isError": False, "content": {"data": "value"}}
+        assert normalized.isError is False
+        assert normalized.content[0]["text"] == '{"data": "value"}'
 
     def test_normalize_mcp_response_with_direct_content(self):
         """Test normalizing response with direct content field."""
@@ -123,7 +127,8 @@ class TestMCPBaseTransport:
 
         response = {"content": [{"type": "text", "text": "direct"}]}
         normalized = transport._normalize_mcp_response(response)
-        assert normalized == {"isError": False, "content": "direct"}
+        assert normalized.isError is False
+        assert normalized.content == [{"type": "text", "text": "direct"}]
 
     def test_normalize_mcp_response_fallback(self):
         """Test normalizing response with no standard fields."""
@@ -131,7 +136,8 @@ class TestMCPBaseTransport:
 
         response = {"custom": "data"}
         normalized = transport._normalize_mcp_response(response)
-        assert normalized == {"isError": False, "content": {"custom": "data"}}
+        assert normalized.isError is False
+        assert normalized.content[0]["text"] == '{"custom": "data"}'
 
     def test_extract_mcp_content_empty_list(self):
         """Test extracting content from empty list."""

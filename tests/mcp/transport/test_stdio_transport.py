@@ -153,14 +153,21 @@ class TestStdioTransport:
         transport._initialized = True
         transport._streams = (Mock(), Mock())
 
+        # Complete Tool dictionaries with all required fields
+        full_tools = [
+            {"name": "search", "description": "Search tool", "inputSchema": {"type": "object", "properties": {}}},
+            {"name": "research", "description": "Research tool", "inputSchema": {"type": "object", "properties": {}}},
+        ]
         expected_tools = [{"name": "search"}, {"name": "research"}]
 
         with patch(
             "chuk_tool_processor.mcp.transport.stdio_transport.send_tools_list",
-            AsyncMock(return_value={"tools": expected_tools}),
+            AsyncMock(return_value={"tools": full_tools}),
         ):
             tools = await transport.get_tools()
-            assert tools == expected_tools
+            # Convert Tool objects to dicts for comparison
+            tools_as_dicts = [{"name": t.name} for t in tools]
+            assert tools_as_dicts == expected_tools
 
     @pytest.mark.asyncio
     async def test_get_tools_list_response(self, transport):
@@ -168,13 +175,19 @@ class TestStdioTransport:
         transport._initialized = True
         transport._streams = (Mock(), Mock())
 
+        # Complete Tool dictionary with all required fields
+        full_tools = [
+            {"name": "search", "description": "Search tool", "inputSchema": {"type": "object", "properties": {}}}
+        ]
         expected_tools = [{"name": "search"}]
 
         with patch(
-            "chuk_tool_processor.mcp.transport.stdio_transport.send_tools_list", AsyncMock(return_value=expected_tools)
+            "chuk_tool_processor.mcp.transport.stdio_transport.send_tools_list", AsyncMock(return_value=full_tools)
         ):
             tools = await transport.get_tools()
-            assert tools == expected_tools
+            # Convert Tool objects to dicts for comparison
+            tools_as_dicts = [{"name": t.name} for t in tools]
+            assert tools_as_dicts == expected_tools
 
     @pytest.mark.asyncio
     async def test_get_tools_not_initialized(self, transport):
@@ -196,8 +209,9 @@ class TestStdioTransport:
             "chuk_tool_processor.mcp.transport.stdio_transport.send_tools_call", AsyncMock(return_value=response)
         ):
             result = await transport.call_tool("search", {"query": "test"})
-            assert result["isError"] is False
-            assert result["content"] == "42"  # String preserved for STDIO
+            assert result.isError is False
+            # Extract content from ToolResult
+            assert result.content == [{"type": "text", "text": "42"}]
 
             # Check metrics were updated
             metrics = transport.get_metrics()
@@ -217,7 +231,7 @@ class TestStdioTransport:
             "chuk_tool_processor.mcp.transport.stdio_transport.send_tools_call", AsyncMock(return_value=response)
         ) as mock_send:
             result = await transport.call_tool("search", {"query": "test"}, timeout=15.0)
-            assert result["isError"] is False
+            assert result.isError is False
 
             # Verify the call was made with correct parameters
             mock_send.assert_called_once()
@@ -227,8 +241,8 @@ class TestStdioTransport:
         """Test STDIO call tool when not initialized."""
         assert transport._initialized is False
         result = await transport.call_tool("test", {})
-        assert result["isError"] is True
-        assert result["error"] == "Transport not initialized"
+        assert result.isError is True
+        assert result.content[0]["text"] == "Transport not initialized"
 
     @pytest.mark.asyncio
     async def test_call_tool_timeout(self, transport):
@@ -241,8 +255,8 @@ class TestStdioTransport:
             AsyncMock(side_effect=asyncio.TimeoutError),
         ):
             result = await transport.call_tool("search", {}, timeout=1.0)
-            assert result["isError"] is True
-            assert "timed out after 1.0s" in result["error"]
+            assert result.isError is True
+            assert "timed out after 1.0s" in result.content[0]["text"]
 
             # Check timeout failure metrics
             metrics = transport.get_metrics()
@@ -260,8 +274,8 @@ class TestStdioTransport:
             AsyncMock(side_effect=Exception("Pipe broken")),
         ):
             result = await transport.call_tool("search", {})
-            assert result["isError"] is True
-            assert "Pipe broken" in result["error"]
+            assert result.isError is True
+            assert "Pipe broken" in result.content[0]["text"]
 
             # Check failure metrics including pipe error
             metrics = transport.get_metrics()
@@ -351,21 +365,23 @@ class TestStdioTransport:
         transport._initialized = True
         transport._streams = (Mock(), Mock())
 
-        expected_resources = {"resources": [{"name": "resource1"}]}
+        expected_resources_data = {"resources": [{"name": "resource1", "uri": "test://resource1"}]}
 
         with patch(
             "chuk_tool_processor.mcp.transport.stdio_transport.send_resources_list",
-            AsyncMock(return_value=expected_resources),
+            AsyncMock(return_value=expected_resources_data),
         ):
             result = await transport.list_resources()
-            assert result == expected_resources
+            # Now returns list[Resource] objects
+            assert len(result) == 1
+            assert result[0].name == "resource1"
 
     @pytest.mark.asyncio
     async def test_list_resources_not_initialized(self, transport):
         """Test listing resources when not initialized."""
         transport._initialized = False
         result = await transport.list_resources()
-        assert result == {}
+        assert result == []
 
     @pytest.mark.asyncio
     async def test_list_prompts_success(self, transport):
@@ -388,14 +404,16 @@ class TestStdioTransport:
         transport._initialized = True
         transport._streams = (Mock(), Mock())
 
-        expected_resource = {"content": "resource data"}
+        expected_resource_data = {"contents": [{"uri": "test://resource", "text": "resource data"}]}
 
         with patch(
             "chuk_tool_processor.mcp.transport.stdio_transport.send_resources_read",
-            AsyncMock(return_value=expected_resource),
+            AsyncMock(return_value=expected_resource_data),
         ):
             result = await transport.read_resource("test://resource")
-            assert result == expected_resource
+            # Now returns ResourceContent object
+            assert result is not None
+            assert result.uri == "test://resource"
 
     @pytest.mark.asyncio
     async def test_get_prompt(self, transport):
@@ -676,8 +694,8 @@ class TestStdioTransport:
     async def test_call_tool_not_initialized_returns_error(self, transport):
         """Test call_tool when not initialized."""
         result = await transport.call_tool("test", {})
-        assert result["isError"] is True
-        assert result["error"] == "Transport not initialized"
+        assert result.isError is True
+        assert result.content[0]["text"] == "Transport not initialized"
 
     @pytest.mark.asyncio
     async def test_call_tool_with_error_response(self, transport):
@@ -692,8 +710,8 @@ class TestStdioTransport:
             AsyncMock(return_value=error_response),
         ):
             result = await transport.call_tool("test", {})
-            assert result["isError"] is True
-            assert result["error"] == "Tool error"
+            assert result.isError is True
+            assert result.content[0]["text"] == "Tool error"
 
     @pytest.mark.asyncio
     async def test_call_tool_with_dict_content(self, transport):
@@ -708,14 +726,15 @@ class TestStdioTransport:
             AsyncMock(return_value=response),
         ):
             result = await transport.call_tool("test", {})
-            assert result["isError"] is False
-            assert result["content"] == {"data": "value"}
+            assert result.isError is False
+            # Dict result is wrapped in TextContent
+            assert result.content[0]["text"] == '{"data": "value"}'
 
     @pytest.mark.asyncio
     async def test_list_resources_not_initialized_returns_empty(self, transport):
         """Test list_resources when not initialized."""
         result = await transport.list_resources()
-        assert result == {}
+        assert result == []
 
     @pytest.mark.asyncio
     async def test_list_resources_exception(self, transport):
@@ -728,7 +747,7 @@ class TestStdioTransport:
             AsyncMock(side_effect=Exception("List error")),
         ):
             result = await transport.list_resources()
-            assert result == {}
+            assert result == []
 
     @pytest.mark.asyncio
     async def test_list_prompts_not_initialized(self, transport):
@@ -753,7 +772,7 @@ class TestStdioTransport:
     async def test_read_resource_not_initialized(self, transport):
         """Test read_resource when not initialized."""
         result = await transport.read_resource("test://uri")
-        assert result == {}
+        assert result is None
 
     @pytest.mark.asyncio
     async def test_read_resource_exception(self, transport):
@@ -766,7 +785,7 @@ class TestStdioTransport:
             AsyncMock(side_effect=Exception("Read error")),
         ):
             result = await transport.read_resource("test://uri")
-            assert result == {}
+            assert result is None
 
     @pytest.mark.asyncio
     async def test_get_prompt_not_initialized(self, transport):
@@ -982,7 +1001,7 @@ class TestStdioTransport:
         """Test read_resource verifies initialization."""
         transport._initialized = False
         result = await transport.read_resource("test://uri")
-        assert result == {}
+        assert result is None
 
     @pytest.mark.asyncio
     async def test_get_prompt_not_initialized_check(self, transport):

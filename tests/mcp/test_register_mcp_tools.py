@@ -2,6 +2,7 @@
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from chuk_mcp.protocol import Tool
 
 from chuk_tool_processor.mcp.mcp_tool import MCPTool
 from chuk_tool_processor.mcp.register_mcp_tools import register_mcp_tools
@@ -43,15 +44,15 @@ class TestRegisterMCPTools:
         mgr = Mock(spec=StreamManager)
         mgr.get_all_tools = Mock(
             return_value=[
-                {
-                    "name": "echo",
-                    "description": "Echo tool for testing",
-                    "inputSchema": {"type": "object", "properties": {"message": {"type": "string"}}},
-                },
-                {
-                    "name": "calc",
-                    "description": "Calculator tool",
-                    "inputSchema": {
+                Tool(
+                    name="echo",
+                    description="Echo tool for testing",
+                    inputSchema={"type": "object", "properties": {"message": {"type": "string"}}},
+                ),
+                Tool(
+                    name="calc",
+                    description="Calculator tool",
+                    inputSchema={
                         "type": "object",
                         "properties": {
                             "operation": {"type": "string"},
@@ -59,7 +60,7 @@ class TestRegisterMCPTools:
                             "b": {"type": "number"},
                         },
                     },
-                },
+                ),
             ]
         )
         return mgr
@@ -68,11 +69,9 @@ class TestRegisterMCPTools:
     def large_tool_set(self):
         """Fixture for large-scale testing."""
         return [
-            {
-                "name": f"tool_{i}",
-                "description": f"Test tool number {i}",
-                "inputSchema": {"type": "object", "properties": {}},
-            }
+            Tool(
+                name=f"tool_{i}", description=f"Test tool number {i}", inputSchema={"type": "object", "properties": {}}
+            )
             for i in range(50)  # 50 tools for performance testing
         ]
 
@@ -158,10 +157,11 @@ class TestRegisterMCPTools:
         mgr = Mock(spec=StreamManager)
         mgr.get_all_tools = Mock(
             return_value=[
-                {"description": "no name field"},
-                {"name": "", "description": "empty name"},
-                {"name": None, "description": "null name"},
-                {"name": "valid_tool", "description": "This one should work"},
+                Tool(
+                    name="valid_tool",
+                    description="This one should work",
+                    inputSchema={"type": "object", "properties": {}},
+                ),
             ]
         )
 
@@ -199,9 +199,15 @@ class TestRegisterMCPTools:
         mgr = Mock(spec=StreamManager)
         mgr.get_all_tools = Mock(
             return_value=[
-                {"name": "duplicate_tool", "description": "First version"},
-                {"name": "duplicate_tool", "description": "Second version"},
-                {"name": "unique_tool", "description": "Unique tool"},
+                Tool(
+                    name="duplicate_tool", description="First version", inputSchema={"type": "object", "properties": {}}
+                ),
+                Tool(
+                    name="duplicate_tool",
+                    description="Second version",
+                    inputSchema={"type": "object", "properties": {}},
+                ),
+                Tool(name="unique_tool", description="Unique tool", inputSchema={"type": "object", "properties": {}}),
             ]
         )
 
@@ -272,9 +278,7 @@ class TestRegisterMCPTools:
         for i in range(5):
             mgr = Mock(spec=StreamManager)
             mgr.get_all_tools = Mock(
-                return_value=[
-                    {"name": f"concurrent_tool_{i}", "description": f"Tool from manager {i}", "inputSchema": {}}
-                ]
+                return_value=[Tool(name=f"concurrent_tool_{i}", description=f"Tool from manager {i}", inputSchema={})]
             )
             managers.append(mgr)
 
@@ -324,7 +328,7 @@ class TestRegisterMCPTools:
         mgr = Mock(spec=StreamManager)
         mgr.get_all_tools = Mock(
             return_value=[
-                {"name": "shared_tool", "description": "Tool that exists in multiple namespaces", "inputSchema": {}}
+                Tool(name="shared_tool", description="Tool that exists in multiple namespaces", inputSchema={})
             ]
         )
 
@@ -350,10 +354,10 @@ class TestRegisterMCPTools:
         mgr = Mock(spec=StreamManager)
         mgr.get_all_tools = Mock(
             return_value=[
-                {
-                    "name": "schema_tool",
-                    "description": "Tool with complex schema",
-                    "inputSchema": {
+                Tool(
+                    name="schema_tool",
+                    description="Tool with complex schema",
+                    inputSchema={
                         "type": "object",
                         "properties": {
                             "required_param": {"type": "string"},
@@ -361,12 +365,8 @@ class TestRegisterMCPTools:
                         },
                         "required": ["required_param"],
                     },
-                },
-                {
-                    "name": "no_schema_tool",
-                    "description": "Tool without schema",
-                    # No inputSchema field
-                },
+                ),
+                Tool(name="no_schema_tool", description="Tool without schema", inputSchema={}),
             ]
         )
 
@@ -398,10 +398,10 @@ class TestRegisterMCPTools:
         mgr = Mock(spec=StreamManager)
         mgr.get_all_tools = Mock(
             return_value=[
-                {
-                    "name": "get_weather",
-                    "description": "Get current weather for a location",
-                    "inputSchema": {
+                Tool(
+                    name="get_weather",
+                    description="Get current weather for a location",
+                    inputSchema={
                         "type": "object",
                         "properties": {
                             "location": {"type": "string", "description": "City name"},
@@ -409,7 +409,7 @@ class TestRegisterMCPTools:
                         },
                         "required": ["location"],
                     },
-                }
+                )
             ]
         )
 

@@ -2,6 +2,8 @@
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from chuk_mcp.protocol import ToolResult
+from chuk_mcp.protocol.types.content import TextContent
 
 from chuk_tool_processor.mcp.mcp_tool import ConnectionState, MCPTool, RecoveryConfig
 from chuk_tool_processor.mcp.stream_manager import StreamManager
@@ -42,7 +44,9 @@ class TestMCPTool:
     async def test_execute_success_with_resilience(self, mcp_tool, mock_stream_manager):
         """Test successful tool execution with resilience features."""
         # Setup
-        mock_stream_manager.call_tool.return_value = {"isError": False, "content": "Hello World"}
+        mock_stream_manager.call_tool.return_value = ToolResult(
+            content=[TextContent(type="text", text="Hello World").model_dump()], isError=False
+        )
 
         # Execute
         result = await mcp_tool.execute(message="Hello")
@@ -63,7 +67,9 @@ class TestMCPTool:
     async def test_execute_error_with_resilience(self, mcp_tool, mock_stream_manager):
         """Test tool execution with error returns structured response."""
         # Setup
-        mock_stream_manager.call_tool.return_value = {"isError": True, "error": "Connection failed"}
+        mock_stream_manager.call_tool.return_value = ToolResult(
+            content=[TextContent(type="text", text="Connection failed").model_dump()], isError=True
+        )
 
         # Execute
         result = await mcp_tool.execute(message="Hello")
@@ -174,7 +180,7 @@ class TestMCPTool:
         # Setup failure then success
         mock_stream_manager.call_tool.side_effect = [
             Exception("Temporary failure"),
-            {"isError": False, "content": "Success after retry"},
+            ToolResult(content=[TextContent(type="text", text="Success after retry").model_dump()], isError=False),
         ]
 
         # Execute
@@ -193,7 +199,9 @@ class TestMCPTool:
         mock_stream_manager.get_server_info.side_effect = TimeoutError()
 
         # Setup successful tool call
-        mock_stream_manager.call_tool.return_value = {"isError": False, "content": "Success despite timeout"}
+        mock_stream_manager.call_tool.return_value = ToolResult(
+            content=[TextContent(type="text", text="Success despite timeout").model_dump()], isError=False
+        )
 
         tool = MCPTool("echo", mock_stream_manager, enable_resilience=True)
 
@@ -212,7 +220,9 @@ class TestMCPTool:
         mock_stream_manager.get_server_info.side_effect = Exception("Health check error")
 
         # Setup successful tool call
-        mock_stream_manager.call_tool.return_value = {"isError": False, "content": "Success despite health error"}
+        mock_stream_manager.call_tool.return_value = ToolResult(
+            content=[TextContent(type="text", text="Success despite health error").model_dump()], isError=False
+        )
 
         tool = MCPTool("echo", mock_stream_manager, enable_resilience=True)
 
@@ -231,7 +241,9 @@ class TestMCPTool:
     async def test_execute_success_without_resilience(self, simple_mcp_tool, mock_stream_manager):
         """Test successful tool execution without resilience (legacy behavior)."""
         # Setup
-        mock_stream_manager.call_tool.return_value = {"isError": False, "content": "Hello World"}
+        mock_stream_manager.call_tool.return_value = ToolResult(
+            content=[TextContent(type="text", text="Hello World").model_dump()], isError=False
+        )
 
         # Execute
         result = await simple_mcp_tool.execute(message="Hello")
@@ -249,7 +261,9 @@ class TestMCPTool:
     async def test_execute_error_without_resilience(self, simple_mcp_tool, mock_stream_manager):
         """Test tool execution with error raises exception (legacy behavior)."""
         # Setup
-        mock_stream_manager.call_tool.return_value = {"isError": True, "error": "Connection failed"}
+        mock_stream_manager.call_tool.return_value = ToolResult(
+            content=[TextContent(type="text", text="Connection failed").model_dump()], isError=True
+        )
 
         # Execute and verify exception is raised
         with pytest.raises(RuntimeError, match="Connection failed"):
@@ -259,7 +273,9 @@ class TestMCPTool:
     async def test_execute_unknown_error_without_resilience(self, simple_mcp_tool, mock_stream_manager):
         """Test tool execution with unknown error (legacy behavior)."""
         # Setup
-        mock_stream_manager.call_tool.return_value = {"isError": True}
+        mock_stream_manager.call_tool.return_value = ToolResult(
+            content=[TextContent(type="text", text="Unknown error").model_dump()], isError=True
+        )
 
         # Execute and verify default error message
         with pytest.raises(RuntimeError, match="Unknown error"):
@@ -381,7 +397,9 @@ class TestMCPTool:
     async def test_legacy_aexecute_method(self, simple_mcp_tool, mock_stream_manager):
         """Test legacy _aexecute method still works."""
         # Setup
-        mock_stream_manager.call_tool.return_value = {"isError": False, "content": "Legacy method works"}
+        mock_stream_manager.call_tool.return_value = ToolResult(
+            content=[TextContent(type="text", text="Legacy method works").model_dump()], isError=False
+        )
 
         # Execute using legacy method
         result = await simple_mcp_tool._aexecute(message="test")
@@ -415,7 +433,9 @@ class TestMCPTool:
     @pytest.mark.asyncio
     async def test_execute_with_dict_arguments(self, simple_mcp_tool, mock_stream_manager):
         """Test execute with dict-style arguments."""
-        mock_stream_manager.call_tool.return_value = {"isError": False, "content": "dict args work"}
+        mock_stream_manager.call_tool.return_value = ToolResult(
+            content=[TextContent(type="text", text="dict args work").model_dump()], isError=False
+        )
 
         result = await simple_mcp_tool.execute(arg1="value1", arg2="value2")
 
