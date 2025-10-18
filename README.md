@@ -661,7 +661,7 @@ processor, manager = await setup_mcp_http_streamable(
 
 # Get available Notion tools
 tools = manager.get_all_tools()
-print(f"Available tools: {[t['name'] for t in tools]}")
+print(f"Available tools: {[t.name for t in tools]}")
 
 # Use Notion tools in your LLM workflow
 results = await processor.process(

@@ -86,8 +86,8 @@ async def test_echo_server():
         tools = stream_manager.get_all_tools()
         print(f"\n    Retrieved {len(tools)} tools:")
         for tool in tools:
-            name = tool.get('name', 'unknown')
-            desc = tool.get('description', 'No description')[:60]
+            name = tool.name
+            desc = (tool.description or 'No description')[:60]
             print(f"      • {name}: {desc}")
 
         await stream_manager.close()

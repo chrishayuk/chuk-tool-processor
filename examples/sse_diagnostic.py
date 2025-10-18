@@ -274,8 +274,8 @@ class EnhancedSSEDiagnostic:
                             logger.info(
                                 "  Tool %d: %s - %s",
                                 i + 1,
-                                tool.get("name", "Unknown"),
-                                tool.get("description", "No description")[:50],
+                                tool.name,
+                                (tool.description or "No description")[:50],
                             )
                         test_result["passed"] = True
                     else:
@@ -358,7 +358,7 @@ class EnhancedSSEDiagnostic:
             if all_tools:
                 logger.info("✅ Discovered %d tools via StreamManager", len(all_tools))
                 for i, tool in enumerate(all_tools[:3]):
-                    logger.info("  Tool %d: %s", i + 1, tool.get("name", "Unknown"))
+                    logger.info("  Tool %d: %s", i + 1, tool.name)
                 test_result["passed"] = True
             else:
                 logger.warning("⚠️ No tools discovered via StreamManager")

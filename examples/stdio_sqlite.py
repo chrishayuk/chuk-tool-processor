@@ -154,8 +154,8 @@ async def test_stdio_transport():
         if tools:
             print("\n    Available SQLite tools:")
             for tool in tools:
-                name = tool.get('name', 'unknown')
-                desc = tool.get('description', 'No description')[:60]
+                name = tool.name
+                desc = (tool.description or 'No description')[:60]
                 print(f"      • {name}: {desc}")
 
         # Test server info

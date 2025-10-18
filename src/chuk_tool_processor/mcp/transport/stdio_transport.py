@@ -391,11 +391,14 @@ class StdioTransport(MCPBaseTransport):
         try:
             response = await asyncio.wait_for(send_tools_list(*self._streams), timeout=self.default_timeout)
 
-            # Normalize response
+            # Normalize response - handle dict, list, or Pydantic objects
             if isinstance(response, dict):
                 tools_data = response.get("tools", [])
             elif isinstance(response, list):
                 tools_data = response
+            elif hasattr(response, "tools"):
+                # Handle Pydantic response objects (e.g., ListToolsResult)
+                tools_data = response.tools
             else:
                 logger.warning("Unexpected tools response type: %s", type(response))
                 tools_data = []

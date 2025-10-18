@@ -364,11 +364,14 @@ class HTTPStreamableTransport(MCPBaseTransport):
                 timeout=self.default_timeout,
             )
 
-            # Extract tools from response
+            # Extract tools from response - handle dict, list, or Pydantic objects
             if isinstance(tools_response, dict):
                 tools_data = tools_response.get("tools", [])
             elif isinstance(tools_response, list):
                 tools_data = tools_response
+            elif hasattr(tools_response, "tools"):
+                # Handle Pydantic response objects (e.g., ListToolsResult)
+                tools_data = tools_response.tools
             else:
                 logger.warning("Unexpected tools response type: %s", type(tools_response))
                 tools_data = []

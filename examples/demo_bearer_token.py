@@ -195,9 +195,9 @@ async def test_tool_discovery(stream_manager) -> tuple[bool, list[str]]:
         if all_tools:
             print_success("Tools discovered successfully!")
 
-            # Print first few tools (all_tools is a list of tool names)
-            for i, tool_name in enumerate(all_tools[:5]):  # Show first 5 tools
-                print_info(f"Tool {i + 1}: {tool_name}")
+            # Print first few tools (all_tools is a list of Tool objects)
+            for i, tool in enumerate(all_tools[:5]):  # Show first 5 tools
+                print_info(f"Tool {i + 1}: {tool.name}")
 
             if len(all_tools) > 5:
                 print_info(f"... and {len(all_tools) - 5} more tools")

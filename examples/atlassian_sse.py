@@ -239,8 +239,8 @@ async def test_with_chuk_tool_processor(access_token: str):
         if tools:
             print("\n    Available tools:")
             for tool in tools[:5]:
-                name = tool.get('name', 'unknown')
-                desc = tool.get('description', 'No description')[:50]
+                name = tool.name
+                desc = (tool.description or 'No description')[:50]
                 print(f"      • {name}: {desc}")
             if len(tools) > 5:
                 print(f"      ... and {len(tools) - 5} more")
