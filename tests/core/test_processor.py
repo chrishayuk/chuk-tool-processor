@@ -21,6 +21,7 @@ def mock_registry():
     """Create a mock registry."""
     registry = Mock()
     registry.get_tool = AsyncMock(return_value=Mock())
+    registry.list_tools = AsyncMock(return_value=[])
     return registry
 
 

@@ -45,7 +45,7 @@ class MetricsLogger:
             cached: Whether the result was retrieved from cache
             attempts: Number of execution attempts
         """
-        self.logger.info(
+        self.logger.debug(
             f"Tool execution metric: {tool}",
             extra={
                 "context": {
@@ -76,7 +76,7 @@ class MetricsLogger:
             duration: Parsing duration in seconds
             num_calls: Number of tool calls parsed
         """
-        self.logger.info(
+        self.logger.debug(
             f"Parser metric: {parser}",
             extra={
                 "context": {

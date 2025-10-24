@@ -389,9 +389,40 @@ class StdioTransport(MCPBaseTransport):
         try:
             response = await asyncio.wait_for(send_tools_list(*self._streams), timeout=self.default_timeout)
 
-            # Normalize response
-            if isinstance(response, dict):
-                tools = response.get("tools", [])
+            # Normalize response - handle multiple formats including Pydantic models
+            # 1. Check if it's a Pydantic model with tools attribute (e.g., ListToolsResult from chuk_mcp)
+            if hasattr(response, "tools"):
+                tools = response.tools
+                # Convert Pydantic Tool models to dicts if needed
+                if tools and len(tools) > 0 and hasattr(tools[0], "model_dump"):
+                    tools = [tool.model_dump() if hasattr(tool, "model_dump") else tool for tool in tools]
+                elif tools and len(tools) > 0 and hasattr(tools[0], "dict"):
+                    # Older Pydantic versions use dict() instead of model_dump()
+                    tools = [tool.dict() if hasattr(tool, "dict") else tool for tool in tools]
+            # 2. Check if it's a Pydantic model that can be dumped
+            elif hasattr(response, "model_dump"):
+                dumped = response.model_dump()
+                tools = dumped.get("tools", [])
+            # 3. Handle dict responses
+            elif isinstance(response, dict):
+                # Check for tools at top level
+                if "tools" in response:
+                    tools = response["tools"]
+                # Check for nested result.tools (common in some MCP implementations)
+                elif "result" in response and isinstance(response["result"], dict):
+                    tools = response["result"].get("tools", [])
+                # Check if response itself is the result with MCP structure
+                elif "jsonrpc" in response and "result" in response:
+                    result = response["result"]
+                    if isinstance(result, dict):
+                        tools = result.get("tools", [])
+                    elif isinstance(result, list):
+                        tools = result
+                    else:
+                        tools = []
+                else:
+                    tools = []
+            # 4. Handle list responses
             elif isinstance(response, list):
                 tools = response
             else:
@@ -443,7 +474,7 @@ class StdioTransport(MCPBaseTransport):
                     return {"isError": True, "error": "Failed to recover connection"}
 
             response = await asyncio.wait_for(
-                send_tools_call(*self._streams, tool_name, arguments), timeout=tool_timeout
+                send_tools_call(*self._streams, tool_name, arguments, timeout=tool_timeout), timeout=tool_timeout
             )
 
             response_time = time.time() - start_time

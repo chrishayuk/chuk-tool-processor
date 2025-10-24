@@ -40,8 +40,8 @@ async def test_log_tool_execution():
         )
 
         # Check context
-        mock_logger.info.assert_called_once()
-        args, kwargs = mock_logger.info.call_args
+        mock_logger.debug.assert_called_once()
+        args, kwargs = mock_logger.debug.call_args
         ctx = kwargs["extra"]["context"]
         assert ctx["success"] is False
         assert ctx["error"] == "Test error message"
@@ -65,8 +65,8 @@ async def test_global_metrics_instance():
             await metrics.log_tool_execution(tool="global_test", success=True, duration=1.0)
 
             # Check logging
-            mock_logger.info.assert_called_once()
-            args, kwargs = mock_logger.info.call_args
+            mock_logger.debug.assert_called_once()
+            args, kwargs = mock_logger.debug.call_args
             assert "global_test" in args[0]
             assert kwargs["extra"]["context"]["tool"] == "global_test"
         finally:
@@ -101,10 +101,10 @@ async def test_concurrent_metrics_logging():
         await asyncio.gather(*tasks)
 
         # Should have logged 5 times
-        assert mock_logger.info.call_count == 5
+        assert mock_logger.debug.call_count == 5
 
         # Reset the mock before the additional call
-        mock_logger.info.reset_mock()
+        mock_logger.debug.reset_mock()
 
         # Now make a separate call with a clean mock state
         await logger.log_tool_execution(
@@ -112,14 +112,14 @@ async def test_concurrent_metrics_logging():
         )
 
         # Check that this specific call was logged once
-        mock_logger.info.assert_called_once()
-        args, kwargs = mock_logger.info.call_args
+        mock_logger.debug.assert_called_once()
+        args, kwargs = mock_logger.debug.call_args
         assert "test_tool" in args[0]
         assert kwargs["extra"]["context"]["tool"] == "test_tool"
 
         # Check that all tools were logged across all calls
         # Reset the mock again for clean state
-        mock_logger.info.reset_mock()
+        mock_logger.debug.reset_mock()
 
         # Log each tool again to get a fresh set of calls
         for i in range(5):
@@ -129,7 +129,7 @@ async def test_concurrent_metrics_logging():
 
         # Now check the tool names
         tool_names = set()
-        for call in mock_logger.info.call_args_list:
+        for call in mock_logger.debug.call_args_list:
             args, kwargs = call
             tool_name = kwargs["extra"]["context"]["tool"]
             tool_names.add(tool_name)
@@ -153,8 +153,8 @@ async def test_log_parser_metric():
         await logger.log_parser_metric(parser="xml_parser", success=True, duration=0.456, num_calls=5)
 
         # Check logging
-        mock_logger.info.assert_called_once()
-        args, kwargs = mock_logger.info.call_args
+        mock_logger.debug.assert_called_once()
+        args, kwargs = mock_logger.debug.call_args
         assert "xml_parser" in args[0]
         assert "context" in kwargs["extra"]
         ctx = kwargs["extra"]["context"]

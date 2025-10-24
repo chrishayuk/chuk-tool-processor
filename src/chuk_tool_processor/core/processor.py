@@ -250,11 +250,13 @@ class ToolProcessor:
 
             # Execute tool calls
             async with log_context_span("tool_execution", {"num_calls": len(calls)}):
-                # Check if any tools are unknown
+                # Check if any tools are unknown - search across all namespaces
                 unknown_tools = []
+                all_tools = await self.registry.list_tools()  # Returns list of (namespace, name) tuples
+                tool_names_in_registry = {name for ns, name in all_tools}
+
                 for call in calls:
-                    tool = await self.registry.get_tool(call.tool)
-                    if not tool:
+                    if call.tool not in tool_names_in_registry:
                         unknown_tools.append(call.tool)
 
                 if unknown_tools:
