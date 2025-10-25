@@ -23,7 +23,7 @@ import inspect
 import json
 from typing import Any, TypeVar
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from chuk_tool_processor.core.exceptions import ToolValidationError
 
@@ -97,10 +97,30 @@ class ValidatedTool(_ExportMixin, BaseModel):
     # Inner models - override in subclasses
     # ------------------------------------------------------------------ #
     class Arguments(BaseModel):  # noqa: D401 - acts as a namespace
-        """Input model"""
+        """Input model with LLM-friendly coercion defaults."""
+
+        model_config = ConfigDict(
+            # Coerce string numbers to actual numbers
+            coerce_numbers_to_str=False,
+            # Strip whitespace from strings
+            str_strip_whitespace=True,
+            # Validate default values
+            validate_default=True,
+            # Be lenient with extra fields (ignore them)
+            extra="ignore",
+            # Use enum values instead of enum objects
+            use_enum_values=True,
+        )
 
     class Result(BaseModel):  # noqa: D401
         """Output model"""
+
+        model_config = ConfigDict(
+            # Validate default values in results too
+            validate_default=True,
+            # Use enum values in outputs
+            use_enum_values=True,
+        )
 
     # ------------------------------------------------------------------ #
     # Public entry-point called by the processor

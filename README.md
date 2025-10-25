@@ -44,12 +44,15 @@ Unlike full-fledged LLM frameworks (LangChain, LlamaIndex, etc.), CHUK Tool Proc
 Research code vs production code is about handling the edges:
 
 - **Timeouts**: Every tool execution has proper timeout handling
-- **Retries**: Automatic retry with exponential backoff
+- **Retries**: Automatic retry with exponential backoff and deadline awareness
 - **Rate Limiting**: Global and per-tool rate limits with sliding windows
-- **Caching**: Intelligent result caching with TTL
-- **Error Handling**: Graceful degradation, never crashes your app
+- **Caching**: Intelligent result caching with TTL and idempotency key support
+- **Circuit Breakers**: Prevent cascading failures with automatic fault detection
+- **Error Handling**: Machine-readable error codes with structured details
 - **Observability**: Structured logging, metrics, request tracing
 - **Safety**: Subprocess isolation for untrusted code
+- **Type Safety**: Pydantic validation with LLM-friendly argument coercion
+- **Tool Discovery**: Formal schema export (OpenAI, Anthropic, MCP formats)
 
 ### It's About Stacks
 
@@ -63,11 +66,13 @@ CHUK Tool Processor uses a **composable stack architecture**:
              │ tool calls
              ▼
 ┌─────────────────────────────────┐
-│   Caching Wrapper               │  ← Cache expensive results
+│   Caching Wrapper               │  ← Cache expensive results (idempotency keys)
 ├─────────────────────────────────┤
 │   Rate Limiting Wrapper         │  ← Prevent API abuse
 ├─────────────────────────────────┤
-│   Retry Wrapper                 │  ← Handle transient failures
+│   Retry Wrapper                 │  ← Handle transient failures (exponential backoff)
+├─────────────────────────────────┤
+│   Circuit Breaker Wrapper       │  ← Prevent cascading failures (CLOSED/OPEN/HALF_OPEN)
 ├─────────────────────────────────┤
 │   Execution Strategy            │  ← How to run tools
 │   • InProcess (fast)            │
@@ -609,6 +614,192 @@ processor = ToolProcessor(
     enable_retries=True,
     max_retries=3
 )
+```
+
+### Advanced Production Features
+
+Beyond basic configuration, CHUK Tool Processor includes several advanced features for production environments:
+
+#### Circuit Breaker Pattern
+
+Prevent cascading failures by automatically opening circuits for failing tools:
+
+```python
+from chuk_tool_processor.core.processor import ToolProcessor
+
+processor = ToolProcessor(
+    enable_circuit_breaker=True,
+    circuit_breaker_threshold=5,      # Open after 5 failures
+    circuit_breaker_timeout=60.0,     # Try recovery after 60s
+)
+
+# Circuit states: CLOSED → OPEN → HALF_OPEN → CLOSED
+# - CLOSED: Normal operation
+# - OPEN: Blocking requests (too many failures)
+# - HALF_OPEN: Testing recovery with limited requests
+```
+
+**How it works:**
+1. Tool fails repeatedly (hits threshold)
+2. Circuit opens → requests blocked immediately
+3. After timeout, circuit enters HALF_OPEN
+4. If test requests succeed → circuit closes
+5. If test requests fail → back to OPEN
+
+**Benefits:**
+- Prevents wasting resources on failing services
+- Fast-fail for better UX
+- Automatic recovery detection
+
+#### Idempotency Keys
+
+Automatically deduplicate LLM tool calls using SHA256-based keys:
+
+```python
+from chuk_tool_processor.models.tool_call import ToolCall
+
+# Idempotency keys are auto-generated
+call1 = ToolCall(tool="search", arguments={"query": "Python"})
+call2 = ToolCall(tool="search", arguments={"query": "Python"})
+
+# Same arguments = same idempotency key
+assert call1.idempotency_key == call2.idempotency_key
+
+# Used automatically by caching layer
+processor = ToolProcessor(enable_caching=True)
+results1 = await processor.execute([call1])  # Executes
+results2 = await processor.execute([call2])  # Cache hit!
+```
+
+**Benefits:**
+- Prevents duplicate executions from LLM retries
+- Deterministic cache keys
+- No manual key management needed
+
+#### Tool Schema Export
+
+Export tool definitions to multiple formats for LLM prompting:
+
+```python
+from chuk_tool_processor.models.tool_spec import ToolSpec, ToolCapability
+from chuk_tool_processor.models.validated_tool import ValidatedTool
+
+@register_tool(name="weather")
+class WeatherTool(ValidatedTool):
+    """Get current weather for a location."""
+
+    class Arguments(BaseModel):
+        location: str = Field(..., description="City name")
+
+    class Result(BaseModel):
+        temperature: float
+        conditions: str
+
+# Generate tool spec
+spec = ToolSpec.from_validated_tool(WeatherTool)
+
+# Export to different formats
+openai_format = spec.to_openai()       # For OpenAI function calling
+anthropic_format = spec.to_anthropic() # For Claude tools
+mcp_format = spec.to_mcp()             # For MCP servers
+
+# Example OpenAI format:
+# {
+#   "type": "function",
+#   "function": {
+#     "name": "weather",
+#     "description": "Get current weather for a location.",
+#     "parameters": {...}  # JSON Schema
+#   }
+# }
+```
+
+**Use cases:**
+- Generate tool definitions for LLM system prompts
+- Documentation generation
+- API contract validation
+- Cross-platform tool sharing
+
+#### Machine-Readable Error Codes
+
+Structured error handling with error codes for programmatic responses:
+
+```python
+from chuk_tool_processor.core.exceptions import (
+    ErrorCode,
+    ToolNotFoundError,
+    ToolTimeoutError,
+    ToolCircuitOpenError,
+)
+
+try:
+    results = await processor.process(llm_output)
+except ToolNotFoundError as e:
+    if e.code == ErrorCode.TOOL_NOT_FOUND:
+        # Suggest available tools to LLM
+        available = e.details.get("available_tools", [])
+        print(f"Try one of: {available}")
+except ToolTimeoutError as e:
+    if e.code == ErrorCode.TOOL_TIMEOUT:
+        # Inform LLM to use faster alternative
+        timeout = e.details["timeout"]
+        print(f"Tool timed out after {timeout}s")
+except ToolCircuitOpenError as e:
+    if e.code == ErrorCode.TOOL_CIRCUIT_OPEN:
+        # Tell LLM this service is temporarily down
+        reset_time = e.details.get("reset_timeout")
+        print(f"Service unavailable, retry in {reset_time}s")
+
+# All errors include .to_dict() for logging
+error_dict = e.to_dict()
+# {
+#   "error": "ToolCircuitOpenError",
+#   "code": "TOOL_CIRCUIT_OPEN",
+#   "message": "Tool 'api_tool' circuit breaker is open...",
+#   "details": {"tool_name": "api_tool", "failure_count": 5, ...}
+# }
+```
+
+**Available error codes:**
+- `TOOL_NOT_FOUND` - Tool doesn't exist in registry
+- `TOOL_EXECUTION_FAILED` - Tool execution error
+- `TOOL_TIMEOUT` - Tool exceeded timeout
+- `TOOL_CIRCUIT_OPEN` - Circuit breaker is open
+- `TOOL_RATE_LIMITED` - Rate limit exceeded
+- `TOOL_VALIDATION_ERROR` - Argument validation failed
+- `MCP_CONNECTION_FAILED` - MCP server unreachable
+- Plus 11 more for comprehensive error handling
+
+#### LLM-Friendly Argument Coercion
+
+Automatically coerce LLM outputs to correct types:
+
+```python
+from chuk_tool_processor.models.validated_tool import ValidatedTool
+
+class SearchTool(ValidatedTool):
+    class Arguments(BaseModel):
+        query: str
+        limit: int = 10
+        category: str = "all"
+
+    # Pydantic config for LLM outputs:
+    # - str_strip_whitespace=True    → Remove accidental whitespace
+    # - extra="ignore"               → Ignore unknown fields
+    # - use_enum_values=True         → Convert enums to values
+    # - coerce_numbers_to_str=False  → Keep type strictness
+
+# LLM outputs often have quirks:
+llm_output = {
+    "query": "  Python tutorials  ",  # Extra whitespace
+    "limit": "5",                      # String instead of int
+    "unknown_field": "ignored"         # Extra field
+}
+
+# ValidatedTool automatically coerces and validates
+tool = SearchTool()
+result = await tool.execute(**llm_output)
+# ✅ Works! Whitespace stripped, "5" → 5, extra field ignored
 ```
 
 ## Advanced Topics

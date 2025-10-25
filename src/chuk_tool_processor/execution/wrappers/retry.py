@@ -36,6 +36,7 @@ class RetryConfig:
         jitter: bool = True,
         retry_on_exceptions: list[type[Exception]] | None = None,
         retry_on_error_substrings: list[str] | None = None,
+        skip_retry_on_error_substrings: list[str] | None = None,
     ):
         if max_retries < 0:
             raise ValueError("max_retries cannot be negative")
@@ -45,6 +46,7 @@ class RetryConfig:
         self.jitter = jitter
         self.retry_on_exceptions = retry_on_exceptions or []
         self.retry_on_error_substrings = retry_on_error_substrings or []
+        self.skip_retry_on_error_substrings = skip_retry_on_error_substrings or []
 
     # --------------------------------------------------------------------- #
     # Decision helpers
@@ -59,6 +61,14 @@ class RetryConfig:
         """Return *True* iff another retry is allowed for this attempt."""
         if attempt >= self.max_retries:
             return False
+
+        # Check skip list first - these errors should never be retried
+        # (e.g., OAuth errors that need to be handled at transport layer)
+        if error_str and self.skip_retry_on_error_substrings:
+            error_lower = error_str.lower()
+            if any(skip_pattern.lower() in error_lower for skip_pattern in self.skip_retry_on_error_substrings):
+                logger.debug(f"Skipping retry for error matching skip pattern: {error_str[:100]}")
+                return False
 
         # Nothing specified → always retry until max_retries reached
         if not self.retry_on_exceptions and not self.retry_on_error_substrings:
@@ -246,6 +256,7 @@ def retryable(
     jitter: bool = True,
     retry_on_exceptions: list[type[Exception]] | None = None,
     retry_on_error_substrings: list[str] | None = None,
+    skip_retry_on_error_substrings: list[str] | None = None,
 ):
     """
     Class decorator that attaches a :class:`RetryConfig` to a *tool* class.
@@ -267,6 +278,7 @@ def retryable(
             jitter=jitter,
             retry_on_exceptions=retry_on_exceptions,
             retry_on_error_substrings=retry_on_error_substrings,
+            skip_retry_on_error_substrings=skip_retry_on_error_substrings,
         )
         return cls
 

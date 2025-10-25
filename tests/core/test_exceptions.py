@@ -76,7 +76,7 @@ class TestToolTimeoutError:
         assert isinstance(exception, ToolExecutionError)
         assert exception.tool_name == tool_name
         assert exception.timeout == timeout
-        assert str(exception) == f"Tool '{tool_name}' execution failed: Execution timed out after {timeout}s"
+        assert str(exception) == f"Tool '{tool_name}' timed out after {timeout}s (attempts: 1)"
 
 
 class TestToolValidationError:
@@ -93,7 +93,7 @@ class TestToolValidationError:
         assert isinstance(exception, ToolProcessorError)
         assert exception.tool_name == tool_name
         assert exception.errors == errors
-        assert str(exception) == f"Validation failed for tool '{tool_name}': {errors}"
+        assert str(exception) == f"Validation failed for tool '{tool_name}' arguments: {errors}"
 
 
 class TestParserError:
