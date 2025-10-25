@@ -871,3 +871,184 @@ class TestHTTPStreamableTransport:
             assert result["isError"] is False
             assert transport._metrics["total_calls"] == 1
             assert transport._metrics["successful_calls"] == 1
+
+    @pytest.mark.asyncio
+    async def test_oauth_error_detection(self, transport):
+        """Test OAuth error detection helper method."""
+        assert transport._is_oauth_error("invalid_token") is True
+        assert transport._is_oauth_error("expired token detected") is True
+        assert transport._is_oauth_error("OAuth validation failed") is True
+        assert transport._is_oauth_error("unauthorized access") is True
+        assert transport._is_oauth_error("token expired") is True
+        assert transport._is_oauth_error("authentication failed") is True
+        assert transport._is_oauth_error("invalid access token") is True
+        assert transport._is_oauth_error("some other error") is False
+        assert transport._is_oauth_error("") is False
+        assert transport._is_oauth_error(None) is False
+
+    @pytest.mark.asyncio
+    async def test_call_tool_oauth_error_with_refresh_success(self, transport):
+        """Test call_tool handles OAuth error with successful token refresh and reconnection."""
+        transport._initialized = True
+        transport._read_stream = Mock()
+        transport._write_stream = Mock()
+
+        # Mock OAuth refresh callback
+        async def mock_oauth_refresh():
+            return {"Authorization": "Bearer new-token"}
+
+        transport.oauth_refresh_callback = mock_oauth_refresh
+
+        # First call fails with OAuth error, second succeeds after refresh
+        call_count = 0
+
+        async def mock_send_tools_call(read_stream, write_stream, tool_name, arguments):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return {"error": {"message": "expired token"}}
+            return {"result": {"content": "success"}}
+
+        with (
+            patch(
+                "chuk_tool_processor.mcp.transport.http_streamable_transport.send_tools_call",
+                side_effect=mock_send_tools_call,
+            ),
+            patch.object(transport, "_attempt_recovery", AsyncMock(return_value=True)),
+        ):
+            result = await transport.call_tool("search", {"query": "test"})
+            assert result["isError"] is False
+            assert call_count == 2
+            assert transport.configured_headers["Authorization"] == "Bearer new-token"
+
+    @pytest.mark.asyncio
+    async def test_call_tool_oauth_error_without_callback(self, transport):
+        """Test call_tool handles OAuth error without refresh callback."""
+        transport._initialized = True
+        transport._read_stream = Mock()
+        transport._write_stream = Mock()
+        transport.oauth_refresh_callback = None
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.send_tools_call",
+            AsyncMock(return_value={"error": {"message": "expired token"}}),
+        ):
+            result = await transport.call_tool("search", {"query": "test"})
+            assert result["isError"] is True
+            assert result["error"] == "expired token"
+
+    @pytest.mark.asyncio
+    async def test_call_tool_oauth_error_refresh_fails(self, transport):
+        """Test call_tool when OAuth refresh callback raises exception."""
+        transport._initialized = True
+        transport._read_stream = Mock()
+        transport._write_stream = Mock()
+
+        async def mock_oauth_refresh():
+            raise Exception("Refresh service unavailable")
+
+        transport.oauth_refresh_callback = mock_oauth_refresh
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.send_tools_call",
+            AsyncMock(return_value={"error": {"message": "expired token"}}),
+        ):
+            result = await transport.call_tool("search", {"query": "test"})
+            assert result["isError"] is True
+            assert result["error"] == "expired token"
+
+    @pytest.mark.asyncio
+    async def test_call_tool_oauth_error_refresh_no_auth_header(self, transport):
+        """Test call_tool when OAuth refresh doesn't return Authorization header."""
+        transport._initialized = True
+        transport._read_stream = Mock()
+        transport._write_stream = Mock()
+
+        async def mock_oauth_refresh():
+            return {"X-Custom": "header"}
+
+        transport.oauth_refresh_callback = mock_oauth_refresh
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.send_tools_call",
+            AsyncMock(return_value={"error": {"message": "expired token"}}),
+        ):
+            result = await transport.call_tool("search", {"query": "test"})
+            assert result["isError"] is True
+            assert result["error"] == "expired token"
+
+    @pytest.mark.asyncio
+    async def test_call_tool_oauth_error_refresh_returns_none(self, transport):
+        """Test call_tool when OAuth refresh returns None."""
+        transport._initialized = True
+        transport._read_stream = Mock()
+        transport._write_stream = Mock()
+
+        async def mock_oauth_refresh():
+            return None
+
+        transport.oauth_refresh_callback = mock_oauth_refresh
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.send_tools_call",
+            AsyncMock(return_value={"error": {"message": "expired token"}}),
+        ):
+            result = await transport.call_tool("search", {"query": "test"})
+            assert result["isError"] is True
+            assert result["error"] == "expired token"
+
+    @pytest.mark.asyncio
+    async def test_call_tool_oauth_error_recovery_fails(self, transport):
+        """Test call_tool when recovery after OAuth refresh fails."""
+        transport._initialized = True
+        transport._read_stream = Mock()
+        transport._write_stream = Mock()
+
+        async def mock_oauth_refresh():
+            return {"Authorization": "Bearer new-token"}
+
+        transport.oauth_refresh_callback = mock_oauth_refresh
+
+        with (
+            patch(
+                "chuk_tool_processor.mcp.transport.http_streamable_transport.send_tools_call",
+                AsyncMock(return_value={"error": {"message": "expired token"}}),
+            ),
+            patch.object(transport, "_attempt_recovery", AsyncMock(return_value=False)),
+        ):
+            result = await transport.call_tool("search", {"query": "test"})
+            assert result["isError"] is True
+            assert result["error"] == "expired token"
+
+    @pytest.mark.asyncio
+    async def test_call_tool_oauth_non_error_response_resets_failures(self, transport):
+        """Test call_tool resets failure counter on successful response."""
+        transport._initialized = True
+        transport._read_stream = Mock()
+        transport._write_stream = Mock()
+        transport._consecutive_failures = 2
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.send_tools_call",
+            AsyncMock(return_value={"result": {"content": "success"}}),
+        ):
+            result = await transport.call_tool("search", {"query": "test"})
+            assert result["isError"] is False
+            assert transport._consecutive_failures == 0
+
+    @pytest.mark.asyncio
+    async def test_call_tool_oauth_error_does_not_reset_failures(self, transport):
+        """Test call_tool doesn't reset failure counter on error response."""
+        transport._initialized = True
+        transport._read_stream = Mock()
+        transport._write_stream = Mock()
+        transport._consecutive_failures = 1
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.send_tools_call",
+            AsyncMock(return_value={"error": {"message": "tool not found"}}),
+        ):
+            result = await transport.call_tool("search", {"query": "test"})
+            assert result["isError"] is True
+            # Failure counter should not be reset
+            assert transport._consecutive_failures == 1

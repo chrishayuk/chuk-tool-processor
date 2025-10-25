@@ -121,7 +121,7 @@ class PluginDiscovery:
         # ------------------- Parser plugins -------------------------
         if issubclass(cls, ParserPlugin) and cls is not ParserPlugin:
             if not inspect.iscoroutinefunction(getattr(cls, "try_parse", None)):
-                logger.warning("Skipping parser plugin %s: try_parse is not async", cls.__qualname__)
+                logger.debug("Skipping parser plugin %s: try_parse is not async", cls.__qualname__)
             else:
                 try:
                     self._registry.register_plugin("parser", cls.__name__, cls())

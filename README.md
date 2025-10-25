@@ -742,6 +742,78 @@ results = await processor.process(
 
 See `examples/notion_oauth.py`, `examples/stdio_sqlite.py`, and `examples/stdio_echo.py` for complete working implementations.
 
+#### OAuth Token Refresh
+
+For MCP servers that use OAuth authentication, CHUK Tool Processor supports automatic token refresh when access tokens expire. This prevents your tools from failing due to expired tokens during long-running sessions.
+
+**How it works:**
+1. When a tool call receives an OAuth-related error (e.g., "invalid_token", "expired token", "unauthorized")
+2. The processor automatically calls your refresh callback
+3. Updates the authentication headers with the new token
+4. Retries the tool call with fresh credentials
+
+**Setup with HTTP Streamable:**
+
+```python
+from chuk_tool_processor.mcp import setup_mcp_http_streamable
+
+async def refresh_oauth_token():
+    """Called automatically when tokens expire."""
+    # Your token refresh logic here
+    # Return dict with new Authorization header
+    new_token = await your_refresh_logic()
+    return {"Authorization": f"Bearer {new_token}"}
+
+processor, manager = await setup_mcp_http_streamable(
+    servers=[{
+        "name": "notion",
+        "url": "https://mcp.notion.com/mcp",
+        "headers": {"Authorization": f"Bearer {initial_access_token}"}
+    }],
+    namespace="notion",
+    oauth_refresh_callback=refresh_oauth_token  # Enable auto-refresh
+)
+```
+
+**Setup with SSE:**
+
+```python
+from chuk_tool_processor.mcp import setup_mcp_sse
+
+async def refresh_oauth_token():
+    """Refresh expired OAuth token."""
+    # Exchange refresh token for new access token
+    new_access_token = await exchange_refresh_token(refresh_token)
+    return {"Authorization": f"Bearer {new_access_token}"}
+
+processor, manager = await setup_mcp_sse(
+    servers=[{
+        "name": "atlassian",
+        "url": "https://mcp.atlassian.com/v1/sse",
+        "headers": {"Authorization": f"Bearer {initial_token}"}
+    }],
+    namespace="atlassian",
+    oauth_refresh_callback=refresh_oauth_token
+)
+```
+
+**OAuth errors detected automatically:**
+- `invalid_token`
+- `expired token`
+- `OAuth validation failed`
+- `unauthorized`
+- `token expired`
+- `authentication failed`
+- `invalid access token`
+
+**Important notes:**
+- The refresh callback must return a dict with an `Authorization` key
+- If refresh fails or returns invalid headers, the original error is returned
+- Token refresh is attempted only once per tool call (no infinite retry loops)
+- After successful refresh, the updated headers are used for all subsequent calls
+
+See `examples/notion_oauth.py` for a complete OAuth 2.1 implementation with PKCE and automatic token refresh.
+
 ### Observability
 
 #### Structured Logging

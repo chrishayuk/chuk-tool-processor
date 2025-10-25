@@ -491,3 +491,288 @@ async def test_execute_single_call_setup_error():
     result = await strategy._execute_single_call(call, timeout=1.0)
 
     assert "Setup error" in result.error or "Setup failed" in result.error
+
+
+# ============================================================================
+# Additional edge case tests to reach 90%+ coverage
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_legacy_execute_method():
+    """Test the legacy execute() method that forwards to run()."""
+    registry = NamespacedRegistry()
+    strategy = InProcessStrategy(registry)
+
+    calls = [ToolCall(tool="tool1", arguments={})]
+    results = await strategy.execute(calls, timeout=1.0)
+
+    assert len(results) == 1
+    assert results[0].error is None
+
+
+@pytest.mark.asyncio
+async def test_stream_run_with_empty_calls():
+    """Test stream_run with empty calls list."""
+    registry = NamespacedRegistry()
+    strategy = InProcessStrategy(registry)
+
+    results = []
+    async for result in strategy.stream_run([]):
+        results.append(result)
+
+    assert len(results) == 0
+
+
+@pytest.mark.asyncio
+async def test_stream_run_cancellation():
+    """Test stream_run handles cancellation."""
+    registry = NamespacedRegistry()
+    strategy = InProcessStrategy(registry)
+
+    # Create a slow streaming tool
+    calls = [ToolCall(tool="tool1", arguments={})] * 5
+
+    task = asyncio.create_task(strategy.stream_run(calls).__anext__())
+    await asyncio.sleep(0.05)
+    task.cancel()
+
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+
+@pytest.mark.asyncio
+async def test_stream_tool_call_tool_not_found():
+    """Test _stream_tool_call with non-existent tool."""
+    registry = Mock()
+    registry.get_tool = AsyncMock(return_value=None)
+    registry.list_namespaces = AsyncMock(return_value=["default"])
+    registry.list_tools = AsyncMock(return_value=[])
+
+    strategy = InProcessStrategy(registry)
+
+    queue = asyncio.Queue()
+    call = ToolCall(tool="nonexistent", arguments={})
+
+    await strategy._stream_tool_call(call, queue, timeout=1.0)
+
+    result = await queue.get()
+    assert "not found" in result.error.lower()
+
+
+@pytest.mark.asyncio
+async def test_stream_tool_call_exception():
+    """Test _stream_tool_call with exception during setup."""
+    registry = Mock()
+    registry.get_tool = AsyncMock(side_effect=RuntimeError("Registry error"))
+    registry.list_namespaces = AsyncMock(return_value=["default"])
+
+    strategy = InProcessStrategy(registry)
+
+    queue = asyncio.Queue()
+    call = ToolCall(tool="test", arguments={})
+
+    await strategy._stream_tool_call(call, queue, timeout=1.0)
+
+    result = await queue.get()
+    assert "Error setting up execution" in result.error
+
+
+@pytest.mark.asyncio
+async def test_stream_with_timeout_general_exception():
+    """Test _stream_with_timeout with general exception."""
+
+    class FailingTool:
+        supports_streaming = True
+
+        async def stream_execute(self, **kwargs):
+            raise RuntimeError("Unexpected error")
+            yield  # Make this an async generator
+
+    tool = FailingTool()
+    call = ToolCall(tool="failing", arguments={})
+    queue = asyncio.Queue()
+
+    strategy = InProcessStrategy(Mock())
+    await strategy._stream_with_timeout(tool, call, queue, timeout=5.0)
+
+    # Should have error result
+    result = await queue.get()
+    assert "Streaming error" in result.error or "Unexpected error" in result.error
+
+
+@pytest.mark.asyncio
+async def test_execute_to_queue():
+    """Test _execute_to_queue method."""
+
+    class SimpleTool:
+        async def execute(self, **kwargs):
+            return "result"
+
+    registry = Mock()
+    registry.get_tool = AsyncMock(return_value=SimpleTool)
+    registry.list_namespaces = AsyncMock(return_value=["default"])
+
+    strategy = InProcessStrategy(registry)
+
+    queue = asyncio.Queue()
+    call = ToolCall(tool="simple", arguments={})
+
+    await strategy._execute_to_queue(call, queue, timeout=1.0)
+
+    result = await queue.get()
+    assert result.result == "result"
+
+
+@pytest.mark.asyncio
+async def test_execute_to_queue_with_direct_streaming():
+    """Test _execute_to_queue skips direct streaming calls."""
+    registry = Mock()
+    strategy = InProcessStrategy(registry)
+
+    queue = asyncio.Queue()
+    call = ToolCall(tool="test", arguments={}, id="marked")
+
+    strategy.mark_direct_streaming({"marked"})
+
+    await strategy._execute_to_queue(call, queue, timeout=1.0)
+
+    # Should not add anything to queue
+    assert queue.empty()
+
+
+@pytest.mark.asyncio
+async def test_run_with_timeout_exception_in_semaphore():
+    """Test exception handling in _execute_single_call within semaphore."""
+
+    class FailingTool:
+        async def execute(self, **kwargs):
+            raise ValueError("Tool execution failed")
+
+    registry = Mock()
+    registry.get_tool = AsyncMock(return_value=FailingTool)
+    registry.list_namespaces = AsyncMock(return_value=["default"])
+
+    strategy = InProcessStrategy(registry)
+
+    call = ToolCall(tool="failing", arguments={})
+    result = await strategy._execute_single_call(call, timeout=1.0)
+
+    assert "Tool execution failed" in result.error or "Unexpected error" in result.error
+
+
+@pytest.mark.asyncio
+async def test_run_with_timeout_cancelled_error():
+    """Test CancelledError in _run_with_timeout."""
+
+    class CancellingTool:
+        async def execute(self, **kwargs):
+            raise asyncio.CancelledError()
+
+    registry = Mock()
+    registry.get_tool = AsyncMock(return_value=CancellingTool)
+    registry.list_namespaces = AsyncMock(return_value=["default"])
+
+    strategy = InProcessStrategy(registry)
+
+    call = ToolCall(tool="cancelling", arguments={})
+    result = await strategy._execute_single_call(call, timeout=1.0)
+
+    assert "cancelled" in result.error.lower()
+
+
+@pytest.mark.asyncio
+async def test_resolve_namespaced_tool_not_found():
+    """Test namespaced tool lookup when tool not found."""
+    registry = NamespacedRegistry()
+    strategy = InProcessStrategy(registry)
+
+    # Try to find nonexistent tool with namespace prefix
+    tool, ns = await strategy._resolve_tool_info("custom.nonexistent")
+    assert tool is None
+    assert ns is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_fuzzy_matching():
+    """Test fuzzy matching in tool resolution."""
+
+    class SimpleTool:
+        async def execute(self, **kwargs):
+            return "fuzzy_result"
+
+    class FuzzyRegistry:
+        async def get_tool(self, name: str, namespace: str = "default"):
+            # Return the tool only when fuzzy match calls with correct namespace
+            if name == "special_tool" and namespace == "custom":
+                return SimpleTool
+            return None
+
+        async def list_namespaces(self):
+            return ["default", "custom"]
+
+        async def list_tools(self):
+            # Return tools with namespace, name tuples
+            return [("custom", "special_tool")]
+
+    registry = FuzzyRegistry()
+    strategy = InProcessStrategy(registry)
+
+    # This should trigger fuzzy matching
+    tool, ns = await strategy._resolve_tool_info("special_tool", preferred_namespace="default")
+
+    # Fuzzy match should find it in custom namespace
+    assert tool == SimpleTool
+    assert ns == "custom"
+
+
+@pytest.mark.asyncio
+async def test_supports_streaming_property():
+    """Test supports_streaming property."""
+    registry = Mock()
+    strategy = InProcessStrategy(registry)
+
+    assert strategy.supports_streaming is True
+
+
+@pytest.mark.asyncio
+async def test_shutdown_with_task_cancellation_error():
+    """Test shutdown handles task cancellation exceptions."""
+    registry = Mock()
+    strategy = InProcessStrategy(registry)
+
+    # Create a task that's already done but cancelled
+    async def cancelled_task():
+        raise asyncio.CancelledError()
+
+    task = asyncio.create_task(cancelled_task())
+    await asyncio.sleep(0.01)  # Let it cancel
+
+    strategy._active_tasks.add(task)
+
+    # Shutdown should handle it gracefully
+    await strategy.shutdown()
+
+    assert strategy._shutting_down
+
+
+@pytest.mark.asyncio
+async def test_shutdown_timeout_handling():
+    """Test shutdown with timeout during gather."""
+    registry = Mock()
+    strategy = InProcessStrategy(registry)
+
+    # Create a task that takes longer than shutdown timeout
+    async def long_task():
+        await asyncio.sleep(10)
+
+    task = asyncio.create_task(long_task())
+    strategy._active_tasks.add(task)
+
+    # Shutdown should handle timeout gracefully
+    await strategy.shutdown()
+
+    assert strategy._shutting_down
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task

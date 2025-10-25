@@ -5,6 +5,7 @@ Tests for SSETransport class with updated consistent interface.
 
 import asyncio
 import contextlib
+import time
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -767,21 +768,6 @@ class TestSSETransport:
             await transport._send_request("test_method", {})
 
     @pytest.mark.asyncio
-    async def test_send_notification_success(self, transport):
-        """Test sending notification."""
-        transport._initialized = True
-        transport.message_url = "http://test.com/messages/test"
-
-        mock_send_client = AsyncMock()
-        mock_post_response = AsyncMock()
-        mock_post_response.status_code = 202
-        mock_send_client.post.return_value = mock_post_response
-        transport.send_client = mock_send_client
-
-        await transport._send_notification("test_notification", {"param": "value"})
-        mock_send_client.post.assert_called_once()
-
-    @pytest.mark.asyncio
     async def test_close_with_metrics_logging(self, transport):
         """Test close with metrics logging."""
         transport._initialized = True
@@ -855,6 +841,171 @@ class TestSSETransport:
             assert call_args[1]["timeout"] == 15.0
 
     @pytest.mark.asyncio
+    async def test_oauth_error_detection(self, transport):
+        """Test OAuth error detection helper method."""
+        assert transport._is_oauth_error("invalid_token") is True
+        assert transport._is_oauth_error("expired token detected") is True
+        assert transport._is_oauth_error("OAuth validation failed") is True
+        assert transport._is_oauth_error("unauthorized access") is True
+        assert transport._is_oauth_error("token expired") is True
+        assert transport._is_oauth_error("authentication failed") is True
+        assert transport._is_oauth_error("invalid access token") is True
+        assert transport._is_oauth_error("some other error") is False
+        assert transport._is_oauth_error("") is False
+        assert transport._is_oauth_error(None) is False
+
+    @pytest.mark.asyncio
+    async def test_call_tool_oauth_error_with_refresh_success(self, transport):
+        """Test call_tool handles OAuth error with successful token refresh."""
+        transport._initialized = True
+        transport.message_url = "http://test.com/messages/test"
+
+        # Mock OAuth refresh callback
+        async def mock_oauth_refresh():
+            return {"Authorization": "Bearer new-token"}
+
+        transport.oauth_refresh_callback = mock_oauth_refresh
+
+        # First call fails with OAuth error, second succeeds
+        call_count = 0
+
+        async def mock_send_request(method, params, timeout=None):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return {"error": {"message": "expired token"}}
+            return {"result": {"content": [{"type": "text", "text": '{"success": true}'}]}}
+
+        with patch.object(transport, "_send_request", side_effect=mock_send_request):
+            result = await transport.call_tool("search", {"query": "test"})
+            assert result["isError"] is False
+            assert result["content"]["success"] is True
+            assert call_count == 2
+            assert transport.configured_headers["Authorization"] == "Bearer new-token"
+
+    @pytest.mark.asyncio
+    async def test_call_tool_oauth_error_without_callback(self, transport):
+        """Test call_tool handles OAuth error without refresh callback."""
+        transport._initialized = True
+        transport.message_url = "http://test.com/messages/test"
+        transport.oauth_refresh_callback = None
+
+        with patch.object(
+            transport,
+            "_send_request",
+            AsyncMock(return_value={"error": {"message": "expired token"}}),
+        ):
+            result = await transport.call_tool("search", {"query": "test"})
+            assert result["isError"] is True
+            assert result["error"] == "expired token"
+
+    @pytest.mark.asyncio
+    async def test_call_tool_oauth_error_refresh_fails(self, transport):
+        """Test call_tool when OAuth refresh callback raises exception."""
+        transport._initialized = True
+        transport.message_url = "http://test.com/messages/test"
+
+        async def mock_oauth_refresh():
+            raise Exception("Refresh service unavailable")
+
+        transport.oauth_refresh_callback = mock_oauth_refresh
+
+        with patch.object(
+            transport,
+            "_send_request",
+            AsyncMock(return_value={"error": {"message": "expired token"}}),
+        ):
+            result = await transport.call_tool("search", {"query": "test"})
+            assert result["isError"] is True
+            assert result["error"] == "expired token"
+
+    @pytest.mark.asyncio
+    async def test_call_tool_oauth_error_refresh_no_auth_header(self, transport):
+        """Test call_tool when OAuth refresh doesn't return Authorization header."""
+        transport._initialized = True
+        transport.message_url = "http://test.com/messages/test"
+
+        async def mock_oauth_refresh():
+            return {"X-Custom": "header"}
+
+        transport.oauth_refresh_callback = mock_oauth_refresh
+
+        with patch.object(
+            transport,
+            "_send_request",
+            AsyncMock(return_value={"error": {"message": "expired token"}}),
+        ):
+            result = await transport.call_tool("search", {"query": "test"})
+            assert result["isError"] is True
+            assert result["error"] == "expired token"
+
+    @pytest.mark.asyncio
+    async def test_call_tool_oauth_error_refresh_returns_none(self, transport):
+        """Test call_tool when OAuth refresh returns None."""
+        transport._initialized = True
+        transport.message_url = "http://test.com/messages/test"
+
+        async def mock_oauth_refresh():
+            return None
+
+        transport.oauth_refresh_callback = mock_oauth_refresh
+
+        with patch.object(
+            transport,
+            "_send_request",
+            AsyncMock(return_value={"error": {"message": "expired token"}}),
+        ):
+            result = await transport.call_tool("search", {"query": "test"})
+            assert result["isError"] is True
+            assert result["error"] == "expired token"
+
+    @pytest.mark.asyncio
+    async def test_call_tool_oauth_error_retry_also_fails(self, transport):
+        """Test call_tool when retry after OAuth refresh also fails."""
+        transport._initialized = True
+        transport.message_url = "http://test.com/messages/test"
+
+        async def mock_oauth_refresh():
+            return {"Authorization": "Bearer new-token"}
+
+        transport.oauth_refresh_callback = mock_oauth_refresh
+
+        # Both calls fail with OAuth error
+        with patch.object(
+            transport,
+            "_send_request",
+            AsyncMock(return_value={"error": {"message": "expired token"}}),
+        ):
+            result = await transport.call_tool("search", {"query": "test"})
+            assert result["isError"] is True
+            assert result["error"] == "expired token"
+
+    @pytest.mark.asyncio
+    async def test_call_tool_oauth_error_retry_different_error(self, transport):
+        """Test call_tool when retry fails with different error."""
+        transport._initialized = True
+        transport.message_url = "http://test.com/messages/test"
+
+        async def mock_oauth_refresh():
+            return {"Authorization": "Bearer new-token"}
+
+        transport.oauth_refresh_callback = mock_oauth_refresh
+
+        call_count = 0
+
+        async def mock_send_request(method, params, timeout=None):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return {"error": {"message": "expired token"}}
+            return {"error": {"message": "tool not found"}}
+
+        with patch.object(transport, "_send_request", side_effect=mock_send_request):
+            result = await transport.call_tool("search", {"query": "test"})
+            assert result["isError"] is True
+            assert result["error"] == "tool not found"
+
+    @pytest.mark.asyncio
     async def test_list_resources_with_error(self, transport):
         """Test list_resources with error response."""
         transport._initialized = True
@@ -884,3 +1035,274 @@ class TestSSETransport:
         assert "status=initialized" in repr_str
         assert "calls: 20" in repr_str
         assert "success: 90.0%" in repr_str
+
+    @pytest.mark.asyncio
+    async def test_process_sse_stream_endpoint_event_full_url(self, transport):
+        """Test processing SSE stream with endpoint event containing full URL."""
+        mock_response = AsyncMock()
+
+        async def mock_lines():
+            yield "event: endpoint"
+            yield "data: http://test.com/sse/message?sessionId=test-456"
+
+        mock_response.aiter_lines = mock_lines
+        transport.sse_response = mock_response
+
+        task = asyncio.create_task(transport._process_sse_stream())
+        await asyncio.sleep(0.2)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+        assert transport.message_url == "http://test.com/sse/message?sessionId=test-456"
+        assert transport.session_id == "test-456"
+
+    @pytest.mark.asyncio
+    async def test_process_sse_stream_endpoint_event_relative_path(self, transport):
+        """Test processing SSE stream with endpoint event containing relative path."""
+        mock_response = AsyncMock()
+
+        async def mock_lines():
+            yield "event: endpoint"
+            yield "data: /sse/message?session_id=test-789"
+
+        mock_response.aiter_lines = mock_lines
+        transport.sse_response = mock_response
+
+        task = asyncio.create_task(transport._process_sse_stream())
+        await asyncio.sleep(0.2)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+        assert transport.message_url == "http://test.com/sse/message?session_id=test-789"
+        assert transport.session_id == "test-789"
+
+    @pytest.mark.asyncio
+    async def test_process_sse_stream_old_format_without_session_id(self, transport):
+        """Test processing SSE stream with old format without session_id parameter."""
+        mock_response = AsyncMock()
+
+        async def mock_lines():
+            yield "data: /messages/somepath"
+
+        mock_response.aiter_lines = mock_lines
+        transport.sse_response = mock_response
+
+        task = asyncio.create_task(transport._process_sse_stream())
+        await asyncio.sleep(0.2)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+        assert transport.message_url == "http://test.com/messages/somepath"
+        assert transport.session_id is not None  # Should have generated a UUID
+
+    @pytest.mark.asyncio
+    async def test_process_sse_stream_keepalive_pings(self, transport):
+        """Test processing SSE stream ignores keepalive pings."""
+        mock_response = AsyncMock()
+
+        async def mock_lines():
+            yield "data: ping"
+            yield "data: {}"
+            yield "data: []"
+
+        mock_response.aiter_lines = mock_lines
+        transport.sse_response = mock_response
+
+        task = asyncio.create_task(transport._process_sse_stream())
+        await asyncio.sleep(0.2)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+        # No session should be discovered
+        assert transport.message_url is None
+
+    @pytest.mark.asyncio
+    async def test_is_connected_with_grace_period(self, transport):
+        """Test is_connected returns True during grace period."""
+        transport._initialized = True
+        transport.session_id = "test-session"
+        transport._initialization_time = time.time()
+        transport._connection_grace_period = 30.0
+
+        # Should be connected during grace period
+        assert transport.is_connected() is True
+
+    @pytest.mark.asyncio
+    async def test_is_connected_after_grace_period_with_failures(self, transport):
+        """Test is_connected returns False after grace period with failures."""
+        transport._initialized = True
+        transport.session_id = "test-session"
+        transport._initialization_time = time.time() - 60.0  # 60 seconds ago
+        transport._connection_grace_period = 30.0
+        transport._consecutive_failures = 5
+        transport._max_consecutive_failures = 5
+
+        # Should be disconnected after grace period with max failures
+        assert transport.is_connected() is False
+
+    @pytest.mark.asyncio
+    async def test_is_connected_with_sse_task_exception(self, transport):
+        """Test is_connected handles SSE task with exception."""
+        transport._initialized = True
+        transport.session_id = "test-session"
+
+        # Create a completed task with an exception
+        async def failing_task():
+            raise RuntimeError("SSE task failed")
+
+        transport.sse_task = asyncio.create_task(failing_task())
+        await asyncio.sleep(0.1)  # Let task fail
+
+        # Should detect task failure
+        assert transport.is_connected() is False
+
+    @pytest.mark.asyncio
+    async def test_is_connected_with_recent_successful_ping(self, transport):
+        """Test is_connected returns True with recent successful ping."""
+        transport._initialized = True
+        transport.session_id = "test-session"
+        transport._initialization_time = time.time() - 60.0  # Outside grace period
+        transport._last_successful_ping = time.time() - 10.0  # 10 seconds ago
+
+        # Should be connected with recent successful operation
+        assert transport.is_connected() is True
+
+    @pytest.mark.asyncio
+    async def test_send_request_with_202_accepted(self, transport):
+        """Test _send_request handles 202 Accepted response."""
+        transport.message_url = "http://test.com/messages/test"
+        transport.send_client = AsyncMock()
+
+        mock_response = AsyncMock()
+        mock_response.status_code = 202
+        transport.send_client.post.return_value = mock_response
+
+        async def simulate_response():
+            await asyncio.sleep(0.1)
+            req_id = next(iter(transport.pending_requests))
+            transport.pending_requests[req_id].set_result({"jsonrpc": "2.0", "id": req_id, "result": "async result"})
+
+        asyncio.create_task(simulate_response())
+
+        result = await transport._send_request("tools/call", {"name": "test"})
+        assert result["result"] == "async result"
+
+    @pytest.mark.asyncio
+    async def test_send_request_with_non_200_non_202_status(self, transport):
+        """Test _send_request handles non-200/202 status codes."""
+        transport.message_url = "http://test.com/messages/test"
+        transport.send_client = AsyncMock()
+
+        mock_response = AsyncMock()
+        mock_response.status_code = 500
+        transport.send_client.post.return_value = mock_response
+
+        with pytest.raises(RuntimeError, match="HTTP request failed with status: 500"):
+            await transport._send_request("tools/call", {"name": "test"})
+
+    @pytest.mark.asyncio
+    async def test_send_notification_success(self, transport):
+        """Test sending notification successfully."""
+        transport.message_url = "http://test.com/messages/test"
+        transport.send_client = AsyncMock()
+
+        mock_response = AsyncMock()
+        mock_response.status_code = 202
+        transport.send_client.post.return_value = mock_response
+
+        await transport._send_notification("test_notification", {"param": "value"})
+        transport.send_client.post.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_send_notification_failure(self, transport):
+        """Test sending notification with non-success status."""
+        transport.message_url = "http://test.com/messages/test"
+        transport.send_client = AsyncMock()
+
+        mock_response = AsyncMock()
+        mock_response.status_code = 500
+        transport.send_client.post.return_value = mock_response
+
+        # Should log warning but not raise
+        await transport._send_notification("test_notification", {})
+
+    @pytest.mark.asyncio
+    async def test_list_resources_with_error_response(self, transport):
+        """Test list_resources handles error response."""
+        transport._initialized = True
+
+        with patch.object(
+            transport,
+            "_send_request",
+            AsyncMock(return_value={"error": {"message": "Resources not supported"}}),
+        ):
+            result = await transport.list_resources()
+            assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_list_prompts_with_error_response(self, transport):
+        """Test list_prompts handles error response."""
+        transport._initialized = True
+
+        with patch.object(
+            transport,
+            "_send_request",
+            AsyncMock(return_value={"error": {"message": "Prompts not supported"}}),
+        ):
+            result = await transport.list_prompts()
+            assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_cleanup_with_pending_futures(self, transport):
+        """Test cleanup cancels pending request futures."""
+        future1 = asyncio.Future()
+        future2 = asyncio.Future()
+        transport.pending_requests = {"req1": future1, "req2": future2}
+
+        await transport._cleanup()
+
+        assert future1.cancelled()
+        assert future2.cancelled()
+        assert transport.pending_requests == {}
+
+    @pytest.mark.asyncio
+    async def test_cleanup_with_stream_context_error(self, transport):
+        """Test cleanup handles stream context exit error."""
+        transport.sse_stream_context = AsyncMock()
+        transport.sse_stream_context.__aexit__.side_effect = Exception("Exit error")
+
+        # Should not raise, just log
+        await transport._cleanup()
+
+    def test_get_metrics_includes_health_info(self, transport):
+        """Test get_metrics includes health information."""
+        transport._initialized = True
+        transport.session_id = "test-session"
+        transport._consecutive_failures = 2
+        transport._initialization_time = time.time()
+
+        metrics = transport.get_metrics()
+
+        assert "is_connected" in metrics
+        assert "consecutive_failures" in metrics
+        assert "max_consecutive_failures" in metrics
+        assert "grace_period_active" in metrics
+        assert metrics["consecutive_failures"] == 2
+
+    def test_reset_metrics_preserves_some_values(self, transport):
+        """Test reset_metrics preserves certain metric values."""
+        transport._metrics["last_ping_time"] = 1.5
+        transport._metrics["initialization_time"] = 2.0
+        transport._metrics["session_discoveries"] = 3
+        transport._metrics["total_calls"] = 10
+
+        transport.reset_metrics()
+
+        assert transport._metrics["last_ping_time"] == 1.5
+        assert transport._metrics["initialization_time"] == 2.0
+        assert transport._metrics["session_discoveries"] == 3
+        assert transport._metrics["total_calls"] == 0

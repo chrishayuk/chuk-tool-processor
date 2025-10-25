@@ -44,6 +44,7 @@ async def setup_mcp_http_streamable(
     enable_retries: bool = True,
     max_retries: int = 3,
     namespace: str = "http",
+    oauth_refresh_callback: any | None = None,  # NEW: OAuth token refresh callback
 ) -> tuple[ToolProcessor, StreamManager]:
     """
     Initialize HTTP Streamable transport MCP + a :class:`ToolProcessor`.
@@ -69,6 +70,7 @@ async def setup_mcp_http_streamable(
         enable_retries: Whether to enable automatic retries
         max_retries: Maximum retry attempts
         namespace: Namespace for registered tools
+        oauth_refresh_callback: Optional async callback to refresh OAuth tokens (NEW)
 
     Returns:
         Tuple of (ToolProcessor, StreamManager)
@@ -93,6 +95,7 @@ async def setup_mcp_http_streamable(
         connection_timeout=connection_timeout,
         default_timeout=default_timeout,
         initialization_timeout=initialization_timeout,
+        oauth_refresh_callback=oauth_refresh_callback,  # NEW: Pass OAuth callback
     )
 
     # 2️⃣  pull the remote tool list and register each one locally

@@ -221,7 +221,7 @@ class StdioTransport(MCPBaseTransport):
                     )
                     return True
                 else:
-                    logger.warning("STDIO connection established but ping failed")
+                    logger.debug("STDIO connection established but ping failed")
                     # Still consider it initialized
                     self._initialized = True
                     self._consecutive_failures = 1
@@ -229,7 +229,7 @@ class StdioTransport(MCPBaseTransport):
                         self._metrics["initialization_time"] = time.time() - start_time
                     return True
             else:
-                logger.error("STDIO initialization failed")
+                logger.warning("STDIO initialization failed")
                 await self._cleanup()
                 return False
 
@@ -382,7 +382,7 @@ class StdioTransport(MCPBaseTransport):
     async def get_tools(self) -> list[dict[str, Any]]:
         """Enhanced tools retrieval with recovery."""
         if not self._initialized:
-            logger.error("Cannot get tools: transport not initialized")
+            logger.debug("Cannot get tools: transport not initialized")
             return []
 
         start_time = time.time()

@@ -85,6 +85,7 @@ class TestSetupMCPHTTPStreamable:
                 connection_timeout=60.0,
                 default_timeout=45.0,
                 initialization_timeout=60.0,
+                oauth_refresh_callback=None,
             )
 
             # Verify register_mcp_tools was called with correct namespace

@@ -38,6 +38,7 @@ class SSETransport(MCPBaseTransport):
         connection_timeout: float = 30.0,
         default_timeout: float = 60.0,
         enable_metrics: bool = True,
+        oauth_refresh_callback: Any | None = None,  # NEW: OAuth token refresh callback
     ):
         """
         Initialize SSE transport.
@@ -48,6 +49,7 @@ class SSETransport(MCPBaseTransport):
         self.connection_timeout = connection_timeout
         self.default_timeout = default_timeout
         self.enable_metrics = enable_metrics
+        self.oauth_refresh_callback = oauth_refresh_callback  # NEW: OAuth refresh callback
 
         logger.debug("SSE Transport initialized with URL: %s", self.url)
 
@@ -184,12 +186,12 @@ class SSETransport(MCPBaseTransport):
                 if self.sse_task.done():
                     exception = self.sse_task.exception()
                     if exception:
-                        logger.error(f"SSE task died during session discovery: {exception}")
+                        logger.debug(f"SSE task died during session discovery: {exception}")
                         await self._cleanup()
                         return False
 
             if not self.message_url:
-                logger.error("Failed to discover session endpoint within %.1fs", session_timeout)
+                logger.warning("Failed to discover session endpoint within %.1fs", session_timeout)
                 await self._cleanup()
                 return False
 
@@ -211,7 +213,7 @@ class SSETransport(MCPBaseTransport):
                 )
 
                 if "error" in init_response:
-                    logger.error("MCP initialize failed: %s", init_response["error"])
+                    logger.warning("MCP initialize failed: %s", init_response["error"])
                     await self._cleanup()
                     return False
 
@@ -476,7 +478,7 @@ class SSETransport(MCPBaseTransport):
     async def get_tools(self) -> list[dict[str, Any]]:
         """Get list of available tools from the server."""
         if not self._initialized:
-            logger.error("Cannot get tools: transport not initialized")
+            logger.debug("Cannot get tools: transport not initialized")
             return []
 
         start_time = time.time()
@@ -484,7 +486,7 @@ class SSETransport(MCPBaseTransport):
             response = await self._send_request("tools/list", {})
 
             if "error" in response:
-                logger.error("Error getting tools: %s", response["error"])
+                logger.warning("Error getting tools: %s", response["error"])
                 return []
 
             tools = response.get("result", {}).get("tools", [])
@@ -517,11 +519,55 @@ class SSETransport(MCPBaseTransport):
                 "tools/call", {"name": tool_name, "arguments": arguments}, timeout=timeout
             )
 
+            # Check for errors
             if "error" in response:
+                error_msg = response["error"].get("message", "Unknown error")
+
+                # NEW: Check for OAuth errors and attempt refresh if callback is available
+                if self._is_oauth_error(error_msg):
+                    logger.warning("OAuth error detected: %s", error_msg)
+
+                    if self.oauth_refresh_callback:
+                        logger.info("Attempting OAuth token refresh...")
+                        try:
+                            # Call the refresh callback
+                            new_headers = await self.oauth_refresh_callback()
+
+                            if new_headers and "Authorization" in new_headers:
+                                # Update configured headers with new token
+                                self.configured_headers.update(new_headers)
+                                logger.info("OAuth token refreshed, retrying tool call...")
+
+                                # Retry the tool call once with new token
+                                response = await self._send_request(
+                                    "tools/call", {"name": tool_name, "arguments": arguments}, timeout=timeout
+                                )
+
+                                # Check if retry succeeded
+                                if "error" not in response:
+                                    logger.info("Tool call succeeded after token refresh")
+                                    result = response.get("result", {})
+                                    normalized_result = self._normalize_mcp_response({"result": result})
+
+                                    if self.enable_metrics:
+                                        self._update_metrics(time.time() - start_time, True)
+
+                                    return normalized_result
+                                else:
+                                    error_msg = response["error"].get("message", "Unknown error")
+                                    logger.error("Tool call failed after token refresh: %s", error_msg)
+                            else:
+                                logger.warning("Token refresh did not return valid Authorization header")
+                        except Exception as refresh_error:
+                            logger.error("OAuth token refresh failed: %s", refresh_error)
+                    else:
+                        logger.warning("OAuth error detected but no refresh callback configured")
+
+                # Return error (original or from failed retry)
                 if self.enable_metrics:
                     self._update_metrics(time.time() - start_time, False)
 
-                return {"isError": True, "error": response["error"].get("message", "Unknown error")}
+                return {"isError": True, "error": error_msg}
 
             # Extract and normalize result using base class method
             result = response.get("result", {})
@@ -554,6 +600,24 @@ class SSETransport(MCPBaseTransport):
         self._metrics["total_time"] += response_time
         if self._metrics["total_calls"] > 0:
             self._metrics["avg_response_time"] = self._metrics["total_time"] / self._metrics["total_calls"]
+
+    def _is_oauth_error(self, error_msg: str) -> bool:
+        """Detect if error is OAuth-related (NEW)."""
+        if not error_msg:
+            return False
+
+        error_lower = error_msg.lower()
+        oauth_indicators = [
+            "invalid_token",
+            "expired token",
+            "oauth validation",
+            "unauthorized",
+            "token expired",
+            "authentication failed",
+            "invalid access token",
+        ]
+
+        return any(indicator in error_lower for indicator in oauth_indicators)
 
     async def list_resources(self) -> dict[str, Any]:
         """List available resources from the server."""

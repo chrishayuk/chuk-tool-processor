@@ -260,7 +260,7 @@ class ToolProcessor:
                         unknown_tools.append(call.tool)
 
                 if unknown_tools:
-                    self.logger.warning(f"Unknown tools: {unknown_tools}")
+                    self.logger.debug(f"Unknown tools: {unknown_tools}")
 
                 # Execute tools
                 results = await self.executor.execute(calls, timeout=timeout)
@@ -412,7 +412,7 @@ class ToolProcessor:
                     duration=duration,
                     num_calls=0,
                 )
-                self.logger.error(f"Parser {parser_name} failed: {str(e)}")
+                self.logger.debug(f"Parser {parser_name} failed: {str(e)}")
                 return []
 
 

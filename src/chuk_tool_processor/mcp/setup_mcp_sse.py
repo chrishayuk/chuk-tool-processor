@@ -40,6 +40,7 @@ async def setup_mcp_sse(  # noqa: C901 - long but just a config facade
     enable_retries: bool = True,
     max_retries: int = 3,
     namespace: str = "sse",
+    oauth_refresh_callback: any | None = None,  # NEW: OAuth token refresh callback
 ) -> tuple[ToolProcessor, StreamManager]:
     """
     Initialise SSE-transport MCP + a :class:`ToolProcessor`.
@@ -61,6 +62,7 @@ async def setup_mcp_sse(  # noqa: C901 - long but just a config facade
         enable_retries: Whether to enable automatic retries
         max_retries: Maximum retry attempts
         namespace: Namespace for registered tools
+        oauth_refresh_callback: Optional async callback to refresh OAuth tokens (NEW)
 
     Returns:
         Tuple of (ToolProcessor, StreamManager)
@@ -72,6 +74,7 @@ async def setup_mcp_sse(  # noqa: C901 - long but just a config facade
         connection_timeout=connection_timeout,  # 🔧 ADD THIS LINE
         default_timeout=default_timeout,  # 🔧 ADD THIS LINE
         initialization_timeout=initialization_timeout,
+        oauth_refresh_callback=oauth_refresh_callback,  # NEW: Pass OAuth callback
     )
 
     # 2️⃣  pull the remote tool list and register each one locally

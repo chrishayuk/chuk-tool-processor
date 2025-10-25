@@ -81,6 +81,7 @@ class StreamManager:
         connection_timeout: float = 10.0,
         default_timeout: float = 30.0,
         initialization_timeout: float = 60.0,  # NEW
+        oauth_refresh_callback: any | None = None,  # NEW: OAuth token refresh callback
     ) -> StreamManager:
         """Create StreamManager with SSE transport and timeout protection."""
         inst = cls()
@@ -90,6 +91,7 @@ class StreamManager:
             connection_timeout=connection_timeout,
             default_timeout=default_timeout,
             initialization_timeout=initialization_timeout,
+            oauth_refresh_callback=oauth_refresh_callback,  # NEW: Pass OAuth callback
         )
         return inst
 
@@ -101,6 +103,7 @@ class StreamManager:
         connection_timeout: float = 30.0,
         default_timeout: float = 30.0,
         initialization_timeout: float = 60.0,  # NEW
+        oauth_refresh_callback: any | None = None,  # NEW: OAuth token refresh callback
     ) -> StreamManager:
         """Create StreamManager with HTTP Streamable transport and timeout protection."""
         inst = cls()
@@ -110,6 +113,7 @@ class StreamManager:
             connection_timeout=connection_timeout,
             default_timeout=default_timeout,
             initialization_timeout=initialization_timeout,
+            oauth_refresh_callback=oauth_refresh_callback,  # NEW: Pass OAuth callback
         )
         return inst
 
@@ -178,7 +182,7 @@ class StreamManager:
                             params, connection_timeout=initialization_timeout, default_timeout=default_timeout
                         )
                     elif transport_type == "sse":
-                        logger.warning(
+                        logger.debug(
                             "Using SSE transport in initialize() - consider using initialize_with_sse() instead"
                         )
                         params = await load_config(config_file, server_name)
@@ -191,7 +195,7 @@ class StreamManager:
                             sse_url = "http://localhost:8000"
                             api_key = None
                             headers = {}
-                            logger.warning("No URL configured for SSE transport, using default: %s", sse_url)
+                            logger.debug("No URL configured for SSE transport, using default: %s", sse_url)
 
                         # Build SSE transport with optional headers
                         transport_params = {"url": sse_url, "api_key": api_key, "default_timeout": default_timeout}
@@ -201,7 +205,7 @@ class StreamManager:
                         transport = SSETransport(**transport_params)
 
                     elif transport_type == "http_streamable":
-                        logger.warning(
+                        logger.debug(
                             "Using HTTP Streamable transport in initialize() - consider using initialize_with_http_streamable() instead"
                         )
                         params = await load_config(config_file, server_name)
@@ -216,9 +220,7 @@ class StreamManager:
                             api_key = None
                             headers = {}
                             session_id = None
-                            logger.warning(
-                                "No URL configured for HTTP Streamable transport, using default: %s", http_url
-                            )
+                            logger.debug("No URL configured for HTTP Streamable transport, using default: %s", http_url)
 
                         # Build HTTP transport (headers not supported yet)
                         transport_params = {
@@ -240,7 +242,7 @@ class StreamManager:
                     # Initialize with timeout protection
                     try:
                         if not await asyncio.wait_for(transport.initialize(), timeout=initialization_timeout):
-                            logger.error("Failed to init %s", server_name)
+                            logger.warning("Failed to init %s", server_name)
                             continue
                     except TimeoutError:
                         logger.error("Timeout initialising %s (timeout=%ss)", server_name, initialization_timeout)
@@ -285,6 +287,7 @@ class StreamManager:
         connection_timeout: float = 10.0,
         default_timeout: float = 30.0,
         initialization_timeout: float = 60.0,
+        oauth_refresh_callback: any | None = None,  # NEW: OAuth token refresh callback
     ) -> None:
         """Initialize with SSE transport with optional headers support."""
         if self._closed:
@@ -313,11 +316,16 @@ class StreamManager:
                         logger.debug("SSE %s: Using configured headers: %s", name, list(headers.keys()))
                         transport_params["headers"] = headers
 
+                    # Add OAuth refresh callback if provided (NEW)
+                    if oauth_refresh_callback:
+                        transport_params["oauth_refresh_callback"] = oauth_refresh_callback
+                        logger.debug("SSE %s: OAuth refresh callback configured", name)
+
                     transport = SSETransport(**transport_params)
 
                     try:
                         if not await asyncio.wait_for(transport.initialize(), timeout=initialization_timeout):
-                            logger.error("Failed to init SSE %s", name)
+                            logger.warning("Failed to init SSE %s", name)
                             continue
                     except TimeoutError:
                         logger.error("Timeout initialising SSE %s (timeout=%ss)", name, initialization_timeout)
@@ -354,6 +362,7 @@ class StreamManager:
         connection_timeout: float = 30.0,
         default_timeout: float = 30.0,
         initialization_timeout: float = 60.0,
+        oauth_refresh_callback: any | None = None,  # NEW: OAuth token refresh callback
     ) -> None:
         """Initialize with HTTP Streamable transport with graceful headers handling."""
         if self._closed:
@@ -385,12 +394,17 @@ class StreamManager:
                         transport_params["headers"] = headers
                         logger.debug("HTTP Streamable %s: Custom headers configured: %s", name, list(headers.keys()))
 
+                    # Add OAuth refresh callback if provided (NEW)
+                    if oauth_refresh_callback:
+                        transport_params["oauth_refresh_callback"] = oauth_refresh_callback
+                        logger.debug("HTTP Streamable %s: OAuth refresh callback configured", name)
+
                     transport = HTTPStreamableTransport(**transport_params)
 
                     logger.debug(f"Calling transport.initialize() for {name} with timeout={initialization_timeout}s")
                     try:
                         if not await asyncio.wait_for(transport.initialize(), timeout=initialization_timeout):
-                            logger.error("Failed to init HTTP Streamable %s", name)
+                            logger.warning("Failed to init HTTP Streamable %s", name)
                             continue
                     except TimeoutError:
                         logger.error(
