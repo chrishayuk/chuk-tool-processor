@@ -37,8 +37,8 @@ async def setup_mcp_sse(  # noqa: C901 - long but just a config facade
     enable_rate_limiting: bool = False,
     global_rate_limit: int | None = None,
     tool_rate_limits: dict[str, tuple] | None = None,
-    enable_retries: bool = True,
-    max_retries: int = 3,
+    enable_retries: bool = False,  # CHANGED: Disabled to allow OAuth refresh to work properly
+    max_retries: int = 0,  # CHANGED: 0 retries for SSE (OAuth refresh happens at transport level)
     namespace: str = "sse",
     oauth_refresh_callback: any | None = None,  # NEW: OAuth token refresh callback
 ) -> tuple[ToolProcessor, StreamManager]:
