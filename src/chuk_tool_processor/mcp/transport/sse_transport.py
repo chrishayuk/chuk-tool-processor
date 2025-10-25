@@ -19,6 +19,7 @@ from typing import Any
 import httpx
 
 from .base_transport import MCPBaseTransport
+from .models import TimeoutConfig, TransportMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,8 @@ class SSETransport(MCPBaseTransport):
         connection_timeout: float = 30.0,
         default_timeout: float = 60.0,
         enable_metrics: bool = True,
-        oauth_refresh_callback: Any | None = None,  # NEW: OAuth token refresh callback
+        oauth_refresh_callback: Any | None = None,
+        timeout_config: TimeoutConfig | None = None,
     ):
         """
         Initialize SSE transport.
@@ -46,10 +48,16 @@ class SSETransport(MCPBaseTransport):
         self.url = url.rstrip("/")
         self.api_key = api_key
         self.configured_headers = headers or {}
-        self.connection_timeout = connection_timeout
-        self.default_timeout = default_timeout
         self.enable_metrics = enable_metrics
-        self.oauth_refresh_callback = oauth_refresh_callback  # NEW: OAuth refresh callback
+        self.oauth_refresh_callback = oauth_refresh_callback
+
+        # Use timeout config or create from individual parameters
+        if timeout_config is None:
+            timeout_config = TimeoutConfig(connect=connection_timeout, operation=default_timeout)
+
+        self.timeout_config = timeout_config
+        self.connection_timeout = timeout_config.connect
+        self.default_timeout = timeout_config.operation
 
         logger.debug("SSE Transport initialized with URL: %s", self.url)
 
@@ -75,18 +83,8 @@ class SSETransport(MCPBaseTransport):
         self._connection_grace_period = 30.0  # NEW: Grace period after initialization
         self._initialization_time = None  # NEW: Track when we initialized
 
-        # Performance metrics
-        self._metrics = {
-            "total_calls": 0,
-            "successful_calls": 0,
-            "failed_calls": 0,
-            "total_time": 0.0,
-            "avg_response_time": 0.0,
-            "last_ping_time": None,
-            "initialization_time": None,
-            "session_discoveries": 0,
-            "stream_errors": 0,
-        }
+        # Performance metrics - use Pydantic model
+        self._metrics = TransportMetrics() if enable_metrics else None
 
     def _construct_sse_url(self, base_url: str) -> str:
         """Construct the SSE endpoint URL from the base URL."""
@@ -176,7 +174,7 @@ class SSETransport(MCPBaseTransport):
 
             # Wait for session discovery
             logger.debug("Waiting for session discovery...")
-            session_timeout = 10.0
+            session_timeout = self.timeout_config.connect
             session_start = time.time()
 
             while not self.message_url and (time.time() - session_start) < session_timeout:
@@ -195,8 +193,8 @@ class SSETransport(MCPBaseTransport):
                 await self._cleanup()
                 return False
 
-            if self.enable_metrics:
-                self._metrics["session_discoveries"] += 1
+            if self.enable_metrics and self._metrics:
+                self._metrics.session_discoveries += 1
 
             logger.debug("Session endpoint discovered: %s", self.message_url)
 
@@ -226,9 +224,9 @@ class SSETransport(MCPBaseTransport):
                 self._last_successful_ping = time.time()
                 self._consecutive_failures = 0  # Reset failure count
 
-                if self.enable_metrics:
+                if self.enable_metrics and self._metrics:
                     init_time = time.time() - start_time
-                    self._metrics["initialization_time"] = init_time
+                    self._metrics.initialization_time = init_time
 
                 logger.debug("SSE transport initialized successfully in %.3fs", time.time() - start_time)
                 return True
@@ -336,8 +334,8 @@ class SSETransport(MCPBaseTransport):
                         logger.debug("Non-JSON data in SSE stream (ignoring): %s", e)
 
         except Exception as e:
-            if self.enable_metrics:
-                self._metrics["stream_errors"] += 1
+            if self.enable_metrics and self._metrics:
+                self._metrics.stream_errors += 1
             logger.error("SSE stream processing error: %s", e)
             # FIXED: Don't increment consecutive failures for stream processing errors
             # These are often temporary and don't indicate connection health
@@ -421,7 +419,7 @@ class SSETransport(MCPBaseTransport):
         start_time = time.time()
         try:
             # Use tools/list as a lightweight ping since not all servers support ping
-            response = await self._send_request("tools/list", {}, timeout=10.0)
+            response = await self._send_request("tools/list", {}, timeout=self.timeout_config.quick)
 
             success = "error" not in response
 
@@ -429,9 +427,9 @@ class SSETransport(MCPBaseTransport):
                 self._last_successful_ping = time.time()
                 # FIXED: Don't reset consecutive failures here - let tool calls do that
 
-            if self.enable_metrics:
+            if self.enable_metrics and self._metrics:
                 ping_time = time.time() - start_time
-                self._metrics["last_ping_time"] = ping_time
+                self._metrics.last_ping_time = ping_time
                 logger.debug("SSE ping completed in %.3fs: %s", ping_time, success)
 
             return success
@@ -509,8 +507,8 @@ class SSETransport(MCPBaseTransport):
             return {"isError": True, "error": "Transport not initialized"}
 
         start_time = time.time()
-        if self.enable_metrics:
-            self._metrics["total_calls"] += 1
+        if self.enable_metrics and self._metrics:
+            self._metrics.total_calls += 1
 
         try:
             logger.debug("Calling tool '%s' with arguments: %s", tool_name, arguments)
@@ -528,7 +526,7 @@ class SSETransport(MCPBaseTransport):
                     logger.warning("OAuth error detected: %s", error_msg)
 
                     if self.oauth_refresh_callback:
-                        logger.info("Attempting OAuth token refresh...")
+                        logger.debug("Attempting OAuth token refresh...")
                         try:
                             # Call the refresh callback
                             new_headers = await self.oauth_refresh_callback()
@@ -536,7 +534,7 @@ class SSETransport(MCPBaseTransport):
                             if new_headers and "Authorization" in new_headers:
                                 # Update configured headers with new token
                                 self.configured_headers.update(new_headers)
-                                logger.info("OAuth token refreshed, retrying tool call...")
+                                logger.debug("OAuth token refreshed, retrying tool call...")
 
                                 # Retry the tool call once with new token
                                 response = await self._send_request(
@@ -545,7 +543,7 @@ class SSETransport(MCPBaseTransport):
 
                                 # Check if retry succeeded
                                 if "error" not in response:
-                                    logger.info("Tool call succeeded after token refresh")
+                                    logger.debug("Tool call succeeded after token refresh")
                                     result = response.get("result", {})
                                     normalized_result = self._normalize_mcp_response({"result": result})
 
@@ -592,14 +590,10 @@ class SSETransport(MCPBaseTransport):
 
     def _update_metrics(self, response_time: float, success: bool) -> None:
         """Update performance metrics."""
-        if success:
-            self._metrics["successful_calls"] += 1
-        else:
-            self._metrics["failed_calls"] += 1
+        if not self._metrics:
+            return
 
-        self._metrics["total_time"] += response_time
-        if self._metrics["total_calls"] > 0:
-            self._metrics["avg_response_time"] = self._metrics["total_time"] / self._metrics["total_calls"]
+        self._metrics.update_call_metrics(response_time, success)
 
     def _is_oauth_error(self, error_msg: str) -> bool:
         """Detect if error is OAuth-related (NEW)."""
@@ -625,7 +619,7 @@ class SSETransport(MCPBaseTransport):
             return {}
 
         try:
-            response = await self._send_request("resources/list", {}, timeout=10.0)
+            response = await self._send_request("resources/list", {}, timeout=self.timeout_config.operation)
             if "error" in response:
                 logger.debug("Resources not supported: %s", response["error"])
                 return {}
@@ -640,7 +634,7 @@ class SSETransport(MCPBaseTransport):
             return {}
 
         try:
-            response = await self._send_request("prompts/list", {}, timeout=10.0)
+            response = await self._send_request("prompts/list", {}, timeout=self.timeout_config.operation)
             if "error" in response:
                 logger.debug("Prompts not supported: %s", response["error"])
                 return {}
@@ -655,12 +649,12 @@ class SSETransport(MCPBaseTransport):
             return
 
         # Log final metrics
-        if self.enable_metrics and self._metrics["total_calls"] > 0:
+        if self.enable_metrics and self._metrics and self._metrics.total_calls > 0:
             logger.debug(
                 "SSE transport closing - Total calls: %d, Success rate: %.1f%%, Avg response time: %.3fs",
-                self._metrics["total_calls"],
-                (self._metrics["successful_calls"] / self._metrics["total_calls"] * 100),
-                self._metrics["avg_response_time"],
+                self._metrics.total_calls,
+                (self._metrics.successful_calls / self._metrics.total_calls * 100),
+                self._metrics.avg_response_time,
             )
 
         await self._cleanup()
@@ -709,7 +703,10 @@ class SSETransport(MCPBaseTransport):
 
     def get_metrics(self) -> dict[str, Any]:
         """Get performance and connection metrics with health info."""
-        metrics = self._metrics.copy()
+        if not self._metrics:
+            return {}
+
+        metrics = self._metrics.to_dict()
         metrics.update(
             {
                 "is_connected": self.is_connected(),
@@ -729,17 +726,20 @@ class SSETransport(MCPBaseTransport):
 
     def reset_metrics(self) -> None:
         """Reset performance metrics."""
-        self._metrics = {
-            "total_calls": 0,
-            "successful_calls": 0,
-            "failed_calls": 0,
-            "total_time": 0.0,
-            "avg_response_time": 0.0,
-            "last_ping_time": self._metrics.get("last_ping_time"),
-            "initialization_time": self._metrics.get("initialization_time"),
-            "session_discoveries": self._metrics.get("session_discoveries", 0),
-            "stream_errors": 0,
-        }
+        if not self._metrics:
+            return
+
+        # Preserve important historical values
+        preserved_last_ping = self._metrics.last_ping_time
+        preserved_init_time = self._metrics.initialization_time
+        preserved_discoveries = self._metrics.session_discoveries
+
+        # Create new metrics instance with preserved values
+        self._metrics = TransportMetrics(
+            last_ping_time=preserved_last_ping,
+            initialization_time=preserved_init_time,
+            session_discoveries=preserved_discoveries,
+        )
 
     def get_streams(self) -> list[tuple]:
         """SSE transport doesn't expose raw streams."""

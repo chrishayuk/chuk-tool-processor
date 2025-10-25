@@ -24,6 +24,7 @@ from chuk_mcp.transports.http.transport import (
 )
 
 from .base_transport import MCPBaseTransport
+from .models import TimeoutConfig, TransportMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -40,12 +41,13 @@ class HTTPStreamableTransport(MCPBaseTransport):
         self,
         url: str,
         api_key: str | None = None,
-        headers: dict[str, str] | None = None,  # NEW: Headers support
+        headers: dict[str, str] | None = None,
         connection_timeout: float = 30.0,
         default_timeout: float = 30.0,
         session_id: str | None = None,
         enable_metrics: bool = True,
-        oauth_refresh_callback: Any | None = None,  # NEW: OAuth token refresh callback
+        oauth_refresh_callback: Any | None = None,
+        timeout_config: TimeoutConfig | None = None,
     ):
         """
         Initialize HTTP Streamable transport with enhanced configuration.
@@ -53,12 +55,13 @@ class HTTPStreamableTransport(MCPBaseTransport):
         Args:
             url: HTTP server URL (should end with /mcp)
             api_key: Optional API key for authentication
-            headers: Optional custom headers (NEW)
-            connection_timeout: Timeout for initial connection
-            default_timeout: Default timeout for operations
+            headers: Optional custom headers
+            connection_timeout: Timeout for initial connection (overrides timeout_config.connect)
+            default_timeout: Default timeout for operations (overrides timeout_config.operation)
             session_id: Optional session ID for stateful connections
             enable_metrics: Whether to track performance metrics
-            oauth_refresh_callback: Optional async callback to refresh OAuth tokens (NEW)
+            oauth_refresh_callback: Optional async callback to refresh OAuth tokens
+            timeout_config: Optional timeout configuration model with connect/operation/quick/shutdown
         """
         # Ensure URL points to the /mcp endpoint
         if not url.endswith("/mcp"):
@@ -67,12 +70,18 @@ class HTTPStreamableTransport(MCPBaseTransport):
             self.url = url
 
         self.api_key = api_key
-        self.configured_headers = headers or {}  # NEW: Store configured headers
-        self.connection_timeout = connection_timeout
-        self.default_timeout = default_timeout
+        self.configured_headers = headers or {}
         self.session_id = session_id
         self.enable_metrics = enable_metrics
-        self.oauth_refresh_callback = oauth_refresh_callback  # NEW: OAuth refresh callback
+        self.oauth_refresh_callback = oauth_refresh_callback
+
+        # Use timeout config or create from individual parameters
+        if timeout_config is None:
+            timeout_config = TimeoutConfig(connect=connection_timeout, operation=default_timeout)
+
+        self.timeout_config = timeout_config
+        self.connection_timeout = timeout_config.connect
+        self.default_timeout = timeout_config.operation
 
         logger.debug("HTTP Streamable transport initialized with URL: %s", self.url)
         if self.api_key:
@@ -93,20 +102,8 @@ class HTTPStreamableTransport(MCPBaseTransport):
         self._consecutive_failures = 0
         self._max_consecutive_failures = 3
 
-        # Performance metrics (enhanced like SSE)
-        self._metrics = {
-            "total_calls": 0,
-            "successful_calls": 0,
-            "failed_calls": 0,
-            "total_time": 0.0,
-            "avg_response_time": 0.0,
-            "last_ping_time": None,
-            "initialization_time": None,
-            "connection_resets": 0,
-            "stream_errors": 0,
-            "connection_errors": 0,  # NEW
-            "recovery_attempts": 0,  # NEW
-        }
+        # Performance metrics (enhanced like SSE) - use Pydantic model
+        self._metrics = TransportMetrics() if enable_metrics else None
 
     def _get_headers(self) -> dict[str, str]:
         """Get headers with authentication and custom headers (like SSE)."""
@@ -136,7 +133,7 @@ class HTTPStreamableTransport(MCPBaseTransport):
         try:
             import httpx
 
-            async with httpx.AsyncClient(timeout=5.0) as client:
+            async with httpx.AsyncClient(timeout=self.timeout_config.quick) as client:
                 # Test basic connectivity to base URL
                 base_url = self.url.replace("/mcp", "")
                 response = await client.get(f"{base_url}/health", headers=self._get_headers())
@@ -204,8 +201,8 @@ class HTTPStreamableTransport(MCPBaseTransport):
             # Verify connection with ping (enhanced like SSE)
             logger.debug("Verifying connection with ping...")
             ping_start = time.time()
-            # Use longer timeout for initial ping - some servers (like Notion) are slow
-            ping_timeout = max(self.default_timeout, 15.0)
+            # Use connect timeout for initial ping - some servers (like Notion) are slow
+            ping_timeout = self.timeout_config.connect
             ping_success = await asyncio.wait_for(
                 send_ping(self._read_stream, self._write_stream, timeout=ping_timeout),
                 timeout=ping_timeout,
@@ -218,9 +215,9 @@ class HTTPStreamableTransport(MCPBaseTransport):
                 self._consecutive_failures = 0
 
                 total_init_time = time.time() - start_time
-                if self.enable_metrics:
-                    self._metrics["initialization_time"] = total_init_time
-                    self._metrics["last_ping_time"] = ping_time
+                if self.enable_metrics and self._metrics:
+                    self._metrics.initialization_time = total_init_time
+                    self._metrics.last_ping_time = ping_time
 
                 logger.debug(
                     "HTTP Streamable transport initialized successfully in %.3fs (ping: %.3fs)",
@@ -233,27 +230,27 @@ class HTTPStreamableTransport(MCPBaseTransport):
                 # Still consider it initialized since connection was established
                 self._initialized = True
                 self._consecutive_failures = 1  # Mark one failure
-                if self.enable_metrics:
-                    self._metrics["initialization_time"] = time.time() - start_time
+                if self.enable_metrics and self._metrics:
+                    self._metrics.initialization_time = time.time() - start_time
                 return True
 
         except TimeoutError:
             logger.error("HTTP Streamable initialization timed out after %ss", self.connection_timeout)
             await self._cleanup()
-            if self.enable_metrics:
-                self._metrics["connection_errors"] += 1
+            if self.enable_metrics and self._metrics:
+                self._metrics.connection_errors += 1
             return False
         except Exception as e:
             logger.error("Error initializing HTTP Streamable transport: %s", e, exc_info=True)
             await self._cleanup()
-            if self.enable_metrics:
-                self._metrics["connection_errors"] += 1
+            if self.enable_metrics and self._metrics:
+                self._metrics.connection_errors += 1
             return False
 
     async def _attempt_recovery(self) -> bool:
         """Attempt to recover from connection issues (NEW - like SSE resilience)."""
-        if self.enable_metrics:
-            self._metrics["recovery_attempts"] += 1
+        if self.enable_metrics and self._metrics:
+            self._metrics.recovery_attempts += 1
 
         logger.debug("Attempting HTTP connection recovery...")
 
@@ -273,16 +270,16 @@ class HTTPStreamableTransport(MCPBaseTransport):
             return
 
         # Enhanced metrics logging (like SSE)
-        if self.enable_metrics and self._metrics["total_calls"] > 0:
-            success_rate = self._metrics["successful_calls"] / self._metrics["total_calls"] * 100
+        if self.enable_metrics and self._metrics and self._metrics.total_calls > 0:
+            success_rate = self._metrics.successful_calls / self._metrics.total_calls * 100
             logger.debug(
                 "HTTP Streamable transport closing - Calls: %d, Success: %.1f%%, "
                 "Avg time: %.3fs, Recoveries: %d, Errors: %d",
-                self._metrics["total_calls"],
+                self._metrics.total_calls,
                 success_rate,
-                self._metrics["avg_response_time"],
-                self._metrics["recovery_attempts"],
-                self._metrics["connection_errors"],
+                self._metrics.avg_response_time,
+                self._metrics.recovery_attempts,
+                self._metrics.connection_errors,
             )
 
         try:
@@ -323,9 +320,9 @@ class HTTPStreamableTransport(MCPBaseTransport):
             else:
                 self._consecutive_failures += 1
 
-            if self.enable_metrics:
+            if self.enable_metrics and self._metrics:
                 ping_time = time.time() - start_time
-                self._metrics["last_ping_time"] = ping_time
+                self._metrics.last_ping_time = ping_time
                 logger.debug("HTTP Streamable ping completed in %.3fs: %s", ping_time, success)
 
             return success
@@ -336,8 +333,8 @@ class HTTPStreamableTransport(MCPBaseTransport):
         except Exception as e:
             logger.error("HTTP Streamable ping failed: %s", e)
             self._consecutive_failures += 1
-            if self.enable_metrics:
-                self._metrics["stream_errors"] += 1
+            if self.enable_metrics and self._metrics:
+                self._metrics.stream_errors += 1
             return False
 
     def is_connected(self) -> bool:
@@ -365,9 +362,19 @@ class HTTPStreamableTransport(MCPBaseTransport):
                 timeout=self.default_timeout,
             )
 
-            # Normalize response
-            if isinstance(tools_response, dict):
+            # Normalize response - handle multiple formats including Pydantic models
+            # 1. Check if it's a Pydantic model with tools attribute (e.g., ListToolsResult from chuk_mcp)
+            if hasattr(tools_response, "tools"):
+                tools = tools_response.tools
+                # Convert Pydantic Tool models to dicts if needed
+                if tools and len(tools) > 0 and hasattr(tools[0], "model_dump"):
+                    tools = [t.model_dump() for t in tools]
+                elif tools and len(tools) > 0 and hasattr(tools[0], "dict"):
+                    tools = [t.dict() for t in tools]
+            # 2. Check if it's a dict with "tools" key
+            elif isinstance(tools_response, dict):
                 tools = tools_response.get("tools", [])
+            # 3. Check if it's already a list
             elif isinstance(tools_response, list):
                 tools = tools_response
             else:
@@ -390,8 +397,8 @@ class HTTPStreamableTransport(MCPBaseTransport):
         except Exception as e:
             logger.error("Error getting tools: %s", e)
             self._consecutive_failures += 1
-            if self.enable_metrics:
-                self._metrics["stream_errors"] += 1
+            if self.enable_metrics and self._metrics:
+                self._metrics.stream_errors += 1
             return []
 
     async def call_tool(
@@ -404,8 +411,8 @@ class HTTPStreamableTransport(MCPBaseTransport):
         tool_timeout = timeout or self.default_timeout
         start_time = time.time()
 
-        if self.enable_metrics:
-            self._metrics["total_calls"] += 1
+        if self.enable_metrics and self._metrics:
+            self._metrics.total_calls += 1
 
         try:
             logger.debug("Calling tool '%s' with timeout %ss", tool_name, tool_timeout)
@@ -430,7 +437,7 @@ class HTTPStreamableTransport(MCPBaseTransport):
                 logger.warning("OAuth error detected: %s", result.get("error"))
 
                 if self.oauth_refresh_callback:
-                    logger.info("Attempting OAuth token refresh...")
+                    logger.debug("Attempting OAuth token refresh...")
                     try:
                         # Call the refresh callback
                         new_headers = await self.oauth_refresh_callback()
@@ -438,18 +445,18 @@ class HTTPStreamableTransport(MCPBaseTransport):
                         if new_headers and "Authorization" in new_headers:
                             # Update configured headers with new token
                             self.configured_headers.update(new_headers)
-                            logger.info("OAuth token refreshed, reconnecting...")
+                            logger.debug("OAuth token refreshed, reconnecting...")
 
                             # Reconnect with new token
                             if await self._attempt_recovery():
-                                logger.info("Retrying tool call after token refresh...")
+                                logger.debug("Retrying tool call after token refresh...")
                                 # Retry the tool call once with new token
                                 raw_response = await asyncio.wait_for(
                                     send_tools_call(self._read_stream, self._write_stream, tool_name, arguments),
                                     timeout=tool_timeout,
                                 )
                                 result = self._normalize_mcp_response(raw_response)
-                                logger.info("Tool call retry completed")
+                                logger.debug("Tool call retry completed")
                             else:
                                 logger.error("Failed to reconnect after token refresh")
                         else:
@@ -488,17 +495,17 @@ class HTTPStreamableTransport(MCPBaseTransport):
         except Exception as e:
             response_time = time.time() - start_time
             self._consecutive_failures += 1
-            if self.enable_metrics:
+            if self.enable_metrics and self._metrics:
                 self._update_metrics(response_time, False)
-                self._metrics["stream_errors"] += 1
+                self._metrics.stream_errors += 1
 
             # Enhanced connection error detection
             error_str = str(e).lower()
             if any(indicator in error_str for indicator in ["connection", "disconnected", "broken pipe", "eof"]):
                 logger.warning("Connection error detected: %s", e)
                 self._initialized = False
-                if self.enable_metrics:
-                    self._metrics["connection_errors"] += 1
+                if self.enable_metrics and self._metrics:
+                    self._metrics.connection_errors += 1
 
             error_msg = f"Tool execution failed: {str(e)}"
             logger.error("Tool '%s' error: %s", tool_name, error_msg)
@@ -506,14 +513,10 @@ class HTTPStreamableTransport(MCPBaseTransport):
 
     def _update_metrics(self, response_time: float, success: bool) -> None:
         """Enhanced metrics tracking (like SSE)."""
-        if success:
-            self._metrics["successful_calls"] += 1
-        else:
-            self._metrics["failed_calls"] += 1
+        if not self._metrics:
+            return
 
-        self._metrics["total_time"] += response_time
-        if self._metrics["total_calls"] > 0:
-            self._metrics["avg_response_time"] = self._metrics["total_time"] / self._metrics["total_calls"]
+        self._metrics.update_call_metrics(response_time, success)
 
     def _is_oauth_error(self, error_msg: str) -> bool:
         """Detect if error is OAuth-related (NEW)."""
@@ -612,7 +615,10 @@ class HTTPStreamableTransport(MCPBaseTransport):
 
     def get_metrics(self) -> dict[str, Any]:
         """Enhanced metrics with health information."""
-        metrics = self._metrics.copy()
+        if not self._metrics:
+            return {}
+
+        metrics = self._metrics.to_dict()
         metrics.update(
             {
                 "is_connected": self.is_connected(),
@@ -625,22 +631,20 @@ class HTTPStreamableTransport(MCPBaseTransport):
 
     def reset_metrics(self) -> None:
         """Enhanced metrics reset preserving health state."""
-        preserved_init_time = self._metrics.get("initialization_time")
-        preserved_last_ping = self._metrics.get("last_ping_time")
+        if not self._metrics:
+            return
 
-        self._metrics = {
-            "total_calls": 0,
-            "successful_calls": 0,
-            "failed_calls": 0,
-            "total_time": 0.0,
-            "avg_response_time": 0.0,
-            "last_ping_time": preserved_last_ping,
-            "initialization_time": preserved_init_time,
-            "connection_resets": self._metrics.get("connection_resets", 0),
-            "stream_errors": 0,
-            "connection_errors": 0,
-            "recovery_attempts": 0,
-        }
+        # Preserve important historical values
+        preserved_init_time = self._metrics.initialization_time
+        preserved_last_ping = self._metrics.last_ping_time
+        preserved_resets = self._metrics.connection_resets
+
+        # Create new metrics instance with preserved values
+        self._metrics = TransportMetrics(
+            initialization_time=preserved_init_time,
+            last_ping_time=preserved_last_ping,
+            connection_resets=preserved_resets,
+        )
 
     def get_streams(self) -> list[tuple]:
         """Enhanced streams access with connection check."""

@@ -200,8 +200,8 @@ class StdioTransport(MCPBaseTransport):
                 # Enhanced health verification (like SSE)
                 logger.debug("Verifying connection with ping...")
                 ping_start = time.time()
-                # Use longer timeout for slow servers
-                ping_success = await asyncio.wait_for(send_ping(*self._streams), timeout=30.0)
+                # Use default timeout for initial ping verification
+                ping_success = await asyncio.wait_for(send_ping(*self._streams), timeout=self.default_timeout)
                 ping_time = time.time() - ping_start
 
                 if ping_success:

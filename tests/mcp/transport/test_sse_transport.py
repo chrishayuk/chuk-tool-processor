@@ -303,10 +303,10 @@ class TestSSETransport:
         assert metrics["avg_response_time"] == 0.0
 
         # Manually increment total_calls first to prevent division by zero
-        transport._metrics["total_calls"] = 1
+        transport._metrics.total_calls = 1
         transport._update_metrics(0.5, True)  # Success
 
-        transport._metrics["total_calls"] = 2  # Increment again
+        transport._metrics.total_calls = 2  # Increment again
         transport._update_metrics(1.0, False)  # Failure
 
         metrics = transport.get_metrics()
@@ -417,9 +417,9 @@ class TestSSETransport:
         """Test SSE close when initialized with metrics logging."""
         transport._initialized = True
         # Add some metrics to test logging
-        transport._metrics["total_calls"] = 5
-        transport._metrics["successful_calls"] = 4
-        transport._metrics["failed_calls"] = 1
+        transport._metrics.total_calls = 5
+        transport._metrics.successful_calls = 4
+        transport._metrics.failed_calls = 1
 
         transport.sse_task = asyncio.create_task(asyncio.sleep(10))
         transport.sse_stream_context = AsyncMock()
@@ -524,8 +524,8 @@ class TestSSETransport:
         # Initialized with metrics
         transport._initialized = True
         transport.session_id = "test-123"
-        transport._metrics["total_calls"] = 10
-        transport._metrics["successful_calls"] = 8
+        transport._metrics.total_calls = 10
+        transport._metrics.successful_calls = 8
 
         repr_str = repr(transport)
         assert "status=initialized" in repr_str
@@ -771,8 +771,8 @@ class TestSSETransport:
     async def test_close_with_metrics_logging(self, transport):
         """Test close with metrics logging."""
         transport._initialized = True
-        transport._metrics["total_calls"] = 10
-        transport._metrics["successful_calls"] = 8
+        transport._metrics.total_calls = 10
+        transport._metrics.successful_calls = 8
         transport.stream_client = AsyncMock()
         transport.send_client = AsyncMock()
         transport.sse_task = None
@@ -1027,8 +1027,8 @@ class TestSSETransport:
         """Test __repr__ with active session."""
         transport._initialized = True
         transport.session_id = "test-session-123"
-        transport._metrics["total_calls"] = 20
-        transport._metrics["successful_calls"] = 18
+        transport._metrics.total_calls = 20
+        transport._metrics.successful_calls = 18
 
         repr_str = repr(transport)
         assert "SSETransport" in repr_str
@@ -1295,14 +1295,14 @@ class TestSSETransport:
 
     def test_reset_metrics_preserves_some_values(self, transport):
         """Test reset_metrics preserves certain metric values."""
-        transport._metrics["last_ping_time"] = 1.5
-        transport._metrics["initialization_time"] = 2.0
-        transport._metrics["session_discoveries"] = 3
-        transport._metrics["total_calls"] = 10
+        transport._metrics.last_ping_time = 1.5
+        transport._metrics.initialization_time = 2.0
+        transport._metrics.session_discoveries = 3
+        transport._metrics.total_calls = 10
 
         transport.reset_metrics()
 
-        assert transport._metrics["last_ping_time"] == 1.5
-        assert transport._metrics["initialization_time"] == 2.0
-        assert transport._metrics["session_discoveries"] == 3
-        assert transport._metrics["total_calls"] == 0
+        assert transport._metrics.last_ping_time == 1.5
+        assert transport._metrics.initialization_time == 2.0
+        assert transport._metrics.session_discoveries == 3
+        assert transport._metrics.total_calls == 0

@@ -913,6 +913,79 @@ async def test_calculator():
 
 ## Configuration
 
+### Timeout Configuration
+
+CHUK Tool Processor uses a unified timeout configuration system that applies to all MCP transports (HTTP Streamable, SSE, STDIO) and the StreamManager. Instead of managing dozens of individual timeout values, there are just **4 logical timeout categories**:
+
+```python
+from chuk_tool_processor.mcp.transport import TimeoutConfig
+
+# Create custom timeout configuration
+timeout_config = TimeoutConfig(
+    connect=30.0,     # Connection establishment, initialization, session discovery
+    operation=30.0,   # Normal operations (tool calls, listing tools/resources/prompts)
+    quick=5.0,        # Fast health checks and pings
+    shutdown=2.0      # Cleanup and shutdown operations
+)
+```
+
+**Using timeout configuration with StreamManager:**
+
+```python
+from chuk_tool_processor.mcp.stream_manager import StreamManager
+from chuk_tool_processor.mcp.transport import TimeoutConfig
+
+# Create StreamManager with custom timeouts
+timeout_config = TimeoutConfig(
+    connect=60.0,     # Longer for slow initialization
+    operation=45.0,   # Longer for heavy operations
+    quick=3.0,        # Faster health checks
+    shutdown=5.0      # More time for cleanup
+)
+
+manager = StreamManager(timeout_config=timeout_config)
+```
+
+**Timeout categories explained:**
+
+| Category | Default | Used For | Examples |
+|----------|---------|----------|----------|
+| `connect` | 30.0s | Connection setup, initialization, discovery | HTTP connection, SSE session discovery, STDIO subprocess launch |
+| `operation` | 30.0s | Normal tool operations | Tool calls, listing tools/resources/prompts, get_tools() |
+| `quick` | 5.0s | Fast health/status checks | Ping operations, health checks |
+| `shutdown` | 2.0s | Cleanup and teardown | Transport close, connection cleanup |
+
+**Why this matters:**
+- ✅ **Simple**: 4 timeout values instead of 20+
+- ✅ **Consistent**: Same timeout behavior across all transports
+- ✅ **Configurable**: Adjust timeouts based on your environment (slow networks, large datasets, etc.)
+- ✅ **Type-safe**: Pydantic validation ensures correct values
+
+**Example: Adjusting for slow environments**
+
+```python
+from chuk_tool_processor.mcp import setup_mcp_stdio
+from chuk_tool_processor.mcp.transport import TimeoutConfig
+
+# For slow network or resource-constrained environments
+slow_timeouts = TimeoutConfig(
+    connect=120.0,    # Allow more time for package downloads
+    operation=60.0,   # Allow more time for heavy operations
+    quick=10.0,       # Be patient with health checks
+    shutdown=10.0     # Allow thorough cleanup
+)
+
+processor, manager = await setup_mcp_stdio(
+    config_file="mcp_config.json",
+    servers=["sqlite"],
+    namespace="db",
+    initialization_timeout=120.0
+)
+
+# Set custom timeouts on the manager
+manager.timeout_config = slow_timeouts
+```
+
 ### Environment Variables
 
 | Variable | Default | Description |

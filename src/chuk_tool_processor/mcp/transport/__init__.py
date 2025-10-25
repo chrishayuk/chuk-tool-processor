@@ -11,6 +11,12 @@ All transports now follow the same interface and provide consistent behavior:
 
 from .base_transport import MCPBaseTransport
 from .http_streamable_transport import HTTPStreamableTransport
+from .models import (
+    HeadersConfig,
+    ServerInfo,
+    TimeoutConfig,
+    TransportMetrics,
+)
 from .sse_transport import SSETransport
 from .stdio_transport import StdioTransport
 
@@ -19,4 +25,8 @@ __all__ = [
     "StdioTransport",
     "SSETransport",
     "HTTPStreamableTransport",
+    "TimeoutConfig",
+    "TransportMetrics",
+    "ServerInfo",
+    "HeadersConfig",
 ]

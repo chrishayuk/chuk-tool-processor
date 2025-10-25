@@ -21,6 +21,7 @@ from chuk_tool_processor.mcp.transport import (
     MCPBaseTransport,
     SSETransport,
     StdioTransport,
+    TimeoutConfig,
 )
 
 logger = get_logger("chuk_tool_processor.mcp.stream_manager")
@@ -38,7 +39,7 @@ class StreamManager:
     - HTTP Streamable (modern replacement for SSE, spec 2025-03-26) with graceful headers handling
     """
 
-    def __init__(self) -> None:
+    def __init__(self, timeout_config: TimeoutConfig | None = None) -> None:
         self.transports: dict[str, MCPBaseTransport] = {}
         self.server_info: list[dict[str, Any]] = []
         self.tool_to_server_map: dict[str, str] = {}
@@ -46,7 +47,7 @@ class StreamManager:
         self.all_tools: list[dict[str, Any]] = []
         self._lock = asyncio.Lock()
         self._closed = False  # Track if we've been closed
-        self._shutdown_timeout = 2.0  # Maximum time to spend on shutdown
+        self.timeout_config = timeout_config or TimeoutConfig()
 
     # ------------------------------------------------------------------ #
     #  factory helpers with enhanced error handling                      #
@@ -251,8 +252,12 @@ class StreamManager:
                     self.transports[server_name] = transport
 
                     # Ping and get tools with timeout protection (use longer timeouts for slow servers)
-                    status = "Up" if await asyncio.wait_for(transport.send_ping(), timeout=30.0) else "Down"
-                    tools = await asyncio.wait_for(transport.get_tools(), timeout=30.0)
+                    status = (
+                        "Up"
+                        if await asyncio.wait_for(transport.send_ping(), timeout=self.timeout_config.operation)
+                        else "Down"
+                    )
+                    tools = await asyncio.wait_for(transport.get_tools(), timeout=self.timeout_config.operation)
 
                     for t in tools:
                         name = t.get("name")
@@ -333,8 +338,12 @@ class StreamManager:
 
                     self.transports[name] = transport
                     # Use longer timeouts for slow servers (ping can take time after initialization)
-                    status = "Up" if await asyncio.wait_for(transport.send_ping(), timeout=30.0) else "Down"
-                    tools = await asyncio.wait_for(transport.get_tools(), timeout=30.0)
+                    status = (
+                        "Up"
+                        if await asyncio.wait_for(transport.send_ping(), timeout=self.timeout_config.operation)
+                        else "Down"
+                    )
+                    tools = await asyncio.wait_for(transport.get_tools(), timeout=self.timeout_config.operation)
 
                     for t in tools:
                         tname = t.get("name")
@@ -415,8 +424,12 @@ class StreamManager:
 
                     self.transports[name] = transport
                     # Use longer timeouts for slow servers (ping can take time after initialization)
-                    status = "Up" if await asyncio.wait_for(transport.send_ping(), timeout=30.0) else "Down"
-                    tools = await asyncio.wait_for(transport.get_tools(), timeout=30.0)
+                    status = (
+                        "Up"
+                        if await asyncio.wait_for(transport.send_ping(), timeout=self.timeout_config.operation)
+                        else "Down"
+                    )
+                    tools = await asyncio.wait_for(transport.get_tools(), timeout=self.timeout_config.operation)
 
                     for t in tools:
                         tname = t.get("name")
@@ -462,7 +475,7 @@ class StreamManager:
         transport = self.transports[server_name]
 
         try:
-            tools = await asyncio.wait_for(transport.get_tools(), timeout=10.0)
+            tools = await asyncio.wait_for(transport.get_tools(), timeout=self.timeout_config.operation)
             logger.debug("Found %d tools for server %s", len(tools), server_name)
             return tools
         except TimeoutError:
@@ -481,7 +494,7 @@ class StreamManager:
 
         async def _ping_one(name: str, tr: MCPBaseTransport):
             try:
-                ok = await asyncio.wait_for(tr.send_ping(), timeout=5.0)
+                ok = await asyncio.wait_for(tr.send_ping(), timeout=self.timeout_config.quick)
             except Exception:
                 ok = False
             return {"server": name, "ok": ok}
@@ -496,7 +509,7 @@ class StreamManager:
 
         async def _one(name: str, tr: MCPBaseTransport):
             try:
-                res = await asyncio.wait_for(tr.list_resources(), timeout=10.0)
+                res = await asyncio.wait_for(tr.list_resources(), timeout=self.timeout_config.operation)
                 resources = res.get("resources", []) if isinstance(res, dict) else res
                 for item in resources:
                     item = dict(item)
@@ -516,7 +529,7 @@ class StreamManager:
 
         async def _one(name: str, tr: MCPBaseTransport):
             try:
-                res = await asyncio.wait_for(tr.list_prompts(), timeout=10.0)
+                res = await asyncio.wait_for(tr.list_prompts(), timeout=self.timeout_config.operation)
                 prompts = res.get("prompts", []) if isinstance(res, dict) else res
                 for item in prompts:
                     item = dict(item)
@@ -643,7 +656,7 @@ class StreamManager:
             try:
                 results = await asyncio.wait_for(
                     asyncio.gather(*[task for _, task in close_tasks], return_exceptions=True),
-                    timeout=self._shutdown_timeout,
+                    timeout=self.timeout_config.shutdown,
                 )
 
                 # Process results
@@ -666,7 +679,8 @@ class StreamManager:
                 # Brief wait for cancellations to complete
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(
-                        asyncio.gather(*[task for _, task in close_tasks], return_exceptions=True), timeout=0.5
+                        asyncio.gather(*[task for _, task in close_tasks], return_exceptions=True),
+                        timeout=self.timeout_config.shutdown,
                     )
 
     async def _sequential_close(self, transport_items: list[tuple[str, MCPBaseTransport]], close_results: list) -> None:
@@ -675,7 +689,7 @@ class StreamManager:
             try:
                 await asyncio.wait_for(
                     self._close_single_transport(name, transport),
-                    timeout=0.5,  # Short timeout per transport
+                    timeout=self.timeout_config.shutdown,
                 )
                 logger.debug("Closed transport: %s", name)
                 close_results.append((name, True, None))
@@ -767,7 +781,7 @@ class StreamManager:
 
         for name, transport in self.transports.items():
             try:
-                ping_ok = await asyncio.wait_for(transport.send_ping(), timeout=5.0)
+                ping_ok = await asyncio.wait_for(transport.send_ping(), timeout=self.timeout_config.quick)
                 health_info["transports"][name] = {
                     "status": "healthy" if ping_ok else "unhealthy",
                     "ping_success": ping_ok,

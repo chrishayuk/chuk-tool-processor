@@ -321,10 +321,10 @@ class TestHTTPStreamableTransport:
         assert metrics["stream_errors"] == 0
 
         # Manually increment total_calls first to prevent division by zero
-        transport._metrics["total_calls"] = 1
+        transport._metrics.total_calls = 1
         transport._update_metrics(0.5, True)  # Success
 
-        transport._metrics["total_calls"] = 2  # Increment again
+        transport._metrics.total_calls = 2  # Increment again
         transport._update_metrics(1.0, False)  # Failure
 
         metrics = transport.get_metrics()
@@ -398,9 +398,9 @@ class TestHTTPStreamableTransport:
         """Test HTTP Streamable close when initialized with metrics logging."""
         transport._initialized = True
         # Add some metrics to test logging
-        transport._metrics["total_calls"] = 5
-        transport._metrics["successful_calls"] = 4
-        transport._metrics["failed_calls"] = 1
+        transport._metrics.total_calls = 5
+        transport._metrics.successful_calls = 4
+        transport._metrics.failed_calls = 1
 
         mock_http_transport = AsyncMock()
         transport._http_transport = mock_http_transport
@@ -465,8 +465,8 @@ class TestHTTPStreamableTransport:
 
         # Initialized with metrics
         transport._initialized = True
-        transport._metrics["total_calls"] = 10
-        transport._metrics["successful_calls"] = 8
+        transport._metrics.total_calls = 10
+        transport._metrics.successful_calls = 8
 
         repr_str = repr(transport)
         assert "status=initialized" in repr_str
@@ -697,8 +697,8 @@ class TestHTTPStreamableTransport:
     async def test_close_with_metrics_logging(self, transport):
         """Test close with metrics logging."""
         transport._initialized = True
-        transport._metrics["total_calls"] = 10
-        transport._metrics["successful_calls"] = 8
+        transport._metrics.total_calls = 10
+        transport._metrics.successful_calls = 8
         transport._http_transport = AsyncMock()
 
         await transport.close()
@@ -757,7 +757,7 @@ class TestHTTPStreamableTransport:
         ):
             result = await transport._attempt_recovery()
             assert result is True
-            assert transport._metrics["recovery_attempts"] == 1
+            assert transport._metrics.recovery_attempts == 1
 
     @pytest.mark.asyncio
     async def test_attempt_recovery_failure(self, transport):
@@ -770,7 +770,7 @@ class TestHTTPStreamableTransport:
         ):
             result = await transport._attempt_recovery()
             assert result is False
-            assert transport._metrics["recovery_attempts"] == 1
+            assert transport._metrics.recovery_attempts == 1
 
     @pytest.mark.asyncio
     async def test_initialize_connection_error_increments_metric(self, transport):
@@ -781,7 +781,7 @@ class TestHTTPStreamableTransport:
         ):
             result = await transport.initialize()
             assert result is False
-            assert transport._metrics["connection_errors"] == 1
+            assert transport._metrics.connection_errors == 1
 
     @pytest.mark.asyncio
     async def test_list_prompts_not_initialized_check(self, transport):
@@ -822,7 +822,7 @@ class TestHTTPStreamableTransport:
         """Test __repr__ includes session information."""
         transport._initialized = True
         transport.session_id = "test-session-456"
-        transport._metrics["total_calls"] = 5
+        transport._metrics.total_calls = 5
 
         repr_str = repr(transport)
         assert "HTTPStreamableTransport" in repr_str
@@ -869,8 +869,8 @@ class TestHTTPStreamableTransport:
         ):
             result = await transport.call_tool("test", {})
             assert result["isError"] is False
-            assert transport._metrics["total_calls"] == 1
-            assert transport._metrics["successful_calls"] == 1
+            assert transport._metrics.total_calls == 1
+            assert transport._metrics.successful_calls == 1
 
     @pytest.mark.asyncio
     async def test_oauth_error_detection(self, transport):

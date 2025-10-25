@@ -370,7 +370,7 @@ class MCPTool:
             self._circuit_open = False
             self._circuit_open_time = None
             self.connection_state = ConnectionState.HEALTHY
-            logger.info(f"Circuit breaker closed for tool '{self.tool_name}' after successful execution")
+            logger.debug(f"Circuit breaker closed for tool '{self.tool_name}' after successful execution")
 
     async def _record_failure(self, is_connection_error: bool = False) -> None:
         """Record a failed execution."""
@@ -407,7 +407,7 @@ class MCPTool:
             self._circuit_open = False
             self._circuit_open_time = None
             self.connection_state = ConnectionState.HEALTHY
-            logger.info(f"Circuit breaker reset for tool '{self.tool_name}' after timeout")
+            logger.debug(f"Circuit breaker reset for tool '{self.tool_name}' after timeout")
             return False
 
         return True
@@ -462,12 +462,12 @@ class MCPTool:
         self._circuit_open_time = None
         self._consecutive_failures = 0
         self.connection_state = ConnectionState.HEALTHY
-        logger.info(f"Circuit breaker manually reset for tool '{self.tool_name}'")
+        logger.debug(f"Circuit breaker manually reset for tool '{self.tool_name}'")
 
     def disable_resilience(self) -> None:
         """Disable resilience features for this tool instance."""
         self.enable_resilience = False
-        logger.info(f"Resilience features disabled for tool '{self.tool_name}'")
+        logger.debug(f"Resilience features disabled for tool '{self.tool_name}'")
 
     def set_stream_manager(self, stream_manager: StreamManager | None) -> None:
         """
@@ -482,7 +482,7 @@ class MCPTool:
             if self._circuit_open:
                 self._circuit_open = False
                 self._circuit_open_time = None
-                logger.info(f"Circuit breaker closed for tool '{self.tool_name}' due to new stream manager")
+                logger.debug(f"Circuit breaker closed for tool '{self.tool_name}' due to new stream manager")
         else:
             self.connection_state = ConnectionState.DISCONNECTED
 

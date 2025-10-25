@@ -42,7 +42,7 @@ class TestStreamManager:
         assert stream_manager.server_names == {}
         assert stream_manager.all_tools == []
         assert stream_manager._closed is False
-        assert stream_manager._shutdown_timeout == 2.0
+        assert stream_manager.timeout_config.shutdown == 2.0
 
     @pytest.mark.asyncio
     async def test_add_server_stdio(self, stream_manager):
@@ -1308,7 +1308,7 @@ class TestStreamManager:
             stream_manager.transports[f"slow_{i}"] = mock_transport
 
         # Set a very short shutdown timeout
-        stream_manager._shutdown_timeout = 0.1
+        stream_manager.timeout_config.shutdown = 0.1
 
         await stream_manager.close()
 
