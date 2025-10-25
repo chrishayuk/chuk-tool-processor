@@ -92,6 +92,7 @@ class TestSetupMCPHTTPStreamable:
             mock_register.assert_called_once_with(stream_manager, namespace="custom_ns")
 
             # Verify ToolProcessor was created with correct options
+            # Note: retry_config is now also passed (None when enable_retries=False)
             mock_processor_class.assert_called_once_with(
                 default_timeout=45.0,
                 max_concurrency=10,
@@ -102,6 +103,7 @@ class TestSetupMCPHTTPStreamable:
                 tool_rate_limits={"tool1": (10, 60)},
                 enable_retries=False,
                 max_retries=5,
+                retry_config=None,  # None when enable_retries=False
             )
 
     @pytest.mark.asyncio

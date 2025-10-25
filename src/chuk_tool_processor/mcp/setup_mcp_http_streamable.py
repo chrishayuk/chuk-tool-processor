@@ -41,8 +41,8 @@ async def setup_mcp_http_streamable(
     enable_rate_limiting: bool = False,
     global_rate_limit: int | None = None,
     tool_rate_limits: dict[str, tuple] | None = None,
-    enable_retries: bool = False,  # CHANGED: Disabled to allow OAuth refresh to work properly
-    max_retries: int = 0,  # CHANGED: 0 retries for HTTP (OAuth refresh happens at transport level)
+    enable_retries: bool = True,  # CHANGED: Enabled with OAuth errors excluded
+    max_retries: int = 2,  # Retry non-OAuth errors (OAuth handled at transport level)
     namespace: str = "http",
     oauth_refresh_callback: any | None = None,  # NEW: OAuth token refresh callback
 ) -> tuple[ToolProcessor, StreamManager]:
@@ -102,6 +102,34 @@ async def setup_mcp_http_streamable(
     registered = await register_mcp_tools(stream_manager, namespace=namespace)
 
     # 3️⃣  build a processor instance configured to your taste
+    # IMPORTANT: Retries are enabled but OAuth errors are excluded
+    # OAuth refresh happens at transport level with automatic retry
+
+    # Import RetryConfig to configure OAuth error exclusion
+    from chuk_tool_processor.execution.wrappers.retry import RetryConfig
+
+    # Define OAuth error patterns that should NOT be retried at this level
+    # These will be handled by the transport layer's OAuth refresh mechanism
+    oauth_error_patterns = [
+        "invalid_token",
+        "oauth validation",
+        "unauthorized",
+        "expired token",
+        "token expired",
+        "authentication failed",
+        "invalid access token",
+    ]
+
+    # Create retry config that skips OAuth errors
+    retry_config = (
+        RetryConfig(
+            max_retries=max_retries,
+            skip_retry_on_error_substrings=oauth_error_patterns,
+        )
+        if enable_retries
+        else None
+    )
+
     processor = ToolProcessor(
         default_timeout=default_timeout,
         max_concurrency=max_concurrency,
@@ -112,6 +140,7 @@ async def setup_mcp_http_streamable(
         tool_rate_limits=tool_rate_limits,
         enable_retries=enable_retries,
         max_retries=max_retries,
+        retry_config=retry_config,  # NEW: Pass OAuth-aware retry config
     )
 
     logger.debug(

@@ -18,6 +18,10 @@ from typing import Any
 
 from chuk_tool_processor.execution.strategies.inprocess_strategy import InProcessStrategy
 from chuk_tool_processor.execution.wrappers.caching import CachingToolExecutor, InMemoryCache
+from chuk_tool_processor.execution.wrappers.circuit_breaker import (
+    CircuitBreakerConfig,
+    CircuitBreakerExecutor,
+)
 from chuk_tool_processor.execution.wrappers.rate_limiting import RateLimitedToolExecutor, RateLimiter
 from chuk_tool_processor.execution.wrappers.retry import RetryableToolExecutor, RetryConfig
 from chuk_tool_processor.logging import get_logger, log_context_span, log_tool_call, metrics, request_logging
@@ -46,6 +50,10 @@ class ToolProcessor:
         tool_rate_limits: dict[str, tuple] | None = None,
         enable_retries: bool = True,
         max_retries: int = 3,
+        retry_config: RetryConfig | None = None,
+        enable_circuit_breaker: bool = False,
+        circuit_breaker_threshold: int = 5,
+        circuit_breaker_timeout: float = 60.0,
         parser_plugins: list[str] | None = None,
     ):
         """
@@ -63,6 +71,9 @@ class ToolProcessor:
             tool_rate_limits: Dict mapping tool names to (limit, period) tuples.
             enable_retries: Whether to enable automatic retries.
             max_retries: Maximum number of retry attempts.
+            enable_circuit_breaker: Whether to enable circuit breaker pattern.
+            circuit_breaker_threshold: Number of failures before opening circuit.
+            circuit_breaker_timeout: Seconds to wait before testing recovery.
             parser_plugins: List of parser plugin names to use.
                 If None, uses all available parsers.
         """
@@ -80,6 +91,10 @@ class ToolProcessor:
         self.tool_rate_limits = tool_rate_limits
         self.enable_retries = enable_retries
         self.max_retries = max_retries
+        self.retry_config = retry_config
+        self.enable_circuit_breaker = enable_circuit_breaker
+        self.circuit_breaker_threshold = circuit_breaker_threshold
+        self.circuit_breaker_timeout = circuit_breaker_timeout
         self.parser_plugin_names = parser_plugins
 
         # Placeholder for initialized components
@@ -131,11 +146,25 @@ class ToolProcessor:
             executor = self.strategy
 
             # Apply wrappers in reverse order (innermost first)
+            # Circuit breaker goes innermost (closest to actual execution)
+            if self.enable_circuit_breaker:
+                self.logger.debug("Enabling circuit breaker")
+                circuit_config = CircuitBreakerConfig(
+                    failure_threshold=self.circuit_breaker_threshold,
+                    reset_timeout=self.circuit_breaker_timeout,
+                )
+                executor = CircuitBreakerExecutor(
+                    executor=executor,
+                    default_config=circuit_config,
+                )
+
             if self.enable_retries:
                 self.logger.debug("Enabling retry logic")
+                # Use custom retry config if provided, otherwise create default
+                retry_cfg = self.retry_config or RetryConfig(max_retries=self.max_retries)
                 executor = RetryableToolExecutor(
                     executor=executor,
-                    default_config=RetryConfig(max_retries=self.max_retries),
+                    default_config=retry_cfg,
                 )
 
             if self.enable_rate_limiting:

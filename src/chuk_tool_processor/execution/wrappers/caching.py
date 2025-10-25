@@ -428,8 +428,9 @@ class CachingToolExecutor:
                     uncached.append((idx, call))
                     continue
 
-                h = self._hash_arguments(call.arguments)
-                cached_val = await self.cache.get(call.tool, h)
+                # Use idempotency_key if available, otherwise hash arguments
+                cache_key = call.idempotency_key or self._hash_arguments(call.arguments)
+                cached_val = await self.cache.get(call.tool, cache_key)
 
                 if cached_val is None:
                     # Cache miss
@@ -485,10 +486,13 @@ class CachingToolExecutor:
                     ttl = self._ttl_for(call.tool)
                     logger.debug(f"Caching result for {call.tool} with TTL={ttl}s")
 
+                    # Use idempotency_key if available, otherwise hash arguments
+                    cache_key = call.idempotency_key or self._hash_arguments(call.arguments)
+
                     # Create task but don't await yet (for concurrent caching)
                     task = self.cache.set(
                         call.tool,
-                        self._hash_arguments(call.arguments),
+                        cache_key,
                         result.result,
                         ttl=ttl,
                     )

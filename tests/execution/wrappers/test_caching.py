@@ -274,12 +274,12 @@ async def test_executor_with_mixed_cache_hits_and_misses():
     assert len(exec_.called) == 1  # Should not call executor again if cached
     assert result[0].cached is True
 
-    # Add another call to cache directly
-    h4 = _hash_args({"d": 4})
-    await cache.set("t4", h4, "direct_result", ttl=10)
+    # Add another call to cache directly - need to use the idempotency_key
+    call4 = ToolCall(tool="t4", arguments={"d": 4})
+    # Use the auto-generated idempotency_key as the cache key
+    await cache.set("t4", call4.idempotency_key, "direct_result", ttl=10)
 
     # Now check the explicitly added cache item
-    call4 = ToolCall(tool="t4", arguments={"d": 4})
     result2 = await wrapper.execute([call4])
     assert result2[0].cached is True
     assert result2[0].result == "direct_result"
