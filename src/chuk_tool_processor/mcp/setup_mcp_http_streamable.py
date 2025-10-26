@@ -110,10 +110,17 @@ async def setup_mcp_http_streamable(
 
     # Define OAuth error patterns that should NOT be retried at this level
     # These will be handled by the transport layer's OAuth refresh mechanism
+    # Based on RFC 6750 (Bearer Token Usage) and MCP OAuth spec
     oauth_error_patterns = [
-        "invalid_token",
+        # RFC 6750 Section 3.1 - Standard Bearer token errors
+        "invalid_token",  # Token expired, revoked, malformed, or invalid
+        "insufficient_scope",  # Request requires higher privileges (403 Forbidden)
+        # OAuth 2.1 token refresh errors
+        "invalid_grant",  # Refresh token errors
+        # MCP spec - OAuth validation failures (401 Unauthorized)
         "oauth validation",
         "unauthorized",
+        # Common OAuth error descriptions
         "expired token",
         "token expired",
         "authentication failed",

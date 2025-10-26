@@ -25,6 +25,24 @@ from chuk_tool_processor.models.tool_result import ToolResult
 
 logger = get_logger("chuk_tool_processor.execution.wrappers.rate_limiting")
 
+# Optional observability imports
+try:
+    from chuk_tool_processor.observability.metrics import get_metrics
+    from chuk_tool_processor.observability.tracing import trace_rate_limit
+
+    _observability_available = True
+except ImportError:
+    _observability_available = False
+
+    # No-op functions when observability not available
+    def get_metrics():
+        return None
+
+    def trace_rate_limit(*_args, **_kwargs):
+        from contextlib import nullcontext
+
+        return nullcontext()
+
 
 # --------------------------------------------------------------------------- #
 # Core limiter
@@ -220,8 +238,20 @@ class RateLimitedToolExecutor:
             return []
 
         # Block for each call *before* dispatching to the wrapped executor
+        metrics = get_metrics()
+
         for c in calls:
-            await self.limiter.wait(c.tool)
+            # Check limits first for metrics
+            global_limited, tool_limited = await self.limiter.check_limits(c.tool)
+            allowed = not (global_limited or tool_limited)
+
+            # Trace rate limit check
+            with trace_rate_limit(c.tool, allowed):
+                await self.limiter.wait(c.tool)
+
+            # Record metrics
+            if metrics:
+                metrics.record_rate_limit_check(c.tool, allowed)
 
         # Check if the executor has a use_cache parameter
         if hasattr(self.executor, "execute"):

@@ -29,6 +29,24 @@ from chuk_tool_processor.models.tool_result import ToolResult
 
 logger = get_logger("chuk_tool_processor.execution.wrappers.caching")
 
+# Optional observability imports
+try:
+    from chuk_tool_processor.observability.metrics import get_metrics
+    from chuk_tool_processor.observability.tracing import trace_cache_operation
+
+    _observability_available = True
+except ImportError:
+    _observability_available = False
+
+    # No-op functions when observability not available
+    def get_metrics():
+        return None
+
+    def trace_cache_operation(*_args, **_kwargs):
+        from contextlib import nullcontext
+
+        return nullcontext()
+
 
 # --------------------------------------------------------------------------- #
 # Cache primitives
@@ -430,7 +448,15 @@ class CachingToolExecutor:
 
                 # Use idempotency_key if available, otherwise hash arguments
                 cache_key = call.idempotency_key or self._hash_arguments(call.arguments)
-                cached_val = await self.cache.get(call.tool, cache_key)
+
+                # Trace cache lookup operation
+                with trace_cache_operation("lookup", call.tool):
+                    cached_val = await self.cache.get(call.tool, cache_key)
+
+                # Record metrics
+                metrics = get_metrics()
+                if metrics:
+                    metrics.record_cache_operation(call.tool, "lookup", hit=(cached_val is not None))
 
                 if cached_val is None:
                     # Cache miss
@@ -481,6 +507,8 @@ class CachingToolExecutor:
         # ------------------------------------------------------------------
         if use_cache:
             cache_tasks = []
+            metrics = get_metrics()
+
             for (_idx, call), result in zip(uncached, uncached_results, strict=False):
                 if result.error is None and self._is_cacheable(call.tool):
                     ttl = self._ttl_for(call.tool)
@@ -489,14 +517,15 @@ class CachingToolExecutor:
                     # Use idempotency_key if available, otherwise hash arguments
                     cache_key = call.idempotency_key or self._hash_arguments(call.arguments)
 
-                    # Create task but don't await yet (for concurrent caching)
-                    task = self.cache.set(
-                        call.tool,
-                        cache_key,
-                        result.result,
-                        ttl=ttl,
-                    )
-                    cache_tasks.append(task)
+                    # Trace and record cache set operation
+                    # Bind loop variables to avoid B023 error
+                    async def cache_with_trace(tool=call.tool, key=cache_key, value=result.result, ttl_val=ttl):
+                        with trace_cache_operation("set", tool, attributes={"ttl": ttl_val}):
+                            await self.cache.set(tool, key, value, ttl=ttl_val)
+                        if metrics:
+                            metrics.record_cache_operation(tool, "set")
+
+                    cache_tasks.append(cache_with_trace())
 
                 # Flag as non-cached so callers can tell
                 if hasattr(result, "cached"):

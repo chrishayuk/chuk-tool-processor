@@ -78,6 +78,13 @@ dev = [
     "coverage[toml]>=7.6.0",
 ]
 
+observability = [
+    "opentelemetry-api>=1.28.0",
+    "opentelemetry-sdk>=1.28.0",
+    "opentelemetry-exporter-otlp>=1.28.0",
+    "prometheus-client>=0.21.0",
+]
+
 [tool.coverage.run]
 source = ["src"]
 omit = [

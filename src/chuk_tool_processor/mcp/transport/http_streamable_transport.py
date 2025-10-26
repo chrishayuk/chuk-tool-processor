@@ -519,16 +519,29 @@ class HTTPStreamableTransport(MCPBaseTransport):
         self._metrics.update_call_metrics(response_time, success)
 
     def _is_oauth_error(self, error_msg: str) -> bool:
-        """Detect if error is OAuth-related (NEW)."""
+        """
+        Detect if error is OAuth-related per RFC 6750 and MCP OAuth spec.
+
+        Checks for:
+        - RFC 6750 Section 3.1 Bearer token errors (invalid_token, insufficient_scope)
+        - OAuth 2.1 token refresh errors (invalid_grant)
+        - MCP spec OAuth validation failures (401/403 responses)
+        """
         if not error_msg:
             return False
 
         error_lower = error_msg.lower()
         oauth_indicators = [
-            "invalid_token",
-            "expired token",
+            # RFC 6750 Section 3.1 - Standard Bearer token errors
+            "invalid_token",  # Token expired, revoked, malformed, or invalid
+            "insufficient_scope",  # Request requires higher privileges (403 Forbidden)
+            # OAuth 2.1 token refresh errors
+            "invalid_grant",  # Refresh token errors
+            # MCP spec - OAuth validation failures (401 Unauthorized)
             "oauth validation",
             "unauthorized",
+            # Common OAuth error descriptions
+            "expired token",
             "token expired",
             "authentication failed",
             "invalid access token",

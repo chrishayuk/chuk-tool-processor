@@ -28,6 +28,24 @@ from chuk_tool_processor.models.tool_result import ToolResult
 
 logger = get_logger("chuk_tool_processor.execution.wrappers.circuit_breaker")
 
+# Optional observability imports
+try:
+    from chuk_tool_processor.observability.metrics import get_metrics
+    from chuk_tool_processor.observability.tracing import trace_circuit_breaker
+
+    _observability_available = True
+except ImportError:
+    _observability_available = False
+
+    # No-op functions when observability not available
+    def get_metrics():
+        return None
+
+    def trace_circuit_breaker(*_args, **_kwargs):
+        from contextlib import nullcontext
+
+        return nullcontext()
+
 
 # --------------------------------------------------------------------------- #
 # Circuit breaker state
@@ -234,8 +252,14 @@ class CircuitBreakerExecutor:
         for call in calls:
             state = await self._get_state(call.tool)
 
-            # Check if circuit allows execution
-            can_execute = await state.can_execute()
+            # Record circuit breaker state
+            metrics = get_metrics()
+            if metrics:
+                metrics.record_circuit_breaker_state(call.tool, state.state.value)
+
+            # Check if circuit allows execution with tracing
+            with trace_circuit_breaker(call.tool, state.state.value):
+                can_execute = await state.can_execute()
 
             if not can_execute:
                 # Circuit is OPEN - reject immediately
@@ -283,6 +307,9 @@ class CircuitBreakerExecutor:
 
                 if is_error or is_timeout:
                     await state.record_failure()
+                    # Record circuit breaker failure metric
+                    if metrics:
+                        metrics.record_circuit_breaker_failure(call.tool)
                 else:
                     await state.record_success()
 
