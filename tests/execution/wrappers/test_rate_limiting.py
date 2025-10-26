@@ -112,6 +112,9 @@ async def test_rate_limited_executor(monkeypatch):
         async def wait(self, tool):
             waited.append(tool)
 
+        async def check_limits(self, tool):
+            return (False, False)
+
     dummy_exec = DummyExecutor()
     rl_exec = RateLimitedToolExecutor(dummy_exec, FakeLimiter())
 
@@ -132,6 +135,9 @@ async def test_rate_limited_executor_passes_use_cache(monkeypatch):
     class FakeLimiter:
         async def wait(self, tool):
             pass
+
+        async def check_limits(self, tool):
+            return (False, False)
 
     dummy_exec = DummyExecutor()
     rl_exec = RateLimitedToolExecutor(dummy_exec, FakeLimiter())

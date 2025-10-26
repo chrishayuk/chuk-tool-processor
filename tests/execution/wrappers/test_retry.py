@@ -376,3 +376,93 @@ async def test_retry_executor_with_empty_calls():
     results = await wrapper.execute([])
     assert results == []
     assert dummy.calls == 0  # No calls made
+
+
+@pytest.mark.asyncio
+async def test_retry_executor_skips_oauth_errors():
+    """Test that OAuth errors are not retried when using skip_retry_on_error_substrings."""
+    # Test with error result (non-exception path)
+    dummy = DummyExecutor(
+        fail_times=10, error_message="OAuth validation failed: invalid_token: Invalid or expired access token"
+    )
+    wrapper = RetryableToolExecutor(
+        executor=dummy,
+        default_config=RetryConfig(
+            max_retries=3,
+            base_delay=0.1,
+            skip_retry_on_error_substrings=[
+                "invalid_token",
+                "oauth validation",
+                "unauthorized",
+            ],
+        ),
+    )
+
+    res = (await wrapper.execute([ToolCall(tool="t1", arguments={})]))[0]
+
+    # Should NOT retry OAuth errors
+    assert dummy.calls == 1  # Only original attempt, no retries
+    assert res.attempts == 1
+    assert "OAuth validation failed" in res.error
+    assert "Max retries" not in res.error  # Should not have retried
+
+
+@pytest.mark.asyncio
+async def test_retry_executor_skips_oauth_errors_in_exception_path():
+    """Test that OAuth errors are not retried in exception path when using skip_retry_on_error_substrings."""
+
+    # Create custom exception executor that raises exceptions with OAuth error messages
+    class OAuthExceptionExecutor:
+        def __init__(self):
+            self.calls = 0
+
+        async def execute(self, calls, timeout=None, use_cache=True):
+            self.calls += 1
+            raise RuntimeError("OAuth validation failed: invalid_token: Invalid or expired access token")
+
+    exc_exec = OAuthExceptionExecutor()
+    wrapper = RetryableToolExecutor(
+        executor=exc_exec,
+        default_config=RetryConfig(
+            max_retries=3,
+            base_delay=0.1,
+            skip_retry_on_error_substrings=[
+                "invalid_token",
+                "oauth validation",
+                "unauthorized",
+            ],
+        ),
+    )
+
+    res = (await wrapper.execute([ToolCall(tool="t2", arguments={})]))[0]
+
+    # Should NOT retry OAuth errors even in exception path
+    assert exc_exec.calls == 1  # Only original attempt, no retries
+    assert res.attempts == 1
+    assert "OAuth validation failed" in res.error
+    assert "invalid_token" in res.error
+
+
+@pytest.mark.asyncio
+async def test_retry_executor_retries_non_oauth_errors():
+    """Test that non-OAuth errors are still retried normally."""
+    dummy = DummyExecutor(fail_times=2, error_message="Network timeout")
+    wrapper = RetryableToolExecutor(
+        executor=dummy,
+        default_config=RetryConfig(
+            max_retries=3,
+            base_delay=0.1,
+            skip_retry_on_error_substrings=[
+                "invalid_token",
+                "oauth validation",
+                "unauthorized",
+            ],
+        ),
+    )
+
+    res = (await wrapper.execute([ToolCall(tool="t3", arguments={})]))[0]
+
+    # Should retry non-OAuth errors normally
+    assert dummy.calls == 3  # Original + 2 retries
+    assert res.attempts == 3
+    assert res.result == "success"

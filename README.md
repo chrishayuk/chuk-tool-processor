@@ -156,7 +156,7 @@ asyncio.run(main())
 | 🔌 **Connect to external tools** | MCP integration (HTTP/STDIO/SSE) | [MCP Integration](#5-mcp-integration-external-tools) |
 | 🛡️ **Production deployment** | Timeouts, retries, rate limits, caching | [Production Configuration](#using-the-processor) |
 | 🔒 **Run untrusted code safely** | Subprocess isolation strategy | [Subprocess Strategy](#using-subprocess-strategy) |
-| 📊 **Monitor and observe** | Structured logging and metrics | [Observability](#observability) |
+| 📊 **Monitor and observe** | OpenTelemetry + Prometheus | [Observability](#opentelemetry--prometheus-drop-in-observability) |
 | 🌊 **Stream incremental results** | StreamingTool pattern | [StreamingTool](#streamingtool-real-time-results) |
 
 ### Real-World Quick Start
@@ -1070,6 +1070,294 @@ async def main():
 asyncio.run(main())
 ```
 
+#### OpenTelemetry & Prometheus (Drop-in Observability)
+
+**Why Telemetry Matters**: In production, you need to know *what* your tools are doing, *how long* they take, *when* they fail, and *why*. CHUK Tool Processor provides **enterprise-grade telemetry** that operations teams expect—with zero manual instrumentation.
+
+**One function call. Full observability.**
+
+```python
+from chuk_tool_processor.observability import setup_observability
+
+# Enable everything
+setup_observability(
+    service_name="my-tool-service",
+    enable_tracing=True,    # OpenTelemetry distributed tracing
+    enable_metrics=True,    # Prometheus metrics endpoint
+    metrics_port=9090       # HTTP endpoint at :9090/metrics
+)
+
+# Every tool execution is now automatically traced and metered!
+```
+
+**What You Get (Automatically)**
+
+✅ **Distributed Traces** - Understand exactly what happened in each tool call
+- See the complete execution timeline for every tool
+- Track retries, cache hits, circuit breaker state changes
+- Correlate failures across your system
+- Export to Jaeger, Zipkin, or any OTLP-compatible backend
+
+✅ **Production Metrics** - Monitor health and performance in real-time
+- Track error rates, latency percentiles (P50/P95/P99)
+- Monitor cache hit rates and retry attempts
+- Alert on circuit breaker opens and rate limit hits
+- Export to Prometheus, Grafana, or any metrics backend
+
+✅ **Zero Configuration** - Works out of the box
+- No manual instrumentation needed
+- No code changes to existing tools
+- Gracefully degrades if packages not installed
+- Standard OTEL and Prometheus formats
+
+**Installation**
+
+```bash
+# Install observability dependencies
+pip install chuk-tool-processor[observability]
+
+# Or manually
+pip install opentelemetry-api opentelemetry-sdk opentelemetry-exporter-otlp prometheus-client
+
+# Or with uv (recommended)
+uv pip install chuk-tool-processor --group observability
+```
+
+**Quick Start: See Your Tools in Action**
+
+```python
+import asyncio
+from chuk_tool_processor.observability import setup_observability
+from chuk_tool_processor.core.processor import ToolProcessor
+from chuk_tool_processor.registry import initialize, register_tool
+
+@register_tool(name="weather_api")
+class WeatherTool:
+    async def execute(self, location: str) -> dict:
+        # Simulating API call
+        return {"temperature": 72, "conditions": "sunny", "location": location}
+
+async def main():
+    # 1. Enable observability (one line!)
+    setup_observability(
+        service_name="weather-service",
+        enable_tracing=True,
+        enable_metrics=True,
+        metrics_port=9090
+    )
+
+    # 2. Create processor with production features
+    await initialize()
+    processor = ToolProcessor(
+        enable_caching=True,         # Cache expensive API calls
+        enable_retries=True,         # Auto-retry on failures
+        enable_circuit_breaker=True, # Prevent cascading failures
+        enable_rate_limiting=True,   # Prevent API abuse
+    )
+
+    # 3. Execute tools - automatically traced and metered
+    results = await processor.process(
+        '<tool name="weather_api" args=\'{"location": "San Francisco"}\'/>'
+    )
+
+    print(f"Result: {results[0].result}")
+    print(f"Duration: {results[0].duration}s")
+    print(f"Cached: {results[0].cached}")
+
+asyncio.run(main())
+```
+
+**View Your Data**
+
+```bash
+# Start Jaeger for trace visualization
+docker run -d -p 4317:4317 -p 16686:16686 jaegertracing/all-in-one:latest
+
+# Start your application
+python your_app.py
+
+# View distributed traces
+open http://localhost:16686
+
+# View Prometheus metrics
+curl http://localhost:9090/metrics | grep tool_
+```
+
+**What Gets Traced (Automatic Spans)**
+
+Every execution layer creates standardized OpenTelemetry spans:
+
+| Span Name | When Created | Key Attributes |
+|-----------|--------------|----------------|
+| `tool.execute` | Every tool execution | `tool.name`, `tool.namespace`, `tool.duration_ms`, `tool.cached`, `tool.error`, `tool.success` |
+| `tool.cache.lookup` | Cache lookup | `cache.hit` (true/false), `cache.operation=lookup` |
+| `tool.cache.set` | Cache write | `cache.ttl`, `cache.operation=set` |
+| `tool.retry.attempt` | Each retry | `retry.attempt`, `retry.max_attempts`, `retry.success` |
+| `tool.circuit_breaker.check` | Circuit state check | `circuit.state` (CLOSED/OPEN/HALF_OPEN) |
+| `tool.rate_limit.check` | Rate limit check | `rate_limit.allowed` (true/false) |
+
+**Example trace hierarchy:**
+```
+tool.execute (weather_api)
+├── tool.cache.lookup (miss)
+├── tool.retry.attempt (0)
+│   └── tool.execute (actual API call)
+├── tool.retry.attempt (1) [if first failed]
+└── tool.cache.set (store result)
+```
+
+**What Gets Metered (Automatic Metrics)**
+
+Standard Prometheus metrics exposed at `/metrics`:
+
+| Metric | Type | Labels | Use For |
+|--------|------|--------|---------|
+| `tool_executions_total` | Counter | `tool`, `namespace`, `status` | Error rate, request volume |
+| `tool_execution_duration_seconds` | Histogram | `tool`, `namespace` | P50/P95/P99 latency |
+| `tool_cache_operations_total` | Counter | `tool`, `operation`, `result` | Cache hit rate |
+| `tool_retry_attempts_total` | Counter | `tool`, `attempt`, `success` | Retry frequency |
+| `tool_circuit_breaker_state` | Gauge | `tool` | Circuit health (0=CLOSED, 1=OPEN, 2=HALF_OPEN) |
+| `tool_circuit_breaker_failures_total` | Counter | `tool` | Failure count |
+| `tool_rate_limit_checks_total` | Counter | `tool`, `allowed` | Rate limit hits |
+
+**Useful PromQL Queries**
+
+```promql
+# Error rate per tool (last 5 minutes)
+rate(tool_executions_total{status="error"}[5m])
+/ rate(tool_executions_total[5m])
+
+# P95 latency
+histogram_quantile(0.95, rate(tool_execution_duration_seconds_bucket[5m]))
+
+# Cache hit rate
+rate(tool_cache_operations_total{result="hit"}[5m])
+/ rate(tool_cache_operations_total{operation="lookup"}[5m])
+
+# Tools currently circuit broken
+tool_circuit_breaker_state == 1
+
+# Retry rate (how often tools need retries)
+rate(tool_retry_attempts_total{attempt!="0"}[5m])
+/ rate(tool_executions_total[5m])
+```
+
+**Configuration**
+
+Configure via environment variables:
+
+```bash
+# OTLP endpoint (where traces are sent)
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+
+# Service name (shown in traces)
+export OTEL_SERVICE_NAME=production-api
+
+# Sampling (reduce overhead in high-traffic scenarios)
+export OTEL_TRACES_SAMPLER=traceidratio
+export OTEL_TRACES_SAMPLER_ARG=0.1  # Sample 10% of traces
+```
+
+Or in code:
+
+```python
+status = setup_observability(
+    service_name="my-service",
+    enable_tracing=True,
+    enable_metrics=True,
+    metrics_port=9090,
+    metrics_host="0.0.0.0"  # Allow external Prometheus scraping
+)
+
+# Check status
+if status["tracing_enabled"]:
+    print("Traces exporting to OTLP endpoint")
+if status["metrics_server_started"]:
+    print("Metrics available at http://localhost:9090/metrics")
+```
+
+**Production Integration**
+
+**With Grafana + Prometheus:**
+```yaml
+# prometheus.yml
+scrape_configs:
+  - job_name: 'chuk-tool-processor'
+    scrape_interval: 15s
+    static_configs:
+      - targets: ['app:9090']
+```
+
+**With OpenTelemetry Collector:**
+```yaml
+# otel-collector-config.yaml
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+exporters:
+  jaeger:
+    endpoint: jaeger:14250
+  prometheus:
+    endpoint: 0.0.0.0:8889
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [jaeger]
+```
+
+**With Cloud Providers:**
+```bash
+# AWS X-Ray
+export OTEL_TRACES_SAMPLER=xray
+
+# Google Cloud Trace
+export OTEL_EXPORTER_OTLP_ENDPOINT=https://cloudtrace.googleapis.com/v1/projects/PROJECT_ID/traces
+
+# Datadog
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://datadog-agent:4317
+```
+
+**Why This Matters**
+
+❌ **Without telemetry:**
+- "Why is this tool slow?" → No idea
+- "Is caching helping?" → Guessing
+- "Did that retry work?" → Check logs manually
+- "Is the circuit breaker working?" → Hope so
+- "Which tool is failing?" → Debug blindly
+
+✅ **With telemetry:**
+- See exact execution timeline in Jaeger
+- Monitor cache hit rate in Grafana
+- Alert when retry rate spikes
+- Dashboard shows circuit breaker states
+- Metrics pinpoint the failing tool immediately
+
+**Learn More**
+
+📖 **Complete Guide**: See [`OBSERVABILITY.md`](OBSERVABILITY.md) for:
+- Complete span and metric specifications
+- Architecture and implementation details
+- Integration guides (Jaeger, Grafana, OTEL Collector)
+- Testing observability features
+- Environment variable configuration
+
+🎯 **Working Example**: See `examples/observability_demo.py` for a complete demonstration with retries, caching, and circuit breakers
+
+**Benefits**
+
+✅ **Drop-in** - One function call, zero code changes
+✅ **Automatic** - All execution layers instrumented
+✅ **Standard** - OTEL + Prometheus (works with existing tools)
+✅ **Production-ready** - Ops teams get exactly what they expect
+✅ **Optional** - Gracefully degrades if packages not installed
+✅ **Zero-overhead** - No performance impact when disabled
+
 ### Error Handling
 
 ```python
@@ -1300,6 +1588,7 @@ Check out the [`examples/`](examples/) directory for complete working examples:
 - **Execution strategies**: `examples/execution_strategies_demo.py` - InProcess vs Subprocess
 - **Production wrappers**: `examples/wrappers_demo.py` - Caching, retries, rate limiting
 - **Streaming tools**: `examples/streaming_demo.py` - Real-time incremental results
+- **Observability**: `examples/observability_demo.py` - OpenTelemetry + Prometheus integration
 
 ### MCP Integration (Real-World)
 - **Notion + OAuth**: `examples/notion_oauth.py` - Complete OAuth 2.1 flow with HTTP Streamable

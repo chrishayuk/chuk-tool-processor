@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chuk-tool-processor"
-version = "0.8"
+version = "0.9"
 description = "Async-native framework for registering, discovering, and executing tools referenced in LLM responses"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -76,6 +76,13 @@ dev = [
     "bandit>=1.7.0",
     "pre-commit>=3.8.0",
     "coverage[toml]>=7.6.0",
+]
+
+observability = [
+    "opentelemetry-api>=1.28.0",
+    "opentelemetry-sdk>=1.28.0",
+    "opentelemetry-exporter-otlp>=1.28.0",
+    "prometheus-client>=0.21.0",
 ]
 
 [tool.coverage.run]

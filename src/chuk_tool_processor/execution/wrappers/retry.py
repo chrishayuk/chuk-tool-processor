@@ -21,6 +21,24 @@ from chuk_tool_processor.models.tool_result import ToolResult
 
 logger = get_logger("chuk_tool_processor.execution.wrappers.retry")
 
+# Optional observability imports
+try:
+    from chuk_tool_processor.observability.metrics import get_metrics
+    from chuk_tool_processor.observability.tracing import trace_retry_attempt
+
+    _observability_available = True
+except ImportError:
+    _observability_available = False
+
+    # No-op functions when observability not available
+    def get_metrics():
+        return None
+
+    def trace_retry_attempt(*_args, **_kwargs):
+        from contextlib import nullcontext
+
+        return nullcontext()
+
 
 # --------------------------------------------------------------------------- #
 # Retry configuration
@@ -177,63 +195,73 @@ class RetryableToolExecutor:
             # Execute one attempt
             # ---------------------------------------------------------------- #
             start_time = datetime.now(UTC)
-            try:
-                kwargs = {"timeout": remaining} if remaining is not None else {}
-                if hasattr(self.executor, "use_cache"):
-                    kwargs["use_cache"] = use_cache
 
-                result = (await self.executor.execute([call], **kwargs))[0]
-                pid = result.pid
-                machine = result.machine
+            # Trace retry attempt
+            with trace_retry_attempt(call.tool, attempt, cfg.max_retries):
+                try:
+                    kwargs = {"timeout": remaining} if remaining is not None else {}
+                    if hasattr(self.executor, "use_cache"):
+                        kwargs["use_cache"] = use_cache
 
-                # Success?
-                if not result.error:
+                    result = (await self.executor.execute([call], **kwargs))[0]
+                    pid = result.pid
+                    machine = result.machine
+
+                    # Record retry metrics
+                    metrics = get_metrics()
+                    success = result.error is None
+
+                    if metrics:
+                        metrics.record_retry_attempt(call.tool, attempt, success)
+
+                    # Success?
+                    if success:
+                        result.attempts = attempt + 1
+                        return result
+
+                    # Error: decide on retry
+                    last_error = result.error
+                    if cfg.should_retry(attempt, error_str=result.error):
+                        delay = cfg.get_delay(attempt)
+                        # never overshoot the deadline
+                        if deadline is not None:
+                            delay = min(delay, max(deadline - time.monotonic(), 0))
+                        if delay:
+                            await asyncio.sleep(delay)
+                        attempt += 1
+                        continue
+
+                    # No more retries wanted
+                    result.error = self._wrap_error(last_error, attempt, cfg)
                     result.attempts = attempt + 1
                     return result
 
-                # Error: decide on retry
-                last_error = result.error
-                if cfg.should_retry(attempt, error_str=result.error):
-                    delay = cfg.get_delay(attempt)
-                    # never overshoot the deadline
-                    if deadline is not None:
-                        delay = min(delay, max(deadline - time.monotonic(), 0))
-                    if delay:
-                        await asyncio.sleep(delay)
-                    attempt += 1
-                    continue
+                # ---------------------------------------------------------------- #
+                # Exception path
+                # ---------------------------------------------------------------- #
+                except Exception as exc:  # noqa: BLE001
+                    err_str = str(exc)
+                    last_error = err_str
+                    if cfg.should_retry(attempt, error=exc, error_str=err_str):
+                        delay = cfg.get_delay(attempt)
+                        if deadline is not None:
+                            delay = min(delay, max(deadline - time.monotonic(), 0))
+                        if delay:
+                            await asyncio.sleep(delay)
+                        attempt += 1
+                        continue
 
-                # No more retries wanted
-                result.error = self._wrap_error(last_error, attempt, cfg)
-                result.attempts = attempt + 1
-                return result
-
-            # ---------------------------------------------------------------- #
-            # Exception path
-            # ---------------------------------------------------------------- #
-            except Exception as exc:  # noqa: BLE001
-                err_str = str(exc)
-                last_error = err_str
-                if cfg.should_retry(attempt, error=exc):
-                    delay = cfg.get_delay(attempt)
-                    if deadline is not None:
-                        delay = min(delay, max(deadline - time.monotonic(), 0))
-                    if delay:
-                        await asyncio.sleep(delay)
-                    attempt += 1
-                    continue
-
-                end_time = datetime.now(UTC)
-                return ToolResult(
-                    tool=call.tool,
-                    result=None,
-                    error=self._wrap_error(err_str, attempt, cfg),
-                    start_time=start_time,
-                    end_time=end_time,
-                    machine=machine,
-                    pid=pid,
-                    attempts=attempt + 1,
-                )
+                    end_time = datetime.now(UTC)
+                    return ToolResult(
+                        tool=call.tool,
+                        result=None,
+                        error=self._wrap_error(err_str, attempt, cfg),
+                        start_time=start_time,
+                        end_time=end_time,
+                        machine=machine,
+                        pid=pid,
+                        attempts=attempt + 1,
+                    )
 
     # --------------------------------------------------------------------- #
     # Helpers
