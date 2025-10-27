@@ -155,6 +155,63 @@ docker run -d -p 4317:4317 -p 16686:16686 jaegertracing/all-in-one:latest
 # Import Grafana dashboard for visualization
 ```
 
+**One-Screen Dashboard**
+
+A pre-built Grafana dashboard is available at [`docs/grafana-dashboard.json`](docs/grafana-dashboard.json) providing complete observability in a single screen.
+
+**Dashboard Panels:**
+- Total calls/second (rate gauge)
+- Error rate (percentage gauge)
+- Cache hit rate (percentage gauge)
+- Circuit breaker status (state gauge)
+- Tool call rate over time (time series graph)
+- Latency percentiles (P50, P95, P99 stat panels)
+- Success vs error rate (time series comparison)
+- Cache hit rate by tool (time series breakdown)
+- Retry rate (percentage of calls requiring retries)
+- Top 10 tools (table with calls, errors, avg duration)
+
+**Import Instructions:**
+
+1. **Configure Prometheus to scrape your app:**
+   ```yaml
+   # prometheus.yml
+   scrape_configs:
+     - job_name: 'chuk-tool-processor'
+       scrape_interval: 15s
+       static_configs:
+         - targets: ['localhost:9090']  # Your metrics port
+   ```
+
+2. **Import the dashboard:**
+   - Open Grafana → Dashboards → Import
+   - Upload `docs/grafana-dashboard.json`
+   - Select your Prometheus data source
+   - Click "Import"
+
+3. **View metrics:**
+   - Dashboard auto-refreshes every 5 seconds
+   - All panels show data for the last hour
+   - Adjust time range and refresh rate as needed
+
+**Complete Dashboard Guide:**
+
+See [docs/GRAFANA-DASHBOARD.md](docs/GRAFANA-DASHBOARD.md) for:
+- Detailed explanation of all 10 panels
+- PromQL queries for each metric
+- How to interpret the data
+- Common patterns and what they mean
+- Alerting recommendations
+- Troubleshooting guide
+
+**Quick Summary - What You'll See:**
+- Real-time tool execution rates and errors
+- Cache effectiveness across tools
+- Circuit breaker health status
+- Latency distribution (P50/P95/P99)
+- Retry patterns (which tools are flaky)
+- Top 10 tools by usage with error rates and latency
+
 ### OTEL Collector
 
 Configure via environment variables:

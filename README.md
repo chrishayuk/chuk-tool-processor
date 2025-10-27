@@ -188,7 +188,7 @@ asyncio.run(main())
 |----------|----------------|
 | 📘 [CONFIGURATION.md](docs/CONFIGURATION.md) | **All config knobs & defaults**: ToolProcessor options, timeouts, retry policy, rate limits, circuit breakers, caching, environment variables |
 | 🚨 [ERRORS.md](docs/ERRORS.md) | **Error taxonomy**: All error codes, exception classes, error details structure, handling patterns, retryability guide |
-| 📊 [OBSERVABILITY.md](OBSERVABILITY.md) | **Metrics & tracing**: OpenTelemetry setup, Prometheus metrics, spans reference, PromQL queries |
+| 📊 [OBSERVABILITY.md](docs/OBSERVABILITY.md) | **Metrics & tracing**: OpenTelemetry setup, Prometheus metrics, spans reference, PromQL queries |
 | 🔌 [examples/hello_tool.py](examples/hello_tool.py) | **60-second starter**: Single-file, copy-paste-and-run example |
 | 🎯 [examples/](examples/) | **20+ working examples**: MCP integration, OAuth flows, streaming, production patterns |
 
@@ -200,7 +200,7 @@ asyncio.run(main())
 | 🔌 **Connect to external tools** | MCP integration (HTTP/STDIO/SSE) | [MCP Integration](#5-mcp-integration-external-tools) |
 | 🛡️ **Production deployment** | Timeouts, retries, rate limits, caching | [CONFIGURATION.md](docs/CONFIGURATION.md) |
 | 🔒 **Run untrusted code safely** | Subprocess isolation strategy | [Subprocess Strategy](#using-subprocess-strategy) |
-| 📊 **Monitor and observe** | OpenTelemetry + Prometheus | [OBSERVABILITY.md](OBSERVABILITY.md) |
+| 📊 **Monitor and observe** | OpenTelemetry + Prometheus | [OBSERVABILITY.md](docs/OBSERVABILITY.md) |
 | 🌊 **Stream incremental results** | StreamingTool pattern | [StreamingTool](#streamingtool-real-time-results) |
 | 🚨 **Handle errors reliably** | Error codes & taxonomy | [ERRORS.md](docs/ERRORS.md) |
 
@@ -1173,6 +1173,8 @@ pip install opentelemetry-api opentelemetry-sdk opentelemetry-exporter-otlp prom
 uv pip install chuk-tool-processor --group observability
 ```
 
+> **⚠️ SRE Note**: Observability packages are **optional**. If not installed, all observability calls are no-ops—your tools run normally without tracing/metrics. Zero crashes, zero warnings. Safe to deploy without observability dependencies.
+
 **Quick Start: See Your Tools in Action**
 
 ```python
@@ -1634,10 +1636,13 @@ async def create_secure_processor():
 Check out the [`examples/`](examples/) directory for complete working examples:
 
 ### Getting Started
+- **60-second hello**: `examples/hello_tool.py` - Absolute minimal example (copy-paste-run)
 - **Quick start**: `examples/quickstart_demo.py` - Basic tool registration and execution
 - **Execution strategies**: `examples/execution_strategies_demo.py` - InProcess vs Subprocess
 - **Production wrappers**: `examples/wrappers_demo.py` - Caching, retries, rate limiting
 - **Streaming tools**: `examples/streaming_demo.py` - Real-time incremental results
+- **Streaming tool calls**: `examples/streaming_tool_calls_demo.py` - Handle partial tool calls from streaming LLMs
+- **Schema helper**: `examples/schema_helper_demo.py` - Auto-generate schemas from typed tools (Pydantic → OpenAI/Anthropic/MCP)
 - **Observability**: `examples/observability_demo.py` - OpenTelemetry + Prometheus integration
 
 ### MCP Integration (Real-World)
