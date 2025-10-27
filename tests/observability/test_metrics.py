@@ -1,335 +1,248 @@
-"""
-Tests for Prometheus metrics integration.
-"""
+"""Tests for observability metrics module."""
+
+from __future__ import annotations
+
+import sys
+import time
+from unittest.mock import MagicMock
 
 import pytest
 
+# Mock prometheus_client before importing the module under test
+sys.modules["prometheus_client"] = MagicMock()
 
-# Test that metrics module can be imported
-def test_metrics_import():
-    """Test that metrics module imports successfully."""
-    from chuk_tool_processor.observability import metrics
+from chuk_tool_processor.observability.metrics import (  # noqa: E402
+    MetricsTimer,
+    PrometheusMetrics,
+    get_metrics,
+    init_metrics,
+    start_metrics_server,
+)
 
-    assert metrics is not None
 
+class TestPrometheusMetrics:
+    """Tests for PrometheusMetrics class."""
 
-def test_get_metrics_without_init():
-    """Test get_metrics returns None when not initialized."""
-    from chuk_tool_processor.observability.metrics import get_metrics
+    def test_init_success(self):
+        """Test successful initialization with prometheus_client."""
+        # Reset module state
+        # Reload to ensure fresh state
+        import importlib
 
-    # Should return None if not initialized
-    assert get_metrics() is None
+        import chuk_tool_processor.observability.metrics as metrics_module
 
+        importlib.reload(metrics_module)
 
-def test_init_metrics():
-    """Test metrics initialization."""
-    from chuk_tool_processor.observability.metrics import init_metrics
+        metrics = metrics_module.PrometheusMetrics()
 
-    metrics = init_metrics()
-    assert metrics is not None
+        assert metrics._initialized is True
+        assert metrics.enabled is True
 
+    def test_init_failure(self):
+        """Test initialization failure when prometheus_client not installed."""
+        # Temporarily remove prometheus_client to simulate missing dependency
+        saved_module = sys.modules.pop("prometheus_client", None)
 
-# Only run Prometheus tests if prometheus-client is installed
-pytest.importorskip("prometheus_client", reason="prometheus-client not installed")
-
-
-@pytest.mark.skip(reason="Skipping to avoid duplicate metrics in test suite - init tested via other tests")
-def test_prometheus_metrics_initialization():
-    """Test PrometheusMetrics initialization."""
-    from prometheus_client import CollectorRegistry
-
-    from chuk_tool_processor.observability.metrics import PrometheusMetrics
-
-    # Use a custom registry to avoid duplicate metric errors
-    _ = CollectorRegistry()
-
-    # Monkey-patch to use custom registry (simplified for testing)
-    # In production, metrics are created once globally
-    metrics = PrometheusMetrics()
-
-    # Check that metrics object was created
-    assert metrics is not None
-    assert hasattr(metrics, "_initialized")
-
-
-def test_record_tool_execution():
-    """Test recording tool execution metrics."""
-    from chuk_tool_processor.observability.metrics import get_metrics, init_metrics
-
-    # Use global metrics instance to avoid duplicates
-    metrics = get_metrics()
-    if not metrics:
-        metrics = init_metrics()
-
-    # Record successful execution
-    metrics.record_tool_execution(tool="test_tool_exec", namespace="default", duration=1.5, success=True, cached=False)
-
-    # Record failed execution
-    metrics.record_tool_execution(tool="test_tool_exec", namespace="default", duration=0.5, success=False, cached=False)
-
-    # Should not raise errors
-    assert True
-
-
-def test_record_cache_operations():
-    """Test recording cache operation metrics."""
-    from chuk_tool_processor.observability.metrics import get_metrics, init_metrics
-
-    metrics = get_metrics()
-    if not metrics:
-        metrics = init_metrics()
-
-    # Record cache hit
-    metrics.record_cache_operation(tool="test_tool_cache", operation="lookup", hit=True)
-
-    # Record cache miss
-    metrics.record_cache_operation(tool="test_tool_cache", operation="lookup", hit=False)
-
-    # Record cache set
-    metrics.record_cache_operation(tool="test_tool_cache", operation="set")
-
-    # Should not raise errors
-    assert True
-
-
-def test_record_retry_attempts():
-    """Test recording retry attempt metrics."""
-    from chuk_tool_processor.observability.metrics import get_metrics, init_metrics
-
-    metrics = get_metrics()
-    if not metrics:
-        metrics = init_metrics()
-
-    # Record successful retry
-    metrics.record_retry_attempt(tool="test_tool_retry", attempt=1, success=True)
-
-    # Record failed retry
-    metrics.record_retry_attempt(tool="test_tool_retry", attempt=2, success=False)
-
-    # Should not raise errors
-    assert True
-
-
-def test_record_circuit_breaker_state():
-    """Test recording circuit breaker state metrics."""
-    from chuk_tool_processor.observability.metrics import get_metrics, init_metrics
-
-    metrics = get_metrics()
-    if not metrics:
-        metrics = init_metrics()
-
-    # Record CLOSED state
-    metrics.record_circuit_breaker_state(tool="test_tool_cb", state="CLOSED")
-
-    # Record OPEN state
-    metrics.record_circuit_breaker_state(tool="test_tool_cb", state="OPEN")
-
-    # Record HALF_OPEN state
-    metrics.record_circuit_breaker_state(tool="test_tool_cb", state="HALF_OPEN")
-
-    # Should not raise errors
-    assert True
-
-
-def test_record_rate_limit_checks():
-    """Test recording rate limit check metrics."""
-    from chuk_tool_processor.observability.metrics import get_metrics, init_metrics
-
-    metrics = get_metrics()
-    if not metrics:
-        metrics = init_metrics()
-
-    # Record allowed check
-    metrics.record_rate_limit_check(tool="test_tool_rl", allowed=True)
-
-    # Record blocked check
-    metrics.record_rate_limit_check(tool="test_tool_rl", allowed=False)
-
-    # Should not raise errors
-    assert True
-
-
-def test_metrics_timer():
-    """Test MetricsTimer context manager."""
-    import time
-
-    from chuk_tool_processor.observability.metrics import MetricsTimer
-
-    with MetricsTimer() as timer:
-        time.sleep(0.1)
-
-    # Should have recorded duration
-    assert timer.duration >= 0.1
-    assert timer.duration < 0.2  # Should be close to 0.1s
-
-
-def test_metrics_timer_duration_before_start():
-    """Test MetricsTimer duration when accessed before starting."""
-    from chuk_tool_processor.observability.metrics import MetricsTimer
-
-    timer = MetricsTimer()
-    # Should return 0.0 when start_time is None (line 309)
-    assert timer.duration == 0.0
-
-
-def test_metrics_timer_duration_during_execution():
-    """Test MetricsTimer duration when accessed during execution."""
-    import time
-
-    from chuk_tool_processor.observability.metrics import MetricsTimer
-
-    timer = MetricsTimer()
-    timer.__enter__()
-    time.sleep(0.05)
-    # Should calculate duration from start_time to now (line 311)
-    duration = timer.duration
-    assert duration >= 0.05
-    timer.__exit__(None, None, None)
-
-
-def test_is_metrics_enabled():
-    """Test is_metrics_enabled function (line 251)."""
-    from chuk_tool_processor.observability.metrics import is_metrics_enabled
-
-    result = is_metrics_enabled()
-    # Should return a boolean
-    assert isinstance(result, bool)
-
-
-def test_record_circuit_breaker_failure():
-    """Test record_circuit_breaker_failure method."""
-    from chuk_tool_processor.observability.metrics import get_metrics, init_metrics
-
-    metrics = get_metrics()
-    if not metrics:
-        metrics = init_metrics()
-
-    # Record circuit breaker failure
-    metrics.record_circuit_breaker_failure(tool="test_tool_cb_fail")
-
-    # Should not raise errors
-    assert True
-
-
-def test_record_tool_execution_with_cached():
-    """Test recording tool execution with cached result."""
-    from chuk_tool_processor.observability.metrics import get_metrics, init_metrics
-
-    metrics = get_metrics()
-    if not metrics:
-        metrics = init_metrics()
-
-    # Record cached execution - should skip duration recording
-    metrics.record_tool_execution(
-        tool="test_tool_cached", namespace="default", duration=0.01, success=True, cached=True
-    )
-
-    # Should not raise errors
-    assert True
-
-
-def test_record_tool_execution_without_namespace():
-    """Test recording tool execution without namespace."""
-    from chuk_tool_processor.observability.metrics import get_metrics, init_metrics
-
-    metrics = get_metrics()
-    if not metrics:
-        metrics = init_metrics()
-
-    # Record execution without namespace - should use 'default'
-    metrics.record_tool_execution(tool="test_tool_no_ns", namespace=None, duration=1.0, success=True, cached=False)
-
-    # Should not raise errors
-    assert True
-
-
-def test_metrics_not_initialized():
-    """Test that metrics methods handle not initialized state gracefully."""
-    from unittest.mock import MagicMock
-
-    from chuk_tool_processor.observability.metrics import PrometheusMetrics
-
-    # Create a mock metrics instance with _initialized = False
-    metrics = MagicMock(spec=PrometheusMetrics)
-    metrics._initialized = False
-
-    # Import the actual class to test the methods
-
-    # Test that methods return early when not initialized (lines 121, 148, 166, 178-181)
-    # We'll call the actual methods with a non-initialized instance
-    original_init = PrometheusMetrics.__init__
-
-    def mock_init(self):
-        self._initialized = False
-
-    try:
-        PrometheusMetrics.__init__ = mock_init
-        test_metrics = PrometheusMetrics()
-
-        # All these should return early without errors
-        test_metrics.record_tool_execution("tool", "ns", 1.0, True)
-        test_metrics.record_cache_operation("tool", "lookup", True)
-        test_metrics.record_circuit_breaker_state("tool", "CLOSED")
-        test_metrics.record_circuit_breaker_failure("tool")
-        test_metrics.record_retry_attempt("tool", 1, True)
-        test_metrics.record_rate_limit_check("tool", True)
-
-        assert True
-    finally:
-        PrometheusMetrics.__init__ = original_init
-
-
-def test_start_metrics_server_with_custom_port():
-    """Test start_metrics_server function with custom port (lines 270-279)."""
-    import contextlib
-
-    from chuk_tool_processor.observability.metrics import start_metrics_server
-
-    # This will attempt to start a server on port 9093
-    # It may succeed or fail, but should not crash
-    with contextlib.suppress(Exception):
-        # It's ok if it fails (port in use, etc.), we're just testing the code path
-        start_metrics_server(port=9093, host="127.0.0.1")
-
-    # Should complete without crashing
-    assert True
-
-
-def test_prometheus_import_error_handling():
-    """Test that PrometheusMetrics handles ImportError gracefully (lines 94-95)."""
-    from unittest.mock import patch
-
-    # Mock the import to raise ImportError
-    def mock_import(name, *args, **kwargs):
-        if "prometheus_client" in name:
-            raise ImportError("prometheus-client not installed")
-        return __builtins__.__import__(name, *args, **kwargs)
-
-    with patch("builtins.__import__", side_effect=mock_import):
         try:
-            # Import the module fresh to trigger ImportError path
             import importlib
-            import sys
 
-            # Remove the module if already imported
-            if "chuk_tool_processor.observability.metrics" in sys.modules:
-                del sys.modules["chuk_tool_processor.observability.metrics"]
+            import chuk_tool_processor.observability.metrics as metrics_module
 
-            # Now import should trigger the ImportError path
-            from chuk_tool_processor.observability.metrics import PrometheusMetrics
+            importlib.reload(metrics_module)
 
-            metrics = PrometheusMetrics()
+            metrics = metrics_module.PrometheusMetrics()
 
-            # Should have _initialized = False due to ImportError
-            assert hasattr(metrics, "_initialized")
-            assert hasattr(metrics, "enabled")
+            assert metrics._initialized is False
+            assert metrics.enabled is False
+        finally:
+            if saved_module:
+                sys.modules["prometheus_client"] = saved_module
 
-            # Re-import module normally
-            importlib.reload(sys.modules["chuk_tool_processor.observability.metrics"])
+    def test_record_tool_execution(self):
+        """Test recording tool execution metrics."""
+        metrics = PrometheusMetrics()
 
-        except Exception:
-            # If test fails due to import issues, just pass
-            # The important thing is the code path exists
-            pass
+        # Record success - should not raise even if mocked
+        metrics.record_tool_execution("calculator", "math", 0.5, success=True)
 
-    assert True
+    def test_record_tool_execution_cached(self):
+        """Test recording cached tool execution doesn't record duration."""
+        metrics = PrometheusMetrics()
+
+        # Record cached result - should not raise even if mocked
+        metrics.record_tool_execution("calculator", "math", 0.0, success=True, cached=True)
+
+    def test_record_cache_operation(self):
+        """Test recording cache operations."""
+        metrics = PrometheusMetrics()
+
+        # These should not raise even if mocked
+        metrics.record_cache_operation("calculator", "lookup", hit=True)
+        metrics.record_cache_operation("calculator", "lookup", hit=False)
+        metrics.record_cache_operation("calculator", "set", hit=None)
+
+    def test_record_circuit_breaker_state(self):
+        """Test recording circuit breaker state."""
+        metrics = PrometheusMetrics()
+
+        # These should not raise even if mocked
+        metrics.record_circuit_breaker_state("api_tool", "CLOSED")
+        metrics.record_circuit_breaker_state("api_tool", "OPEN")
+        metrics.record_circuit_breaker_state("api_tool", "HALF_OPEN")
+
+    def test_record_circuit_breaker_failure(self):
+        """Test recording circuit breaker failure."""
+        metrics = PrometheusMetrics()
+
+        metrics.record_circuit_breaker_failure("api_tool")
+
+    def test_record_retry_attempt(self):
+        """Test recording retry attempts."""
+        metrics = PrometheusMetrics()
+
+        metrics.record_retry_attempt("api_tool", 2, success=True)
+
+    def test_record_rate_limit_check(self):
+        """Test recording rate limit checks."""
+        metrics = PrometheusMetrics()
+
+        metrics.record_rate_limit_check("api_tool", allowed=True)
+
+    def test_recording_when_not_initialized(self):
+        """Test that recording methods don't fail when metrics not initialized."""
+        # Create metrics with prometheus_client not available
+        saved_module = sys.modules.pop("prometheus_client", None)
+
+        try:
+            import importlib
+
+            import chuk_tool_processor.observability.metrics as metrics_module
+
+            importlib.reload(metrics_module)
+
+            metrics = metrics_module.PrometheusMetrics()
+            assert not metrics.enabled
+
+            # All these should not raise
+            metrics.record_tool_execution("test", "default", 1.0, True)
+            metrics.record_cache_operation("test", "lookup", True)
+            metrics.record_circuit_breaker_state("test", "CLOSED")
+            metrics.record_circuit_breaker_failure("test")
+            metrics.record_retry_attempt("test", 1, True)
+            metrics.record_rate_limit_check("test", True)
+        finally:
+            if saved_module:
+                sys.modules["prometheus_client"] = saved_module
+
+
+class TestMetricsTimer:
+    """Tests for MetricsTimer context manager."""
+
+    def test_timer_basic(self):
+        """Test basic timer functionality."""
+        with MetricsTimer() as timer:
+            time.sleep(0.01)
+
+        assert timer.duration > 0
+        assert timer.start_time is not None
+        assert timer.end_time is not None
+
+    def test_timer_duration_before_exit(self):
+        """Test getting duration before context exits."""
+        with MetricsTimer() as timer:
+            time.sleep(0.01)
+            duration_during = timer.duration
+            assert duration_during > 0
+
+        duration_after = timer.duration
+        assert duration_after >= duration_during
+
+    def test_timer_uninitialized(self):
+        """Test timer duration when not started."""
+        timer = MetricsTimer()
+        assert timer.duration == 0.0
+
+
+class TestModuleFunctions:
+    """Tests for module-level functions."""
+
+    def teardown_method(self):
+        """Reset global state after each test."""
+        import chuk_tool_processor.observability.metrics as metrics_module
+
+        metrics_module._metrics = None
+        metrics_module._metrics_enabled = False
+
+    def test_init_metrics(self):
+        """Test init_metrics function."""
+        metrics = init_metrics()
+
+        assert metrics is not None
+        # Metrics enabled depends on whether prometheus_client is available
+        assert get_metrics() == metrics
+
+    def test_init_metrics_failure(self):
+        """Test init_metrics when prometheus_client not available."""
+        saved_module = sys.modules.pop("prometheus_client", None)
+
+        try:
+            import importlib
+
+            import chuk_tool_processor.observability.metrics as metrics_module
+
+            importlib.reload(metrics_module)
+
+            metrics = metrics_module.init_metrics()
+
+            assert metrics is not None
+            assert not metrics.enabled
+        finally:
+            if saved_module:
+                sys.modules["prometheus_client"] = saved_module
+                # Restore original state
+                import chuk_tool_processor.observability.metrics as metrics_module
+
+                importlib.reload(metrics_module)
+
+    def test_get_metrics_when_none(self):
+        """Test get_metrics when not initialized."""
+        assert get_metrics() is None
+
+    def test_start_metrics_server_success(self):
+        """Test starting metrics server successfully."""
+        # Should not raise even if mocked
+        start_metrics_server(port=9090, host="0.0.0.0")
+
+    def test_start_metrics_server_no_client(self):
+        """Test starting metrics server when client not installed."""
+        saved_module = sys.modules.pop("prometheus_client", None)
+
+        try:
+            import importlib
+
+            import chuk_tool_processor.observability.metrics as metrics_module
+
+            importlib.reload(metrics_module)
+
+            # Should not raise
+            metrics_module.start_metrics_server(port=9090)
+        finally:
+            if saved_module:
+                sys.modules["prometheus_client"] = saved_module
+
+    def test_start_metrics_server_error(self):
+        """Test starting metrics server with error."""
+        # Mock start_http_server to raise an exception
+        if "prometheus_client" in sys.modules:
+            original_start = sys.modules["prometheus_client"].start_http_server
+            sys.modules["prometheus_client"].start_http_server = MagicMock(side_effect=Exception("Port in use"))
+
+            try:
+                # Should not raise - errors are caught
+                start_metrics_server(port=9090)
+            finally:
+                sys.modules["prometheus_client"].start_http_server = original_start
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

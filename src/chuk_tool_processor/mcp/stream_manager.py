@@ -176,17 +176,24 @@ class StreamManager:
             for idx, server_name in enumerate(servers):
                 try:
                     if transport_type == "stdio":
-                        params = await load_config(config_file, server_name)
+                        params, server_timeout = await load_config(config_file, server_name)
+                        # Use per-server timeout if specified, otherwise use global default
+                        effective_timeout = server_timeout if server_timeout is not None else default_timeout
+                        logger.info(
+                            f"Server '{server_name}' using timeout: {effective_timeout}s (per-server: {server_timeout}, default: {default_timeout})"
+                        )
                         # Use initialization_timeout for connection_timeout since subprocess
                         # launch can take time (e.g., uvx downloading packages)
                         transport: MCPBaseTransport = StdioTransport(
-                            params, connection_timeout=initialization_timeout, default_timeout=default_timeout
+                            params, connection_timeout=initialization_timeout, default_timeout=effective_timeout
                         )
                     elif transport_type == "sse":
                         logger.debug(
                             "Using SSE transport in initialize() - consider using initialize_with_sse() instead"
                         )
-                        params = await load_config(config_file, server_name)
+                        params, server_timeout = await load_config(config_file, server_name)
+                        # Use per-server timeout if specified, otherwise use global default
+                        effective_timeout = server_timeout if server_timeout is not None else default_timeout
 
                         if isinstance(params, dict) and "url" in params:
                             sse_url = params["url"]
@@ -199,7 +206,7 @@ class StreamManager:
                             logger.debug("No URL configured for SSE transport, using default: %s", sse_url)
 
                         # Build SSE transport with optional headers
-                        transport_params = {"url": sse_url, "api_key": api_key, "default_timeout": default_timeout}
+                        transport_params = {"url": sse_url, "api_key": api_key, "default_timeout": effective_timeout}
                         if headers:
                             transport_params["headers"] = headers
 
@@ -209,7 +216,9 @@ class StreamManager:
                         logger.debug(
                             "Using HTTP Streamable transport in initialize() - consider using initialize_with_http_streamable() instead"
                         )
-                        params = await load_config(config_file, server_name)
+                        params, server_timeout = await load_config(config_file, server_name)
+                        # Use per-server timeout if specified, otherwise use global default
+                        effective_timeout = server_timeout if server_timeout is not None else default_timeout
 
                         if isinstance(params, dict) and "url" in params:
                             http_url = params["url"]
@@ -227,7 +236,7 @@ class StreamManager:
                         transport_params = {
                             "url": http_url,
                             "api_key": api_key,
-                            "default_timeout": default_timeout,
+                            "default_timeout": effective_timeout,
                             "session_id": session_id,
                         }
                         # Note: headers not added until HTTPStreamableTransport supports them

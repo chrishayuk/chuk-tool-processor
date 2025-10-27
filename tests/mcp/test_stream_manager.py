@@ -519,7 +519,7 @@ class TestStreamManager:
             patch("chuk_tool_processor.mcp.stream_manager.load_config") as mock_load,
             patch("chuk_tool_processor.mcp.stream_manager.SSETransport") as mock_sse,
         ):
-            mock_load.return_value = {"url": "http://test.com"}
+            mock_load.return_value = ({"url": "http://test.com"}, None)
             mock_transport = AsyncMock(spec=MCPBaseTransport)
             mock_transport.initialize = AsyncMock(return_value=True)
             mock_transport.get_tools = AsyncMock(return_value=[])
@@ -539,7 +539,7 @@ class TestStreamManager:
             patch("chuk_tool_processor.mcp.stream_manager.load_config") as mock_load,
             patch("chuk_tool_processor.mcp.stream_manager.HTTPStreamableTransport") as mock_http,
         ):
-            mock_load.return_value = {"url": "http://test.com"}
+            mock_load.return_value = ({"url": "http://test.com"}, None)
             mock_transport = AsyncMock(spec=MCPBaseTransport)
             mock_transport.initialize = AsyncMock(return_value=True)
             mock_transport.get_tools = AsyncMock(return_value=[])
@@ -558,7 +558,7 @@ class TestStreamManager:
             patch("chuk_tool_processor.mcp.stream_manager.load_config") as mock_load,
             patch("chuk_tool_processor.mcp.stream_manager.SSETransport") as mock_sse,
         ):
-            mock_load.return_value = {"url": "http://test.com", "headers": {"Auth": "Bearer token"}}
+            mock_load.return_value = ({"url": "http://test.com", "headers": {"Auth": "Bearer token"}}, None)
             mock_transport = AsyncMock(spec=MCPBaseTransport)
             mock_transport.initialize = AsyncMock(return_value=True)
             mock_transport.get_tools = AsyncMock(return_value=[])
@@ -580,11 +580,14 @@ class TestStreamManager:
             patch("chuk_tool_processor.mcp.stream_manager.load_config") as mock_load,
             patch("chuk_tool_processor.mcp.stream_manager.HTTPStreamableTransport") as mock_http,
         ):
-            mock_load.return_value = {
-                "url": "http://test.com",
-                "headers": {"Auth": "Bearer token"},
-                "session_id": "test-session",
-            }
+            mock_load.return_value = (
+                {
+                    "url": "http://test.com",
+                    "headers": {"Auth": "Bearer token"},
+                    "session_id": "test-session",
+                },
+                None,
+            )
             mock_transport = AsyncMock(spec=MCPBaseTransport)
             mock_transport.initialize = AsyncMock(return_value=True)
             mock_transport.get_tools = AsyncMock(return_value=[])
@@ -605,7 +608,7 @@ class TestStreamManager:
             patch("chuk_tool_processor.mcp.stream_manager.load_config") as mock_load,
             patch("chuk_tool_processor.mcp.stream_manager.SSETransport") as mock_sse,
         ):
-            mock_load.return_value = "not_a_dict"  # Invalid config
+            mock_load.return_value = ("not_a_dict", None)  # Invalid config
             mock_transport = AsyncMock(spec=MCPBaseTransport)
             mock_transport.initialize = AsyncMock(return_value=True)
             mock_transport.get_tools = AsyncMock(return_value=[])
@@ -626,7 +629,7 @@ class TestStreamManager:
             patch("chuk_tool_processor.mcp.stream_manager.load_config") as mock_load,
             patch("chuk_tool_processor.mcp.stream_manager.HTTPStreamableTransport") as mock_http,
         ):
-            mock_load.return_value = "not_a_dict"
+            mock_load.return_value = ("not_a_dict", None)
             mock_transport = AsyncMock(spec=MCPBaseTransport)
             mock_transport.initialize = AsyncMock(return_value=True)
             mock_transport.get_tools = AsyncMock(return_value=[])
