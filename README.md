@@ -84,6 +84,25 @@ CHUK Tool Processor uses a **composable stack architecture**:
 
 Each layer is **optional** and **configurable**. Mix and match what you need.
 
+## Compatibility Matrix
+
+| Component | Supported Versions | Notes |
+|-----------|-------------------|-------|
+| **Python** | 3.11, 3.12, 3.13 | Python 3.11+ required |
+| **Operating Systems** | macOS, Linux, Windows | All platforms fully supported |
+| **LLM Providers** | OpenAI, Anthropic, Local models | Any LLM that outputs tool calls |
+| **MCP Transports** | HTTP Streamable, STDIO, SSE | All MCP 1.0 transports |
+| **MCP Servers** | Notion, SQLite, Atlassian, Echo, Custom | Any MCP-compliant server |
+
+**Tested Configurations:**
+- ✅ macOS 14+ (Apple Silicon & Intel)
+- ✅ Ubuntu 20.04+ / Debian 11+
+- ✅ Windows 10+ (native & WSL2)
+- ✅ Python 3.11.0+, 3.12.0+, 3.13.0+
+- ✅ OpenAI GPT-4, GPT-4 Turbo
+- ✅ Anthropic Claude 3 (Opus, Sonnet, Haiku)
+- ✅ Local models (Ollama, LM Studio)
+
 ## Quick Start
 
 ### Installation
@@ -102,6 +121,21 @@ git clone https://github.com/chrishayuk/chuk-tool-processor.git
 cd chuk-tool-processor
 uv pip install -e .
 ```
+
+## 60-Second Quick Start
+
+**Absolutely minimal example** → See `examples/hello_tool.py`:
+
+```bash
+python examples/hello_tool.py
+```
+
+Single file that demonstrates:
+- Registering a tool
+- Parsing OpenAI & Anthropic formats
+- Executing and getting results
+
+Takes 60 seconds to understand, 3 minutes to master.
 
 ### 3-Minute Example
 
@@ -148,16 +182,27 @@ asyncio.run(main())
 > **Why not just use OpenAI tool calls?**
 > OpenAI's function calling is great for parsing, but you still need: parsing multiple formats (Anthropic XML, etc.), timeouts, retries, rate limits, caching, subprocess isolation, and connecting to external MCP servers. CHUK Tool Processor **is** that missing middle layer.
 
+## Documentation Quick Reference
+
+| Document | What It Covers |
+|----------|----------------|
+| 📘 [CONFIGURATION.md](docs/CONFIGURATION.md) | **All config knobs & defaults**: ToolProcessor options, timeouts, retry policy, rate limits, circuit breakers, caching, environment variables |
+| 🚨 [ERRORS.md](docs/ERRORS.md) | **Error taxonomy**: All error codes, exception classes, error details structure, handling patterns, retryability guide |
+| 📊 [OBSERVABILITY.md](OBSERVABILITY.md) | **Metrics & tracing**: OpenTelemetry setup, Prometheus metrics, spans reference, PromQL queries |
+| 🔌 [examples/hello_tool.py](examples/hello_tool.py) | **60-second starter**: Single-file, copy-paste-and-run example |
+| 🎯 [examples/](examples/) | **20+ working examples**: MCP integration, OAuth flows, streaming, production patterns |
+
 ## Choose Your Path
 
 | Your Goal | What You Need | Where to Look |
 |-----------|---------------|---------------|
-| ☕ **Just process LLM tool calls** | Basic tool registration + processor | [3-Minute Example](#3-minute-example) |
+| ☕ **Just process LLM tool calls** | Basic tool registration + processor | [60-Second Quick Start](#60-second-quick-start) |
 | 🔌 **Connect to external tools** | MCP integration (HTTP/STDIO/SSE) | [MCP Integration](#5-mcp-integration-external-tools) |
-| 🛡️ **Production deployment** | Timeouts, retries, rate limits, caching | [Production Configuration](#using-the-processor) |
+| 🛡️ **Production deployment** | Timeouts, retries, rate limits, caching | [CONFIGURATION.md](docs/CONFIGURATION.md) |
 | 🔒 **Run untrusted code safely** | Subprocess isolation strategy | [Subprocess Strategy](#using-subprocess-strategy) |
-| 📊 **Monitor and observe** | OpenTelemetry + Prometheus | [Observability](#opentelemetry--prometheus-drop-in-observability) |
+| 📊 **Monitor and observe** | OpenTelemetry + Prometheus | [OBSERVABILITY.md](OBSERVABILITY.md) |
 | 🌊 **Stream incremental results** | StreamingTool pattern | [StreamingTool](#streamingtool-real-time-results) |
+| 🚨 **Handle errors reliably** | Error codes & taxonomy | [ERRORS.md](docs/ERRORS.md) |
 
 ### Real-World Quick Start
 
@@ -1072,23 +1117,28 @@ asyncio.run(main())
 
 #### OpenTelemetry & Prometheus (Drop-in Observability)
 
-**Why Telemetry Matters**: In production, you need to know *what* your tools are doing, *how long* they take, *when* they fail, and *why*. CHUK Tool Processor provides **enterprise-grade telemetry** that operations teams expect—with zero manual instrumentation.
-
-**One function call. Full observability.**
+**3-Line Setup:**
 
 ```python
 from chuk_tool_processor.observability import setup_observability
 
-# Enable everything
 setup_observability(
     service_name="my-tool-service",
-    enable_tracing=True,    # OpenTelemetry distributed tracing
-    enable_metrics=True,    # Prometheus metrics endpoint
-    metrics_port=9090       # HTTP endpoint at :9090/metrics
+    enable_tracing=True,     # → OpenTelemetry traces
+    enable_metrics=True,     # → Prometheus metrics at :9090/metrics
+    metrics_port=9090
 )
-
-# Every tool execution is now automatically traced and metered!
+# That's it! Every tool execution is now automatically traced and metered.
 ```
+
+**What you get automatically:**
+- ✅ Distributed traces (Jaeger, Zipkin, any OTLP collector)
+- ✅ Prometheus metrics (error rate, latency P50/P95/P99, cache hit rate)
+- ✅ Circuit breaker state monitoring
+- ✅ Retry attempt tracking
+- ✅ Zero code changes to your tools
+
+**Why Telemetry Matters**: In production, you need to know *what* your tools are doing, *how long* they take, *when* they fail, and *why*. CHUK Tool Processor provides **enterprise-grade telemetry** that operations teams expect—with zero manual instrumentation.
 
 **What You Get (Automatically)**
 
