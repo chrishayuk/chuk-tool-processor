@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-import sys
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 from chuk_tool_processor.observability.tracing import (
     NoOpTracer,
     add_span_event,
-    get_tracer,
     init_tracer,
     is_tracing_enabled,
     set_span_error,
