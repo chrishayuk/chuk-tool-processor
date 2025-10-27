@@ -1,4 +1,4 @@
-.PHONY: clean clean-pyc clean-build clean-test clean-all test run build publish help install dev-install
+.PHONY: clean clean-pyc clean-build clean-test clean-all test run build publish help install dev-install version bump-patch bump-minor bump-major release
 
 # Default target
 help:
@@ -20,7 +20,14 @@ help:
 	@echo "  check          - Run all checks (lint, typecheck, security, test)"
 	@echo "  run            - Run the server"
 	@echo "  build          - Build the project"
-	@echo "  publish        - Build and publish to PyPI"
+	@echo ""
+	@echo "Release targets:"
+	@echo "  version        - Show current version"
+	@echo "  bump-patch     - Bump patch version (0.0.X)"
+	@echo "  bump-minor     - Bump minor version (0.X.0)"
+	@echo "  bump-major     - Bump major version (X.0.0)"
+	@echo "  publish        - Create tag and trigger automated release"
+	@echo "  release        - Alias for publish"
 
 # Basic clean - Python bytecode and common artifacts
 clean: clean-pyc clean-build
@@ -142,32 +149,121 @@ build: clean-build
 	fi
 	@echo "Build complete. Distributions are in the 'dist' folder."
 
-# Publish the package to PyPI using twine
-publish: build
-	@echo "Publishing package..."
-	@if [ ! -d "dist" ] || [ -z "$$(ls -A dist 2>/dev/null)" ]; then \
-		echo "Error: No distribution files found. Run 'make build' first."; \
-		exit 1; \
-	fi
-	@last_build=$$(ls -t dist/*.tar.gz dist/*.whl 2>/dev/null | head -n 2); \
-	if [ -z "$$last_build" ]; then \
-		echo "Error: No valid distribution files found."; \
-		exit 1; \
-	fi; \
-	echo "Uploading: $$last_build"; \
-	twine upload $$last_build
-	@echo "Publish complete."
+# ============================================================================
+# Version Management and Release Targets
+# ============================================================================
 
-# Publish to test PyPI
-publish-test: build
-	@echo "Publishing to test PyPI..."
-	@last_build=$$(ls -t dist/*.tar.gz dist/*.whl 2>/dev/null | head -n 2); \
-	if [ -z "$$last_build" ]; then \
-		echo "Error: No valid distribution files found."; \
+# Show current version
+version:
+	@version=$$(grep '^version = ' pyproject.toml | cut -d'"' -f2); \
+	echo "Current version: $$version"
+
+# Bump patch version (0.0.X)
+bump-patch:
+	@echo "Bumping patch version..."
+	@current=$$(grep '^version = ' pyproject.toml | cut -d'"' -f2); \
+	major=$$(echo $$current | cut -d. -f1); \
+	minor=$$(echo $$current | cut -d. -f2); \
+	patch=$$(echo $$current | cut -d. -f3); \
+	new_patch=$$(($$patch + 1)); \
+	new_version="$$major.$$minor.$$new_patch"; \
+	sed -i.bak "s/^version = \"$$current\"/version = \"$$new_version\"/" pyproject.toml && rm pyproject.toml.bak; \
+	echo "Version bumped: $$current -> $$new_version"; \
+	echo "Review the change, then run 'make publish' to release"
+
+# Bump minor version (0.X.0)
+bump-minor:
+	@echo "Bumping minor version..."
+	@current=$$(grep '^version = ' pyproject.toml | cut -d'"' -f2); \
+	major=$$(echo $$current | cut -d. -f1); \
+	minor=$$(echo $$current | cut -d. -f2); \
+	new_minor=$$(($$minor + 1)); \
+	new_version="$$major.$$new_minor.0"; \
+	sed -i.bak "s/^version = \"$$current\"/version = \"$$new_version\"/" pyproject.toml && rm pyproject.toml.bak; \
+	echo "Version bumped: $$current -> $$new_version"; \
+	echo "Review the change, then run 'make publish' to release"
+
+# Bump major version (X.0.0)
+bump-major:
+	@echo "Bumping major version..."
+	@current=$$(grep '^version = ' pyproject.toml | cut -d'"' -f2); \
+	major=$$(echo $$current | cut -d. -f1); \
+	new_major=$$(($$major + 1)); \
+	new_version="$$new_major.0.0"; \
+	sed -i.bak "s/^version = \"$$current\"/version = \"$$new_version\"/" pyproject.toml && rm pyproject.toml.bak; \
+	echo "Version bumped: $$current -> $$new_version"; \
+	echo "Review the change, then run 'make publish' to release"
+
+# Automated release - creates tag and pushes to trigger GitHub Actions
+publish:
+	@echo "Starting automated release process..."
+	@echo ""
+	@# Get current version
+	@version=$$(grep '^version = ' pyproject.toml | cut -d'"' -f2); \
+	tag="v$$version"; \
+	echo "Version: $$version"; \
+	echo "Tag: $$tag"; \
+	echo ""; \
+	\
+	echo "Pre-flight checks:"; \
+	echo "=================="; \
+	\
+	if git diff --quiet && git diff --cached --quiet; then \
+		echo "✓ Working directory is clean"; \
+	else \
+		echo "✗ Working directory has uncommitted changes"; \
+		echo ""; \
+		git status --short; \
+		echo ""; \
+		echo "Please commit or stash your changes before releasing."; \
 		exit 1; \
 	fi; \
-	echo "Uploading to test PyPI: $$last_build"; \
-	twine upload --repository testpypi $$last_build
+	\
+	if git tag -l | grep -q "^$$tag$$"; then \
+		echo "✗ Tag $$tag already exists"; \
+		echo ""; \
+		echo "To delete and recreate:"; \
+		echo "  git tag -d $$tag"; \
+		echo "  git push origin :refs/tags/$$tag"; \
+		exit 1; \
+	else \
+		echo "✓ Tag $$tag does not exist yet"; \
+	fi; \
+	\
+	current_branch=$$(git rev-parse --abbrev-ref HEAD); \
+	echo "✓ Current branch: $$current_branch"; \
+	echo ""; \
+	\
+	echo "This will:"; \
+	echo "  1. Create and push tag $$tag"; \
+	echo "  2. Trigger GitHub Actions to:"; \
+	echo "     - Create a GitHub release with changelog"; \
+	echo "     - Run tests on all platforms"; \
+	echo "     - Build and publish to PyPI"; \
+	echo ""; \
+	read -p "Continue? (y/N) " -n 1 -r; \
+	echo ""; \
+	if [[ ! $$REPLY =~ ^[Yy]$$ ]]; then \
+		echo "Aborted."; \
+		exit 1; \
+	fi; \
+	\
+	echo ""; \
+	echo "Creating and pushing tag..."; \
+	git tag -a "$$tag" -m "Release $$tag" && \
+	git push origin "$$tag" && \
+	echo "" && \
+	echo "✓ Tag pushed successfully!" && \
+	echo "" && \
+	repo_path=$$(git config --get remote.origin.url | sed 's|^https://github.com/||;s|^git@github.com:||;s|\.git$$||'); \
+	echo "GitHub Actions workflows triggered:" && \
+	echo "  - Release creation: https://github.com/$$repo_path/actions/workflows/release.yml" && \
+	echo "  - PyPI publishing: https://github.com/$$repo_path/actions/workflows/publish.yml" && \
+	echo "" && \
+	echo "Monitor progress at: https://github.com/$$repo_path/actions"
+
+# Alias for publish
+release: publish
 
 # Check code quality
 lint:

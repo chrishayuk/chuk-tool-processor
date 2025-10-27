@@ -1668,6 +1668,54 @@ A: InProcess is faster (same process), Subprocess is safer (isolated process). U
   - Use directly if you need protocol-level control
   - Use chuk-tool-processor if you want high-level tool execution
 
+## Development & Publishing
+
+### For Contributors
+
+Development setup:
+
+```bash
+# Clone repository
+git clone https://github.com/chrishayuk/chuk-tool-processor.git
+cd chuk-tool-processor
+
+# Install development dependencies
+uv sync --dev
+
+# Run tests
+make test
+
+# Run all quality checks
+make check
+```
+
+### For Maintainers: Publishing Releases
+
+The project uses **fully automated CI/CD** for releases. Publishing is as simple as:
+
+```bash
+# 1. Bump version
+make bump-patch    # or bump-minor, bump-major
+
+# 2. Commit version change
+git add pyproject.toml
+git commit -m "version X.Y.Z"
+git push
+
+# 3. Create release (automated)
+make publish
+```
+
+This will:
+- Create and push a git tag
+- Trigger GitHub Actions to create a release with auto-generated changelog
+- Run tests across all platforms and Python versions
+- Build and publish to PyPI automatically
+
+For detailed release documentation, see:
+- **[RELEASING.md](RELEASING.md)** - Complete release process guide
+- **[docs/CI-CD.md](docs/CI-CD.md)** - Full CI/CD pipeline documentation
+
 ## Contributing & Support
 
 - **GitHub**: [chrishayuk/chuk-tool-processor](https://github.com/chrishayuk/chuk-tool-processor)
