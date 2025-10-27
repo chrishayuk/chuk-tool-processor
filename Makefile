@@ -255,11 +255,12 @@ publish:
 	echo "" && \
 	echo "✓ Tag pushed successfully!" && \
 	echo "" && \
+	repo_path=$$(git config --get remote.origin.url | sed 's|^https://github.com/||;s|^git@github.com:||;s|\.git$$||'); \
 	echo "GitHub Actions workflows triggered:" && \
-	echo "  - Release creation: https://github.com/$$(git config --get remote.origin.url | sed 's/.*://;s/.git$$//')/actions/workflows/release.yml" && \
-	echo "  - PyPI publishing: https://github.com/$$(git config --get remote.origin.url | sed 's/.*://;s/.git$$//')/actions/workflows/publish.yml" && \
+	echo "  - Release creation: https://github.com/$$repo_path/actions/workflows/release.yml" && \
+	echo "  - PyPI publishing: https://github.com/$$repo_path/actions/workflows/publish.yml" && \
 	echo "" && \
-	echo "Monitor progress at: https://github.com/$$(git config --get remote.origin.url | sed 's/.*://;s/.git$$//')/actions"
+	echo "Monitor progress at: https://github.com/$$repo_path/actions"
 
 # Alias for publish
 release: publish
