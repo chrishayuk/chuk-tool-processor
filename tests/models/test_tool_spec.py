@@ -219,6 +219,160 @@ class TestToolSpec:
         assert spec.max_retries == 3
         assert "external" in spec.tags
 
+    def test_to_json_schema(self):
+        """Test to_json_schema method (line 166)."""
+        spec = ToolSpec(
+            name="test",
+            description="Test tool",
+            parameters={
+                "type": "object",
+                "properties": {"arg": {"type": "string"}},
+            },
+        )
+
+        json_schema = spec.to_json_schema()
+        assert json_schema == spec.parameters
+        assert "properties" in json_schema
+
+    def test_to_dict(self):
+        """Test to_dict method (line 175)."""
+        spec = ToolSpec(
+            name="test",
+            description="Test tool",
+            parameters={"type": "object", "properties": {}},
+            version="1.2.3",
+        )
+
+        dict_export = spec.to_dict()
+        assert dict_export["name"] == "test"
+        assert dict_export["version"] == "1.2.3"
+        assert "parameters" in dict_export
+
+    def test_from_validated_tool_non_validated_tool_raises_error(self):
+        """Test from_validated_tool raises TypeError for non-ValidatedTool (line 201)."""
+        import pytest
+
+        class NotAValidatedTool:
+            """Not a ValidatedTool."""
+
+            pass
+
+        with pytest.raises(TypeError, match="must be a ValidatedTool subclass"):
+            ToolSpec.from_validated_tool(NotAValidatedTool)
+
+    def test_from_validated_tool_with_cacheable_attribute(self):
+        """Test from_validated_tool detects _cacheable attribute (line 216)."""
+
+        class CacheableTool(ValidatedTool):
+            """A cacheable tool."""
+
+            _cacheable = True
+
+            class Arguments(BaseModel):
+                x: int
+
+            class Result(BaseModel):
+                result: int
+
+            async def _execute(self, x: int) -> Result:
+                return self.Result(result=x)
+
+        spec = ToolSpec.from_validated_tool(CacheableTool)
+        assert ToolCapability.CACHEABLE in spec.capabilities
+
+    def test_from_validated_tool_idempotent_detection(self):
+        """Test from_validated_tool detects idempotent tools (line 220)."""
+
+        class GetTool(ValidatedTool):
+            """Get data tool."""
+
+            class Arguments(BaseModel):
+                id: str
+
+            class Result(BaseModel):
+                data: str
+
+            async def _execute(self, id: str) -> Result:
+                return self.Result(data=f"data-{id}")
+
+        spec = ToolSpec.from_validated_tool(GetTool)
+        assert ToolCapability.IDEMPOTENT in spec.capabilities
+
+    def test_from_validated_tool_streaming_detection(self):
+        """Test from_validated_tool detects streaming tools (line 226)."""
+        from chuk_tool_processor.models.streaming_tool import StreamingTool
+
+        class MyStreamingTool(StreamingTool):
+            """A streaming tool."""
+
+            class Arguments(BaseModel):
+                query: str
+
+            class Result(BaseModel):
+                chunk: str
+
+            async def _stream(self, query: str):
+                yield self.Result(chunk="chunk1")
+
+        spec = ToolSpec.from_validated_tool(MyStreamingTool)
+        assert ToolCapability.STREAMING in spec.capabilities
+
+    def test_from_function_with_self_parameter(self):
+        """Test from_function skips 'self' parameter (line 271)."""
+
+        class MyClass:
+            def my_method(self, arg: str) -> str:
+                """A method with self."""
+                return arg
+
+        obj = MyClass()
+        spec = ToolSpec.from_function(obj.my_method)
+
+        # self should not be in parameters
+        assert "self" not in spec.parameters["properties"]
+        assert "arg" in spec.parameters["properties"]
+
+    def test_from_function_class_method_skips_self(self):
+        """Test from_function properly skips self in class methods."""
+
+        class TestClass:
+            def instance_method(self, x: int, y: str) -> None:
+                """Instance method."""
+                pass
+
+        # When we get the method from an instance, it still has self in signature
+        spec = ToolSpec.from_function(TestClass.instance_method)
+
+        # Verify self is skipped
+        props = spec.parameters["properties"]
+        assert "self" not in props
+        assert "x" in props
+        assert "y" in props
+
+    def test_from_function_with_various_types(self):
+        """Test from_function with various type annotations (lines 284-291)."""
+
+        def typed_function(
+            s: str,
+            i: int,
+            f: float,
+            b: bool,
+            lst: list,
+            d: dict,
+        ) -> str:
+            """Function with various types."""
+            return "result"
+
+        spec = ToolSpec.from_function(typed_function)
+
+        props = spec.parameters["properties"]
+        assert props["s"]["type"] == "string"
+        assert props["i"]["type"] == "integer"
+        assert props["f"]["type"] == "number"
+        assert props["b"]["type"] == "boolean"
+        assert props["lst"]["type"] == "array"
+        assert props["d"]["type"] == "object"
+
 
 class TestToolCapability:
     """Tests for ToolCapability enum."""

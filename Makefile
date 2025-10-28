@@ -1,4 +1,4 @@
-.PHONY: clean clean-pyc clean-build clean-test clean-all test run build publish help install dev-install version bump-patch bump-minor bump-major release
+.PHONY: clean clean-pyc clean-build clean-test clean-all test run build publish publish-test publish-manual help install dev-install version bump-patch bump-minor bump-major release
 
 # Default target
 help:
@@ -27,6 +27,8 @@ help:
 	@echo "  bump-minor     - Bump minor version (0.X.0)"
 	@echo "  bump-major     - Bump major version (X.0.0)"
 	@echo "  publish        - Create tag and trigger automated release"
+	@echo "  publish-test   - Upload to TestPyPI for testing"
+	@echo "  publish-manual - Manually upload to PyPI (requires PYPI_TOKEN)"
 	@echo "  release        - Alias for publish"
 
 # Basic clean - Python bytecode and common artifacts
@@ -264,6 +266,101 @@ publish:
 
 # Alias for publish
 release: publish
+
+# ============================================================================
+# PyPI Publishing Targets
+# ============================================================================
+
+# Upload to TestPyPI for testing
+publish-test: build
+	@echo "Publishing to TestPyPI..."
+	@echo ""
+	@version=$$(grep '^version = ' pyproject.toml | cut -d'"' -f2); \
+	echo "Version: $$version"; \
+	echo ""; \
+	if command -v uv >/dev/null 2>&1; then \
+		uv run twine upload --repository testpypi dist/*; \
+	else \
+		python3 -m twine upload --repository testpypi dist/*; \
+	fi; \
+	echo ""; \
+	echo "✓ Uploaded to TestPyPI!"; \
+	echo ""; \
+	echo "Install with:"; \
+	echo "  pip install --index-url https://test.pypi.org/simple/ chuk-tool-processor==$$version"
+
+# Manual publish to PyPI (requires PYPI_TOKEN environment variable)
+publish-manual: build
+	@echo "Manual PyPI Publishing"
+	@echo "======================"
+	@echo ""
+	@version=$$(grep '^version = ' pyproject.toml | cut -d'"' -f2); \
+	tag="v$$version"; \
+	echo "Version: $$version"; \
+	echo "Tag: $$tag"; \
+	echo ""; \
+	\
+	echo "Pre-flight checks:"; \
+	echo "=================="; \
+	\
+	if git diff --quiet && git diff --cached --quiet; then \
+		echo "✓ Working directory is clean"; \
+	else \
+		echo "✗ Working directory has uncommitted changes"; \
+		echo ""; \
+		git status --short; \
+		echo ""; \
+		echo "Please commit or stash your changes before publishing."; \
+		exit 1; \
+	fi; \
+	\
+	if git tag -l | grep -q "^$$tag$$"; then \
+		echo "✓ Tag $$tag exists"; \
+	else \
+		echo "⚠ Tag $$tag does not exist yet"; \
+		echo ""; \
+		read -p "Create tag now? (y/N) " -n 1 -r; \
+		echo ""; \
+		if [[ $$REPLY =~ ^[Yy]$$ ]]; then \
+			git tag -a "$$tag" -m "Release $$tag"; \
+			echo "✓ Tag created locally"; \
+		else \
+			echo "Continuing without creating tag..."; \
+		fi; \
+	fi; \
+	\
+	echo ""; \
+	echo "This will upload version $$version to PyPI"; \
+	echo ""; \
+	read -p "Continue? (y/N) " -n 1 -r; \
+	echo ""; \
+	if [[ ! $$REPLY =~ ^[Yy]$$ ]]; then \
+		echo "Aborted."; \
+		exit 1; \
+	fi; \
+	\
+	echo ""; \
+	echo "Uploading to PyPI..."; \
+	if [ -n "$$PYPI_TOKEN" ]; then \
+		if command -v uv >/dev/null 2>&1; then \
+			uv run twine upload --username __token__ --password "$$PYPI_TOKEN" dist/*; \
+		else \
+			python3 -m twine upload --username __token__ --password "$$PYPI_TOKEN" dist/*; \
+		fi; \
+	else \
+		if command -v uv >/dev/null 2>&1; then \
+			uv run twine upload dist/*; \
+		else \
+			python3 -m twine upload dist/*; \
+		fi; \
+	fi; \
+	echo ""; \
+	echo "✓ Published to PyPI!"; \
+	echo ""; \
+	if git tag -l | grep -q "^$$tag$$"; then \
+		echo "Push tag with: git push origin $$tag"; \
+	fi; \
+	echo "Install with: pip install chuk-tool-processor==$$version"
 
 # Check code quality
 lint:

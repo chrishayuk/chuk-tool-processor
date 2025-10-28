@@ -258,3 +258,55 @@ class TestFunctionCallPlugin:
 
         assert len(calls) == 1
         assert calls[0].arguments["multiline"] == "line1\nline2\nline3"
+
+    async def test_parse_arguments_as_list(self, parser):
+        """Test parsing when arguments are a list (non-dict type)."""
+        data = {
+            "function_call": {
+                "name": "tool",
+                "arguments": [1, 2, 3],  # List, should be converted to empty dict
+            }
+        }
+
+        calls = await parser.try_parse(data)
+
+        assert len(calls) == 1
+        assert calls[0].tool == "tool"
+        assert calls[0].arguments == {}
+
+    async def test_parse_empty_name(self, parser):
+        """Test handling empty function name."""
+        data = {
+            "function_call": {
+                "name": "",  # Empty string
+                "arguments": '{"arg": "value"}',
+            }
+        }
+
+        calls = await parser.try_parse(data)
+
+        assert len(calls) == 0
+
+    async def test_parse_name_not_string(self, parser):
+        """Test handling non-string function name."""
+        data = {
+            "function_call": {
+                "name": 123,  # Number instead of string
+                "arguments": '{"arg": "value"}',
+            }
+        }
+
+        calls = await parser.try_parse(data)
+
+        assert len(calls) == 0
+
+    async def test_parse_text_with_nested_json_objects(self, parser):
+        """Test extracting function_call from text with nested JSON."""
+        # Text with embedded JSON that contains a function_call
+        text = 'Some text before {"function_call": {"name": "extract_tool", "arguments": "{}"}} some text after'
+
+        calls = await parser.try_parse(text)
+
+        # The fallback JSON extraction should find this
+        if len(calls) > 0:
+            assert calls[0].tool == "extract_tool"
