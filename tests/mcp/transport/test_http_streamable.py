@@ -58,13 +58,19 @@ class TestHTTPStreamableTransport:
     async def test_initialize_success(self, transport):
         """Test successful HTTP Streamable transport initialization with metrics tracking."""
         mock_http_transport = AsyncMock()
-        mock_read_stream = Mock()
-        mock_write_stream = Mock()
+        mock_read_stream = AsyncMock()
+        mock_write_stream = AsyncMock()
+        # Mock the send method for write stream
+        mock_write_stream.send = AsyncMock()
 
         with (
             patch(
                 "chuk_tool_processor.mcp.transport.http_streamable_transport.ChukHTTPTransport",
                 return_value=mock_http_transport,
+            ),
+            patch(
+                "chuk_tool_processor.mcp.transport.http_streamable_transport.send_initialize",
+                AsyncMock(return_value=Mock(serverInfo=Mock(name="TestServer"))),
             ),
             patch(
                 "chuk_tool_processor.mcp.transport.http_streamable_transport.send_ping", AsyncMock(return_value=True)
@@ -88,13 +94,19 @@ class TestHTTPStreamableTransport:
     async def test_initialize_ping_fails(self, transport):
         """Test HTTP Streamable initialization when ping fails but connection succeeds."""
         mock_http_transport = AsyncMock()
-        mock_read_stream = Mock()
-        mock_write_stream = Mock()
+        mock_read_stream = AsyncMock()
+        mock_write_stream = AsyncMock()
+        # Mock the send method for write stream
+        mock_write_stream.send = AsyncMock()
 
         with (
             patch(
                 "chuk_tool_processor.mcp.transport.http_streamable_transport.ChukHTTPTransport",
                 return_value=mock_http_transport,
+            ),
+            patch(
+                "chuk_tool_processor.mcp.transport.http_streamable_transport.send_initialize",
+                AsyncMock(return_value=Mock(serverInfo=Mock(name="TestServer"))),
             ),
             patch(
                 "chuk_tool_processor.mcp.transport.http_streamable_transport.send_ping", AsyncMock(return_value=False)
