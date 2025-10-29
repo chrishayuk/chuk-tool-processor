@@ -239,13 +239,13 @@ class HTTPStreamableTransport(MCPBaseTransport):
             await self._cleanup()
             if self.enable_metrics and self._metrics:
                 self._metrics.connection_errors += 1
-            return False
+            raise  # Re-raise for OAuth error detection in mcp-cli
         except Exception as e:
             logger.error("Error initializing HTTP Streamable transport: %s", e, exc_info=True)
             await self._cleanup()
             if self.enable_metrics and self._metrics:
                 self._metrics.connection_errors += 1
-            return False
+            raise  # Re-raise for OAuth error detection in mcp-cli
 
     async def _attempt_recovery(self) -> bool:
         """Attempt to recover from connection issues (NEW - like SSE resilience)."""
