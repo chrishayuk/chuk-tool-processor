@@ -132,10 +132,14 @@ class TestHTTPStreamableTransport:
             # Simulate timeout during context entry
             mock_http_transport.__aenter__.side_effect = TimeoutError()
 
-            result = await transport.initialize()
+            # Now expecting TimeoutError to be raised instead of returning False
+            with pytest.raises(TimeoutError):
+                await transport.initialize()
 
-            assert result is False
             assert transport._initialized is False
+            # Check metrics were updated
+            metrics = transport.get_metrics()
+            assert metrics["connection_errors"] == 1
 
     @pytest.mark.asyncio
     async def test_send_ping_success(self, transport):
@@ -555,8 +559,14 @@ class TestHTTPStreamableTransport:
             "chuk_tool_processor.mcp.transport.http_streamable_transport.ChukHTTPTransport",
             side_effect=Exception("Connection error"),
         ):
-            result = await transport.initialize()
-            assert result is False
+            # Now expecting Exception to be raised instead of returning False
+            with pytest.raises(Exception, match="Connection error"):
+                await transport.initialize()
+
+            assert transport._initialized is False
+            # Check metrics were updated
+            metrics = transport.get_metrics()
+            assert metrics["connection_errors"] == 1
 
     @pytest.mark.asyncio
     async def test_send_ping_increments_failures(self, transport):
@@ -791,8 +801,11 @@ class TestHTTPStreamableTransport:
             "chuk_tool_processor.mcp.transport.http_streamable_transport.ChukHTTPTransport",
             side_effect=Exception("Connection error"),
         ):
-            result = await transport.initialize()
-            assert result is False
+            # Now expecting Exception to be raised instead of returning False
+            with pytest.raises(Exception, match="Connection error"):
+                await transport.initialize()
+
+            assert transport._initialized is False
             assert transport._metrics.connection_errors == 1
 
     @pytest.mark.asyncio
