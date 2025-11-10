@@ -1,6 +1,6 @@
 # chuk_tool_processor/models/tool_export_mix_in.py
 
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
 
 from pydantic import BaseModel
 
@@ -18,7 +18,7 @@ class ToolExportMixin:
     @classmethod
     def to_openai(cls) -> dict[str, Any]:
         assert hasattr(cls, "Arguments"), f"{cls.__name__} must have an Arguments attribute"
-        schema = cls.Arguments.model_json_schema()  # type: ignore[attr-defined]
+        schema = cls.Arguments.model_json_schema()  # noqa: ANN401
         return {
             "type": "function",
             "function": {
@@ -31,13 +31,13 @@ class ToolExportMixin:
     @classmethod
     def to_json_schema(cls) -> dict[str, Any]:
         assert hasattr(cls, "Arguments"), f"{cls.__name__} must have an Arguments attribute"
-        return cls.Arguments.model_json_schema()  # type: ignore[attr-defined, no-any-return]
+        return cast(dict[str, Any], cls.Arguments.model_json_schema())
 
     @classmethod
     def to_xml(cls) -> str:
         """Very small helper so existing XML-based parsers still work."""
         assert hasattr(cls, "Arguments"), f"{cls.__name__} must have an Arguments attribute"
         name = cls.__name__.removesuffix("Tool").lower()
-        params = cls.Arguments.model_json_schema()["properties"]  # type: ignore[attr-defined]
+        params = cls.Arguments.model_json_schema()["properties"]  # noqa: ANN401
         args = ", ".join(params)
         return f'<tool name="{name}" args="{{{args}}}"/>'

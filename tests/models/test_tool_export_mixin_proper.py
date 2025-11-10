@@ -3,12 +3,9 @@
 
 from __future__ import annotations
 
-import pytest
 from pydantic import BaseModel
 
 from chuk_tool_processor.models.tool_export_mixin import ToolExportMixin
-
-pytestmark = pytest.mark.asyncio
 
 
 class TestToolExportMixinProper:

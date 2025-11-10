@@ -6,6 +6,7 @@ Provides drop-in distributed tracing with standardized span names and attributes
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
@@ -89,7 +90,7 @@ def trace_tool_execution(
     tool: str,
     namespace: str | None = None,
     attributes: dict[str, Any] | None = None,
-):
+) -> Generator[None, None, None]:
     """
     Context manager for tracing tool execution.
 
@@ -135,7 +136,7 @@ def trace_cache_operation(
     tool: str,
     hit: bool | None = None,
     attributes: dict[str, Any] | None = None,
-):
+) -> Generator[None, None, None]:
     """
     Context manager for tracing cache operations.
 
@@ -179,7 +180,7 @@ def trace_retry_attempt(
     attempt: int,
     max_retries: int,
     attributes: dict[str, Any] | None = None,
-):
+) -> Generator[None, None, None]:
     """
     Context manager for tracing retry attempts.
 
@@ -220,7 +221,7 @@ def trace_circuit_breaker(
     tool: str,
     state: str,
     attributes: dict[str, Any] | None = None,
-):
+) -> Generator[None, None, None]:
     """
     Context manager for tracing circuit breaker operations.
 
@@ -259,7 +260,7 @@ def trace_rate_limit(
     tool: str,
     allowed: bool,
     attributes: dict[str, Any] | None = None,
-):
+) -> Generator[None, None, None]:
     """
     Context manager for tracing rate limiting.
 
@@ -340,6 +341,6 @@ class NoOpTracer:
     """No-op tracer when OpenTelemetry is not available."""
 
     @contextmanager
-    def start_as_current_span(self, _name: str, **_kwargs):
+    def start_as_current_span(self, _name: str, **_kwargs: Any) -> Generator[None, None, None]:
         """No-op span context manager."""
         yield None

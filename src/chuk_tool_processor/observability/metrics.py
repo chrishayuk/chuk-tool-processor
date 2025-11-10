@@ -7,7 +7,7 @@ Provides drop-in Prometheus metrics with a /metrics HTTP endpoint.
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from chuk_tool_processor.logging import get_logger
 
@@ -299,7 +299,7 @@ class MetricsTimer:
         self.start_time = time.perf_counter()
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         self.end_time = time.perf_counter()
 
     @property

@@ -77,11 +77,8 @@ class LibraryLoggingManager:
         self._initialized = False
         self._lock = threading.Lock()
 
-    def initialize(self):
+    def initialize(self) -> None:
         """Initialize clean shutdown behavior for the library."""
-        if self._initialized:
-            return
-
         with self._lock:
             if self._initialized:
                 return
@@ -299,7 +296,7 @@ class StructuredAdapter(logging.LoggerAdapter):
         return msg, kwargs
 
     # ----------------------- convenience wrappers ------------------------ #
-    def _forward(self, method_name: str, msg, *args, **kwargs):
+    def _forward(self, method_name: str, msg: str, *args: Any, **kwargs: Any) -> None:
         """Common helper: process + forward to `self.logger.<method_name>`."""
         msg, kwargs = self.process(msg, kwargs)
         getattr(self.logger, method_name)(msg, *args, **kwargs)

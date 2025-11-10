@@ -51,7 +51,8 @@ Research code vs production code is about handling the edges:
 - **Error Handling**: Machine-readable error codes with structured details
 - **Observability**: Structured logging, metrics, request tracing
 - **Safety**: Subprocess isolation for untrusted code
-- **Type Safety**: Pydantic validation with LLM-friendly argument coercion
+- **Type Safety**: PEP 561 compliant with full mypy support
+- **Resource Management**: Context managers for automatic cleanup
 - **Tool Discovery**: Formal schema export (OpenAI, Anthropic, MCP formats)
 
 ### It's About Stacks
@@ -122,6 +123,28 @@ cd chuk-tool-processor
 uv pip install -e .
 ```
 
+### Type Checking Support
+
+CHUK Tool Processor includes **full type checking support** (PEP 561 compliant):
+
+```python
+# mypy, pyright, and IDEs get full type information!
+from chuk_tool_processor import ToolProcessor, ToolCall, ToolResult
+
+async with ToolProcessor() as processor:
+    # Full autocomplete and type checking
+    results: list[ToolResult] = await processor.process(llm_output)
+    tools: list[str] = await processor.list_tools()
+```
+
+**Features:**
+- ✅ `py.typed` marker for PEP 561 compliance
+- ✅ Comprehensive type hints on all public APIs
+- ✅ Works with mypy, pyright, pylance
+- ✅ Full IDE autocomplete support
+
+**No special mypy configuration needed** - just import and use!
+
 ## 60-Second Quick Start
 
 **Absolutely minimal example** → See `examples/hello_tool.py`:
@@ -143,8 +166,7 @@ Copy-paste this into a file and run it:
 
 ```python
 import asyncio
-from chuk_tool_processor.core.processor import ToolProcessor
-from chuk_tool_processor.registry import initialize, register_tool
+from chuk_tool_processor import ToolProcessor, register_tool, initialize
 
 # Step 1: Define a tool
 @register_tool(name="calculator")
@@ -158,26 +180,30 @@ class Calculator:
 # Step 2: Process LLM output
 async def main():
     await initialize()
-    processor = ToolProcessor()
 
-    # Your LLM returned this tool call
-    llm_output = '<tool name="calculator" args=\'{"operation": "multiply", "a": 15, "b": 23}\'/>'
+    # Use context manager for automatic cleanup
+    async with ToolProcessor() as processor:
+        # Your LLM returned this tool call
+        llm_output = '<tool name="calculator" args=\'{"operation": "multiply", "a": 15, "b": 23}\'/>'
 
-    # Process it
-    results = await processor.process(llm_output)
+        # Process it
+        results = await processor.process(llm_output)
 
-    # Each result is a ToolExecutionResult with: tool, args, result, error, duration, cached
-    # results[0].result contains the tool output
-    # results[0].error contains any error message (None if successful)
-    if results[0].error:
-        print(f"Error: {results[0].error}")
-    else:
-        print(results[0].result)  # {'result': 345}
+        # Each result is a ToolResult with: tool, result, error, duration, cached
+        if results[0].error:
+            print(f"Error: {results[0].error}")
+        else:
+            print(results[0].result)  # {'result': 345}
+
+    # Processor automatically cleaned up!
 
 asyncio.run(main())
 ```
 
-**That's it.** You now have production-ready tool execution with timeouts, retries, and caching.
+**That's it.** You now have production-ready tool execution with:
+- ✅ Automatic timeouts, retries, and caching
+- ✅ Clean resource management (context manager)
+- ✅ Full type checking support
 
 > **Why not just use OpenAI tool calls?**
 > OpenAI's function calling is great for parsing, but you still need: parsing multiple formats (Anthropic XML, etc.), timeouts, retries, rate limits, caching, subprocess isolation, and connecting to external MCP servers. CHUK Tool Processor **is** that missing middle layer.
@@ -211,8 +237,7 @@ Here are the most common patterns you'll use:
 **Pattern 1: Local tools only**
 ```python
 import asyncio
-from chuk_tool_processor.core.processor import ToolProcessor
-from chuk_tool_processor.registry import initialize, register_tool
+from chuk_tool_processor import ToolProcessor, register_tool, initialize
 
 @register_tool(name="my_tool")
 class MyTool:
@@ -221,11 +246,11 @@ class MyTool:
 
 async def main():
     await initialize()
-    processor = ToolProcessor()
 
-    llm_output = '<tool name="my_tool" args=\'{"arg": "hello"}\'/>'
-    results = await processor.process(llm_output)
-    print(results[0].result)  # {'result': 'Processed: hello'}
+    async with ToolProcessor() as processor:
+        llm_output = '<tool name="my_tool" args=\'{"arg": "hello"}\'/>'
+        results = await processor.process(llm_output)
+        print(results[0].result)  # {'result': 'Processed: hello'}
 
 asyncio.run(main())
 ```
@@ -233,8 +258,7 @@ asyncio.run(main())
 **Pattern 2: Mix local + remote MCP tools (Notion)**
 ```python
 import asyncio
-from chuk_tool_processor.registry import initialize, register_tool
-from chuk_tool_processor.mcp import setup_mcp_http_streamable
+from chuk_tool_processor import register_tool, initialize, setup_mcp_http_streamable
 
 @register_tool(name="local_calculator")
 class Calculator:
@@ -263,6 +287,9 @@ async def main():
     ''')
     print(f"Local result: {results[0].result}")
     print(f"Notion result: {results[1].result}")
+
+    # Clean up
+    await manager.close()
 
 asyncio.run(main())
 ```
@@ -620,23 +647,32 @@ asyncio.run(main())
 
 #### Basic Usage
 
-Call `await initialize()` once at startup to load your registry.
+Call `await initialize()` once at startup to load your registry. Use context managers for automatic cleanup:
 
 ```python
 import asyncio
-from chuk_tool_processor.core.processor import ToolProcessor
-from chuk_tool_processor.registry import initialize
+from chuk_tool_processor import ToolProcessor, initialize
 
 async def main():
     await initialize()
-    processor = ToolProcessor()
-    llm_output = '<tool name="calculator" args=\'{"operation":"add","a":2,"b":3}\'/>'
-    results = await processor.process(llm_output)
-    for result in results:
-        if result.error:
-            print(f"Error: {result.error}")
-        else:
-            print(f"Success: {result.result}")
+
+    # Context manager automatically handles cleanup
+    async with ToolProcessor() as processor:
+        # Discover available tools
+        tools = await processor.list_tools()
+        print(f"Available tools: {tools}")
+
+        # Process LLM output
+        llm_output = '<tool name="calculator" args=\'{"operation":"add","a":2,"b":3}\'/>'
+        results = await processor.process(llm_output)
+
+        for result in results:
+            if result.error:
+                print(f"Error: {result.error}")
+            else:
+                print(f"Success: {result.result}")
+
+    # Processor automatically cleaned up here!
 
 asyncio.run(main())
 ```
@@ -644,21 +680,32 @@ asyncio.run(main())
 #### Production Configuration
 
 ```python
-from chuk_tool_processor.core.processor import ToolProcessor
+from chuk_tool_processor import ToolProcessor, initialize
+import asyncio
 
-processor = ToolProcessor(
-    # Execution settings
-    default_timeout=30.0,
-    max_concurrency=20,
+async def main():
+    await initialize()
 
-    # Production features
-    enable_caching=True,
-    cache_ttl=600,
-    enable_rate_limiting=True,
-    global_rate_limit=100,
-    enable_retries=True,
-    max_retries=3
-)
+    # Use context manager with production config
+    async with ToolProcessor(
+        # Execution settings
+        default_timeout=30.0,
+        max_concurrency=20,
+
+        # Production features
+        enable_caching=True,
+        cache_ttl=600,
+        enable_rate_limiting=True,
+        global_rate_limit=100,
+        enable_retries=True,
+        max_retries=3
+    ) as processor:
+        # Use processor...
+        results = await processor.process(llm_output)
+
+    # Automatic cleanup on exit
+
+asyncio.run(main())
 ```
 
 ### Advanced Production Features

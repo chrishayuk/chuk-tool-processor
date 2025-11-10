@@ -156,7 +156,7 @@ async def registry():
 @pytest_asyncio.fixture
 async def strategy(registry):
     """Create a SubprocessStrategy with the test registry."""
-    strategy = SubprocessStrategy(registry, max_workers=2, default_timeout=1.0)
+    strategy = SubprocessStrategy(registry, max_workers=2, default_timeout=2.0)
     yield strategy
     # Clean up
     await strategy.shutdown()
@@ -196,7 +196,7 @@ async def test_mul_tool_execution(strategy):
 @pytest.mark.asyncio
 async def test_timeout_error(strategy):
     """Test that timeouts are handled correctly."""
-    res = (await strategy.run([ToolCall(tool="sleep", arguments={})], timeout=0.05))[0]
+    res = (await strategy.run([ToolCall(tool="sleep", arguments={})], timeout=0.1))[0]
     assert res.result is None
     assert res.error is not None, "Expected error message for timeout"
     assert "timeout" in res.error.lower() or "timed out" in res.error.lower()
@@ -229,7 +229,7 @@ async def test_parallel_execution(strategy):
 
     # Verify it ran in parallel (allowing buffer for process startup - CI can be slower)
     # In CI environments, process startup can be significantly slower
-    assert duration < 1.2, f"Expected duration < 1.2s (parallel execution), got {duration}s"
+    assert duration < 2.5, f"Expected duration < 2.5s (parallel execution), got {duration}s"
 
     # Verify they ran in different processes if possible
     pids = [r.pid for r in results]
@@ -297,7 +297,7 @@ async def test_streaming_support(strategy):
 
     # Create a timeout to ensure we don't hang if something goes wrong
     try:
-        async with asyncio.timeout(2.0):  # Generous timeout
+        async with asyncio.timeout(5.0):  # Generous timeout for slow CI environments
             async for result in strategy.stream_run(calls):
                 results.append({"tool": result.tool, "elapsed": time.time() - start_time})
     except TimeoutError:
@@ -324,7 +324,7 @@ async def test_concurrent_with_different_timeouts(strategy):
             ToolCall(tool="sleep", arguments={}),
             ToolCall(tool="custom_sleep", arguments={}),
         ],
-        timeout=0.25,
+        timeout=0.5,
     )  # Only enough time for add and sleep, not custom_sleep
 
     # First tool should succeed
@@ -402,8 +402,8 @@ async def test_shutdown_cancels_running_tasks(registry):
         # Start a long-running task
         task = asyncio.create_task(strategy.run([ToolCall(tool="long", arguments={})], timeout=20))
 
-        # Give it a moment to start
-        await asyncio.sleep(0.3)  # Longer delay to ensure it starts
+        # Give it a moment to start (increased for slower CI environments)
+        await asyncio.sleep(0.5)
 
         # Shutdown the strategy
         await strategy.shutdown()

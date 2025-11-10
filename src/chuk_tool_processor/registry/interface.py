@@ -36,7 +36,7 @@ class ToolRegistryInterface(Protocol):
             namespace: Namespace for the tool (default: "default").
             metadata: Optional additional metadata for the tool.
         """
-        ...
+        ...  # pragma: no cover
 
     async def get_tool(self, name: str, namespace: str = "default") -> Any | None:
         """
@@ -49,7 +49,7 @@ class ToolRegistryInterface(Protocol):
         Returns:
             The tool implementation or None if not found.
         """
-        ...
+        ...  # pragma: no cover
 
     async def get_tool_strict(self, name: str, namespace: str = "default") -> Any:
         """
@@ -65,7 +65,7 @@ class ToolRegistryInterface(Protocol):
         Raises:
             ToolNotFoundError: If the tool is not found in the registry.
         """
-        ...
+        ...  # pragma: no cover
 
     async def get_metadata(self, name: str, namespace: str = "default") -> ToolMetadata | None:
         """
@@ -78,7 +78,7 @@ class ToolRegistryInterface(Protocol):
         Returns:
             ToolMetadata if found, None otherwise.
         """
-        ...
+        ...  # pragma: no cover
 
     async def list_tools(self, namespace: str | None = None) -> list[tuple[str, str]]:
         """
@@ -90,7 +90,7 @@ class ToolRegistryInterface(Protocol):
         Returns:
             List of (namespace, name) tuples.
         """
-        ...
+        ...  # pragma: no cover
 
     async def list_namespaces(self) -> list[str]:
         """
@@ -99,7 +99,7 @@ class ToolRegistryInterface(Protocol):
         Returns:
             List of namespace names.
         """
-        ...
+        ...  # pragma: no cover
 
     async def list_metadata(self, namespace: str | None = None) -> list[ToolMetadata]:
         """
@@ -113,4 +113,4 @@ class ToolRegistryInterface(Protocol):
         Returns:
             List of ToolMetadata objects.
         """
-        ...
+        ...  # pragma: no cover
