@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 from chuk_tool_processor.logging import get_logger
 
 if TYPE_CHECKING:
-    from opentelemetry.trace import Span, Tracer  # type: ignore[import-not-found]
+    from opentelemetry.trace import Span, Tracer
 
 logger = get_logger("chuk_tool_processor.observability.tracing")
 
@@ -35,13 +35,13 @@ def init_tracer(service_name: str = "chuk-tool-processor") -> Tracer | NoOpTrace
     global _tracer, _tracing_enabled
 
     try:
-        from opentelemetry import trace  # type: ignore[import-not-found]
-        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (  # type: ignore[import-not-found]
+        from opentelemetry import trace
+        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
             OTLPSpanExporter,
         )
-        from opentelemetry.sdk.resources import Resource  # type: ignore[import-not-found]
-        from opentelemetry.sdk.trace import TracerProvider  # type: ignore[import-not-found]
-        from opentelemetry.sdk.trace.export import BatchSpanProcessor  # type: ignore[import-not-found]
+        from opentelemetry.sdk.resources import Resource
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
         # Create resource with service name
         resource = Resource.create({"service.name": service_name})

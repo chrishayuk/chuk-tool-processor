@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 from chuk_tool_processor.logging import get_logger
 
 if TYPE_CHECKING:
-    from prometheus_client import Counter, Gauge, Histogram  # type: ignore[import-not-found]
+    from prometheus_client import Counter, Gauge, Histogram
 
 logger = get_logger("chuk_tool_processor.observability.metrics")
 
