@@ -237,7 +237,12 @@ class MCPTool:
                 await self._record_failure()
 
                 if attempt == max_attempts - 1:
-                    return {"error": error_msg, "tool_name": self.tool_name, "available": False, "reason": "timeout"}
+                    return {
+                        "error": error_msg,
+                        "tool_name": self.tool_name,
+                        "available": False,
+                        "reason": "timeout",
+                    }
 
             except Exception as e:
                 error_str = str(e)
@@ -260,12 +265,12 @@ class MCPTool:
                     await asyncio.sleep(backoff)
                     backoff = min(backoff * self.recovery_config.backoff_multiplier, self.recovery_config.max_backoff)
 
-        # Should never reach here
+        # Should never reach here, but return error if we do
         return {
             "error": f"Tool '{self.tool_name}' failed after all attempts",
             "tool_name": self.tool_name,
             "available": False,
-            "reason": "exhausted_retries",
+            "reason": "execution_failed",
         }
 
     async def _execute_with_timeout(self, timeout: float, **kwargs: Any) -> Any:

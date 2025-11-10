@@ -13,10 +13,15 @@ It:
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
 from chuk_tool_processor.core.processor import ToolProcessor
 from chuk_tool_processor.logging import get_logger
 from chuk_tool_processor.mcp.register_mcp_tools import register_mcp_tools
 from chuk_tool_processor.mcp.stream_manager import StreamManager
+
+if TYPE_CHECKING:
+    from chuk_tool_processor.mcp.models import MCPServerConfig
 
 logger = get_logger("chuk_tool_processor.mcp.setup_stdio")
 
@@ -26,8 +31,8 @@ logger = get_logger("chuk_tool_processor.mcp.setup_stdio")
 # --------------------------------------------------------------------------- #
 async def setup_mcp_stdio(  # noqa: C901 - long but just a config facade
     *,
-    config_file: str,
-    servers: list[str],
+    config_file: str | None = None,  # NOW OPTIONAL - for backward compatibility
+    servers: list[str] | list[dict[str, Any]] | list[MCPServerConfig],  # Can be server names, dicts, OR Pydantic models
     server_names: dict[int, str] | None = None,
     default_timeout: float = 10.0,
     initialization_timeout: float = 60.0,
@@ -45,17 +50,92 @@ async def setup_mcp_stdio(  # noqa: C901 - long but just a config facade
     Initialise stdio-transport MCP + a :class:`ToolProcessor`.
 
     Call with ``await`` from your async context.
+
+    Args:
+        config_file: Optional config file path (legacy mode)
+        servers: Can be:
+            - List of server names (legacy, requires config_file)
+            - List of server config dicts (new DX)
+            - List of MCPServerConfig Pydantic models (best DX)
+        server_names: Optional server name mapping
+        default_timeout: Default timeout for operations
+        initialization_timeout: Timeout for initialization
+        max_concurrency: Maximum concurrent operations
+        enable_caching: Enable result caching
+        cache_ttl: Cache time-to-live
+        enable_rate_limiting: Enable rate limiting
+        global_rate_limit: Global rate limit
+        tool_rate_limits: Per-tool rate limits
+        enable_retries: Enable retries
+        max_retries: Maximum retry attempts
+        namespace: Tool namespace
+
+    Returns:
+        Tuple of (ToolProcessor, StreamManager)
+
+    Examples:
+        # Best DX (Pydantic models):
+        from chuk_tool_processor.mcp import MCPServerConfig, MCPTransport
+
+        processor, manager = await setup_mcp_stdio(
+            servers=[
+                MCPServerConfig(
+                    name="echo",
+                    transport=MCPTransport.STDIO,
+                    command="uvx",
+                    args=["chuk-mcp-echo", "stdio"],
+                ),
+            ],
+            namespace="tools",
+        )
+
+        # New DX (dicts, no config file):
+        processor, manager = await setup_mcp_stdio(
+            servers=[
+                {"name": "echo", "command": "uvx", "args": ["chuk-mcp-echo", "stdio"]},
+            ],
+            namespace="tools",
+        )
+
+        # Legacy (with config file):
+        processor, manager = await setup_mcp_stdio(
+            config_file="mcp_config.json",
+            servers=["echo"],
+            namespace="tools",
+        )
     """
-    # 1️⃣  create & connect the stream-manager
-    # FIXED: Pass the default_timeout parameter to StreamManager.create
-    stream_manager = await StreamManager.create(
-        config_file=config_file,
-        servers=servers,
-        server_names=server_names,
-        transport_type="stdio",
-        default_timeout=default_timeout,  # 🔧 ADD THIS LINE
-        initialization_timeout=initialization_timeout,
-    )
+    # Import here to avoid circular dependency at module level
+    from chuk_tool_processor.mcp.models import MCPServerConfig as MCPServerConfigModel
+
+    # Check what format the servers are in
+    if servers and isinstance(servers[0], str):
+        # LEGACY: servers are names, config_file is required
+        if config_file is None:
+            raise ValueError("config_file is required when servers is a list of strings")
+
+        stream_manager = await StreamManager.create(
+            config_file=config_file,
+            servers=servers,  # type: ignore[arg-type]
+            server_names=server_names,
+            transport_type="stdio",
+            default_timeout=default_timeout,
+            initialization_timeout=initialization_timeout,
+        )
+    else:
+        # NEW DX: servers are config dicts or Pydantic models
+        # Convert Pydantic models to dicts if needed
+        server_dicts: list[dict[str, Any]]
+        if servers and isinstance(servers[0], MCPServerConfigModel):
+            server_dicts = [s.to_dict() for s in servers]  # type: ignore[union-attr]
+        else:
+            server_dicts = servers  # type: ignore[assignment]
+
+        stream_manager = await StreamManager.create_with_stdio(
+            servers=server_dicts,
+            server_names=server_names,
+            default_timeout=default_timeout,
+            initialization_timeout=initialization_timeout,
+        )
 
     # 2️⃣  pull the remote tool list and register each one locally
     registered = await register_mcp_tools(stream_manager, namespace=namespace)

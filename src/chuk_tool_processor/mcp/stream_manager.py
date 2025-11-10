@@ -97,6 +97,24 @@ class StreamManager:
         return inst
 
     @classmethod
+    async def create_with_stdio(
+        cls,
+        servers: list[dict[str, Any]],
+        server_names: dict[int, str] | None = None,
+        default_timeout: float = 30.0,
+        initialization_timeout: float = 60.0,
+    ) -> StreamManager:
+        """Create StreamManager with STDIO transport and timeout protection (no config file needed)."""
+        inst = cls()
+        await inst.initialize_with_stdio(
+            servers,
+            server_names,
+            default_timeout=default_timeout,
+            initialization_timeout=initialization_timeout,
+        )
+        return inst
+
+    @classmethod
     async def create_with_http_streamable(
         cls,
         servers: list[dict[str, str]],
@@ -369,6 +387,82 @@ class StreamManager:
 
             logger.debug(
                 "StreamManager ready - %d SSE server(s), %d tool(s)",
+                len(self.transports),
+                len(self.all_tools),
+            )
+
+    async def initialize_with_stdio(
+        self,
+        servers: list[dict[str, Any]],
+        server_names: dict[int, str] | None = None,
+        default_timeout: float = 30.0,
+        initialization_timeout: float = 60.0,
+    ) -> None:
+        """Initialize with STDIO transport directly from server configs (no config file needed)."""
+        if self._closed:
+            raise RuntimeError("Cannot initialize a closed StreamManager")
+
+        async with self._lock:
+            self.server_names = server_names or {}
+
+            for idx, cfg in enumerate(servers):
+                name = cfg.get("name")
+                command = cfg.get("command")
+                args = cfg.get("args", [])
+                env = cfg.get("env")
+
+                if not (name and command):
+                    logger.error("Bad STDIO server config (missing name or command): %s", cfg)
+                    continue
+
+                try:
+                    # Build STDIO transport parameters
+                    transport_params = {
+                        "command": command,
+                        "args": args,
+                    }
+                    if env:
+                        transport_params["env"] = env
+
+                    logger.debug("STDIO %s: command=%s, args=%s", name, command, args)
+
+                    transport = StdioTransport(
+                        transport_params, connection_timeout=initialization_timeout, default_timeout=default_timeout
+                    )
+
+                    try:
+                        if not await asyncio.wait_for(transport.initialize(), timeout=initialization_timeout):
+                            logger.warning("Failed to init STDIO %s", name)
+                            continue
+                    except TimeoutError:
+                        logger.error("Timeout initialising STDIO %s (timeout=%ss)", name, initialization_timeout)
+                        continue
+
+                    self.transports[name] = transport
+
+                    # Ping and get tools with timeout protection
+                    status = (
+                        "Up"
+                        if await asyncio.wait_for(transport.send_ping(), timeout=self.timeout_config.operation)
+                        else "Down"
+                    )
+                    tools = await asyncio.wait_for(transport.get_tools(), timeout=self.timeout_config.operation)
+
+                    for t in tools:
+                        tname = t.get("name")
+                        if tname:
+                            self.tool_to_server_map[tname] = name
+                    self.all_tools.extend(tools)
+
+                    self.server_info.append({"id": idx, "name": name, "tools": len(tools), "status": status})
+                    logger.debug("Initialised STDIO %s - %d tool(s)", name, len(tools))
+                except TimeoutError:
+                    logger.error("Timeout initialising STDIO %s", name)
+                except Exception as exc:
+                    logger.error("Error initialising STDIO %s: %s", name, exc)
+
+            logger.debug(
+                "StreamManager ready - %d STDIO server(s), %d tool(s)",
                 len(self.transports),
                 len(self.all_tools),
             )
