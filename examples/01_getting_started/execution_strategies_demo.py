@@ -10,18 +10,21 @@ This script shows:
 4. Handling tool execution errors and timeouts
 """
 
+from chuk_tool_processor import (
+    InProcessStrategy,
+    IsolatedStrategy,
+    initialize,
+    register_tool
+)
 import asyncio
 import os
 import time
 from datetime import datetime
 from typing import Any
 
-from chuk_tool_processor.execution.strategies.inprocess_strategy import InProcessStrategy
-from chuk_tool_processor.execution.strategies.subprocess_strategy import SubprocessStrategy
 from chuk_tool_processor.execution.tool_executor import ToolExecutor
 from chuk_tool_processor.models.tool_call import ToolCall
 from chuk_tool_processor.models.tool_result import ToolResult
-from chuk_tool_processor.registry import initialize, register_tool
 
 # ----------------------------------------
 # Define some example tools

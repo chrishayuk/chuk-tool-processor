@@ -24,12 +24,11 @@ What you'll see:
     - Automatic instrumentation of all tool operations
 """
 
+from chuk_tool_processor import ToolProcessor, initialize, register_tool
 import asyncio
 import time
 
-from chuk_tool_processor.core.processor import ToolProcessor
 from chuk_tool_processor.observability import setup_observability
-from chuk_tool_processor.registry import initialize, register_tool
 
 
 # ------------------------------------------------------------------
@@ -114,7 +113,7 @@ async def main():
     await initialize()
 
     # Create processor with production features enabled
-    processor = ToolProcessor(
+    async with ToolProcessor(
         enable_caching=True,  # Enable caching (will create cache spans)
         cache_ttl=300,  # 5 minute cache
         enable_retries=True,  # Enable retries (will create retry spans)
@@ -122,64 +121,64 @@ async def main():
         enable_circuit_breaker=True,  # Enable circuit breaker (will track state)
         enable_rate_limiting=True,  # Enable rate limiting (will track checks)
         global_rate_limit=60,  # 60 requests/min
-    )
+    ) as processor:
 
-    print("  • Caching enabled (TTL: 300s)")
-    print("  • Retries enabled (max: 3)")
-    print("  • Circuit breaker enabled")
-    print("  • Rate limiting enabled (60 req/min)")
-    print()
+        print("  • Caching enabled (TTL: 300s)")
+        print("  • Retries enabled (max: 3)")
+        print("  • Circuit breaker enabled")
+        print("  • Rate limiting enabled (60 req/min)")
+        print()
 
-    # ------------------------------------------------------------------
-    # Step 3: Execute tool calls (demonstrates all observability features)
-    # ------------------------------------------------------------------
-    print("Step 3: Executing tool calls...")
-    print()
+        # ------------------------------------------------------------------
+        # Step 3: Execute tool calls (demonstrates all observability features)
+        # ------------------------------------------------------------------
+        print("Step 3: Executing tool calls...")
+        print()
 
-    # First call - will fail and retry, then succeed
-    print("  [1] First call (will retry due to simulated failures)...")
-    result1 = await processor.process('<tool name="slow_calculator" args=\'{"operation": "add", "a": 10, "b": 5}\'/>')
+        # First call - will fail and retry, then succeed
+        print("  [1] First call (will retry due to simulated failures)...")
+        result1 = await processor.process('<tool name="slow_calculator" args=\'{"operation": "add", "a": 10, "b": 5}\'/>')
 
-    if result1[0].error:
-        print(f"      ✗ Error: {result1[0].error}")
-    else:
-        print(f"      ✓ Result: {result1[0].result}")
-        print(f"      • Attempts: {result1[0].attempts}")
-        print(f"      • Duration: {result1[0].duration:.3f}s")
-        print(f"      • Cached: {result1[0].cached}")
+        if result1[0].error:
+            print(f"      ✗ Error: {result1[0].error}")
+        else:
+            print(f"      ✓ Result: {result1[0].result}")
+            print(f"      • Attempts: {result1[0].attempts}")
+            print(f"      • Duration: {result1[0].duration:.3f}s")
+            print(f"      • Cached: {result1[0].cached}")
 
-    print()
+        print()
 
-    # Small delay to show separate operations
-    await asyncio.sleep(1)
+        # Small delay to show separate operations
+        await asyncio.sleep(1)
 
-    # Second call - same arguments, should hit cache
-    print("  [2] Second call (should hit cache)...")
-    result2 = await processor.process('<tool name="slow_calculator" args=\'{"operation": "add", "a": 10, "b": 5}\'/>')
+        # Second call - same arguments, should hit cache
+        print("  [2] Second call (should hit cache)...")
+        result2 = await processor.process('<tool name="slow_calculator" args=\'{"operation": "add", "a": 10, "b": 5}\'/>')
 
-    if result2[0].error:
-        print(f"      ✗ Error: {result2[0].error}")
-    else:
-        print(f"      ✓ Result: {result2[0].result}")
-        print(f"      • Duration: {result2[0].duration:.3f}s")
-        print(f"      • Cached: {result2[0].cached}")
+        if result2[0].error:
+            print(f"      ✗ Error: {result2[0].error}")
+        else:
+            print(f"      ✓ Result: {result2[0].result}")
+            print(f"      • Duration: {result2[0].duration:.3f}s")
+            print(f"      • Cached: {result2[0].cached}")
 
-    print()
+        print()
 
-    # Third call - different arguments, will execute fresh
-    print("  [3] Third call (different arguments)...")
-    result3 = await processor.process(
-        '<tool name="slow_calculator" args=\'{"operation": "multiply", "a": 7, "b": 6}\'/>'
-    )
+        # Third call - different arguments, will execute fresh
+        print("  [3] Third call (different arguments)...")
+        result3 = await processor.process(
+            '<tool name="slow_calculator" args=\'{"operation": "multiply", "a": 7, "b": 6}\'/>'
+        )
 
-    if result3[0].error:
-        print(f"      ✗ Error: {result3[0].error}")
-    else:
-        print(f"      ✓ Result: {result3[0].result}")
-        print(f"      • Duration: {result3[0].duration:.3f}s")
-        print(f"      • Cached: {result3[0].cached}")
+        if result3[0].error:
+            print(f"      ✗ Error: {result3[0].error}")
+        else:
+            print(f"      ✓ Result: {result3[0].result}")
+            print(f"      • Duration: {result3[0].duration:.3f}s")
+            print(f"      • Cached: {result3[0].cached}")
 
-    print()
+        print()
 
     # ------------------------------------------------------------------
     # Step 4: View observability data

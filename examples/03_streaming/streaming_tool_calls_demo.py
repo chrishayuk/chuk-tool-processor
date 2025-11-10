@@ -16,10 +16,9 @@ Run this:
     python examples/streaming_tool_calls_demo.py
 """
 
+from chuk_tool_processor import ToolProcessor, initialize, register_tool
 import asyncio
 import json
-from chuk_tool_processor.core.processor import ToolProcessor
-from chuk_tool_processor.registry import initialize, register_tool
 
 
 # --------------------------------------------------------------
@@ -132,149 +131,149 @@ async def main():
     print()
 
     await initialize()
-    processor = ToolProcessor()
 
-    # Track state
-    accumulated_text = ""
-    processed_tool_indices = set()
+    async with ToolProcessor() as processor:
+        # Track state
+        accumulated_text = ""
+        processed_tool_indices = set()
 
-    print("Scenario 1: Processing tool calls as they arrive in stream")
-    print("-" * 70)
-    print()
-
-    async for chunk in simulate_streaming_llm():
-        accumulated_text += chunk
-        print(f"Received chunk: {chunk}")
-
-        # Try to parse what we have so far
-        tool_calls = parse_partial_tool_calls(accumulated_text)
-
-        if tool_calls:
-            print(f"  ✓ Parsed {len(tool_calls)} tool calls so far")
-
-            # Process any complete tool calls we haven't processed yet
-            for idx, tool_call in enumerate(tool_calls):
-                if idx not in processed_tool_indices:
-                    # Check if this tool call is complete
-                    if all(k in tool_call for k in ["tool", "arguments"]):
-                        print(f"  → Processing tool #{idx + 1}: {tool_call['tool']}")
-
-                        # Convert to processor format and execute
-                        input_data = {"tool_calls": [tool_call]}
-                        results = await processor.process(json.dumps(input_data))
-
-                        if results and not results[0].error:
-                            print(f"    ✓ Result: {results[0].result}")
-                            processed_tool_indices.add(idx)
-                        elif results:
-                            print(f"    ✗ Error: {results[0].error}")
-        else:
-            print("  ... (accumulating, not yet valid JSON)")
-
+        print("Scenario 1: Processing tool calls as they arrive in stream")
+        print("-" * 70)
         print()
 
-    print("=" * 70)
-    print(f"Stream complete! Processed {len(processed_tool_indices)} tools")
-    print("=" * 70)
-    print()
+        async for chunk in simulate_streaming_llm():
+            accumulated_text += chunk
+            print(f"Received chunk: {chunk}")
 
-    # --------------------------------------------------------------
-    # Scenario 2: Handle OpenAI streaming format
-    # --------------------------------------------------------------
-    print("Scenario 2: OpenAI streaming format (delta chunks)")
-    print("-" * 70)
-    print()
+            # Try to parse what we have so far
+            tool_calls = parse_partial_tool_calls(accumulated_text)
 
-    # OpenAI streams deltas like this
-    openai_stream = [
-        {"tool_calls": [{"index": 0, "function": {"name": "cal"}}]},
-        {"tool_calls": [{"index": 0, "function": {"name": "culator"}}]},
-        {"tool_calls": [{"index": 0, "function": {"arguments": '{"operation"'}}]},
-        {"tool_calls": [{"index": 0, "function": {"arguments": ': "multiply", '}}]},
-        {"tool_calls": [{"index": 0, "function": {"arguments": '"a": 7, "b": 6}'}}]},
-    ]
+            if tool_calls:
+                print(f"  ✓ Parsed {len(tool_calls)} tool calls so far")
 
-    # Accumulate deltas
-    tool_calls_state = {}
+                # Process any complete tool calls we haven't processed yet
+                for idx, tool_call in enumerate(tool_calls):
+                    if idx not in processed_tool_indices:
+                        # Check if this tool call is complete
+                        if all(k in tool_call for k in ["tool", "arguments"]):
+                            print(f"  → Processing tool #{idx + 1}: {tool_call['tool']}")
 
-    for delta in openai_stream:
-        print(f"Received delta: {delta}")
+                            # Convert to processor format and execute
+                            input_data = {"tool_calls": [tool_call]}
+                            results = await processor.process(json.dumps(input_data))
 
-        for call_delta in delta.get("tool_calls", []):
-            idx = call_delta.get("index", 0)
+                            if results and not results[0].error:
+                                print(f"    ✓ Result: {results[0].result}")
+                                processed_tool_indices.add(idx)
+                            elif results:
+                                print(f"    ✗ Error: {results[0].error}")
+            else:
+                print("  ... (accumulating, not yet valid JSON)")
 
-            if idx not in tool_calls_state:
-                tool_calls_state[idx] = {"name": "", "arguments": ""}
+            print()
 
-            # Accumulate name
-            if "function" in call_delta and "name" in call_delta["function"]:
-                tool_calls_state[idx]["name"] += call_delta["function"]["name"]
-
-            # Accumulate arguments
-            if "function" in call_delta and "arguments" in call_delta["function"]:
-                tool_calls_state[idx]["arguments"] += call_delta["function"]["arguments"]
-
-        print(f"  State: {tool_calls_state}")
+        print("=" * 70)
+        print(f"Stream complete! Processed {len(processed_tool_indices)} tools")
+        print("=" * 70)
         print()
 
-    # Process complete tool call
-    print("Processing accumulated tool call:")
-    complete_call = tool_calls_state[0]
+        # --------------------------------------------------------------
+        # Scenario 2: Handle OpenAI streaming format
+        # --------------------------------------------------------------
+        print("Scenario 2: OpenAI streaming format (delta chunks)")
+        print("-" * 70)
+        print()
 
-    try:
-        args = json.loads(complete_call["arguments"])
-        input_data = {
-            "tool_calls": [
-                {"tool": complete_call["name"], "arguments": args}
-            ]
-        }
+        # OpenAI streams deltas like this
+        openai_stream = [
+            {"tool_calls": [{"index": 0, "function": {"name": "cal"}}]},
+            {"tool_calls": [{"index": 0, "function": {"name": "culator"}}]},
+            {"tool_calls": [{"index": 0, "function": {"arguments": '{"operation"'}}]},
+            {"tool_calls": [{"index": 0, "function": {"arguments": ': "multiply", '}}]},
+            {"tool_calls": [{"index": 0, "function": {"arguments": '"a": 7, "b": 6}'}}]},
+        ]
 
-        results = await processor.process(json.dumps(input_data))
+        # Accumulate deltas
+        tool_calls_state = {}
 
-        if results and not results[0].error:
-            print(f"  ✓ {complete_call['name']}: {results[0].result}")
-        elif results:
-            print(f"  ✗ Error: {results[0].error}")
-    except json.JSONDecodeError:
-        print(f"  ✗ Invalid arguments JSON: {complete_call['arguments']}")
+        for delta in openai_stream:
+            print(f"Received delta: {delta}")
 
-    print()
+            for call_delta in delta.get("tool_calls", []):
+                idx = call_delta.get("index", 0)
 
-    # --------------------------------------------------------------
-    # Scenario 3: Handle Anthropic streaming XML
-    # --------------------------------------------------------------
-    print("Scenario 3: Anthropic streaming XML format")
-    print("-" * 70)
-    print()
+                if idx not in tool_calls_state:
+                    tool_calls_state[idx] = {"name": "", "arguments": ""}
 
-    # Anthropic streams XML incrementally
-    anthropic_stream = [
-        '<tool name="weather',
-        '" args=\'{"loc',
-        'ation": "New',
-        ' York"}\'/>',
-    ]
+                # Accumulate name
+                if "function" in call_delta and "name" in call_delta["function"]:
+                    tool_calls_state[idx]["name"] += call_delta["function"]["name"]
 
-    accumulated_xml = ""
+                # Accumulate arguments
+                if "function" in call_delta and "arguments" in call_delta["function"]:
+                    tool_calls_state[idx]["arguments"] += call_delta["function"]["arguments"]
 
-    for chunk in anthropic_stream:
-        accumulated_xml += chunk
-        print(f"Received chunk: {chunk}")
-        print(f"  Accumulated: {accumulated_xml}")
+            print(f"  State: {tool_calls_state}")
+            print()
 
-        # Try to process if we have a complete tag
-        if accumulated_xml.endswith("/>"):
-            print("  ✓ Complete XML tag detected")
-            results = await processor.process(accumulated_xml)
+        # Process complete tool call
+        print("Processing accumulated tool call:")
+        complete_call = tool_calls_state[0]
+
+        try:
+            args = json.loads(complete_call["arguments"])
+            input_data = {
+                "tool_calls": [
+                    {"tool": complete_call["name"], "arguments": args}
+                ]
+            }
+
+            results = await processor.process(json.dumps(input_data))
 
             if results and not results[0].error:
-                print(f"  ✓ Result: {results[0].result}")
+                print(f"  ✓ {complete_call['name']}: {results[0].result}")
             elif results:
                 print(f"  ✗ Error: {results[0].error}")
-        else:
-            print("  ... (incomplete XML, waiting for more)")
+        except json.JSONDecodeError:
+            print(f"  ✗ Invalid arguments JSON: {complete_call['arguments']}")
 
         print()
+
+        # --------------------------------------------------------------
+        # Scenario 3: Handle Anthropic streaming XML
+        # --------------------------------------------------------------
+        print("Scenario 3: Anthropic streaming XML format")
+        print("-" * 70)
+        print()
+
+        # Anthropic streams XML incrementally
+        anthropic_stream = [
+            '<tool name="weather',
+            '" args=\'{"loc',
+            'ation": "New',
+            ' York"}\'/>',
+        ]
+
+        accumulated_xml = ""
+
+        for chunk in anthropic_stream:
+            accumulated_xml += chunk
+            print(f"Received chunk: {chunk}")
+            print(f"  Accumulated: {accumulated_xml}")
+
+            # Try to process if we have a complete tag
+            if accumulated_xml.endswith("/>"):
+                print("  ✓ Complete XML tag detected")
+                results = await processor.process(accumulated_xml)
+
+                if results and not results[0].error:
+                    print(f"  ✓ Result: {results[0].result}")
+                elif results:
+                    print(f"  ✗ Error: {results[0].error}")
+            else:
+                print("  ... (incomplete XML, waiting for more)")
+
+            print()
 
     # --------------------------------------------------------------
     # Summary

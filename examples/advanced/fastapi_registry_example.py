@@ -26,7 +26,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from chuk_tool_processor.registry import (
+from chuk_tool_processor import (
     ensure_registrations,
     get_default_registry,
     initialize,

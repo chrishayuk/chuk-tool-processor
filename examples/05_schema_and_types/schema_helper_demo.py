@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from chuk_tool_processor.models.validated_tool import ValidatedTool
 from chuk_tool_processor.models import ToolSpec, ToolCapability, tool_spec
-from chuk_tool_processor.registry import register_tool
+from chuk_tool_processor import register_tool
 
 
 # --------------------------------------------------------------

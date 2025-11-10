@@ -42,7 +42,7 @@ colorama_init(autoreset=True)
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from chuk_tool_processor.execution.strategies.inprocess_strategy import InProcessStrategy
+from chuk_tool_processor import InProcessStrategy
 from chuk_tool_processor.execution.tool_executor import ToolExecutor
 from chuk_tool_processor.logging import get_logger
 from chuk_tool_processor.mcp.setup_mcp_sse import setup_mcp_sse

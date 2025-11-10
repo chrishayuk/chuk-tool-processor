@@ -47,7 +47,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from pydantic import BaseModel, Field
 
-from chuk_tool_processor.execution.strategies.subprocess_strategy import SubprocessStrategy
+from chuk_tool_processor import IsolatedStrategy, SubprocessStrategy
 from chuk_tool_processor.execution.tool_executor import ToolExecutor
 from chuk_tool_processor.logging import get_logger
 from chuk_tool_processor.models.tool_call import ToolCall

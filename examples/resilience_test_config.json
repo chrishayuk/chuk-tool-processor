@@ -1,0 +1,26 @@
+{
+  "mcpServers": {
+    "time_primary": {
+      "command": "uvx",
+      "args": [
+        "mcp-server-time",
+        "--local-timezone=America/New_York"
+      ]
+    },
+    "time_secondary": {
+      "command": "uvx",
+      "args": [
+        "mcp-server-time",
+        "--local-timezone=Europe/London"
+      ]
+    },
+    "sqlite_test": {
+      "command": "uvx",
+      "args": [
+        "mcp-server-sqlite",
+        "--db",
+        "/tmp/resilience_test.sqlite"
+      ]
+    }
+  }
+}

@@ -10,19 +10,18 @@ This script shows:
 4. Combining multiple wrappers
 """
 
+from chuk_tool_processor import InProcessStrategy, initialize, register_tool
 import asyncio
 import random
 import time
 from datetime import UTC, datetime
 from typing import Any
 
-from chuk_tool_processor.execution.strategies.inprocess_strategy import InProcessStrategy
 from chuk_tool_processor.execution.tool_executor import ToolExecutor
 from chuk_tool_processor.execution.wrappers.caching import CachingToolExecutor, InMemoryCache, cacheable
 from chuk_tool_processor.execution.wrappers.rate_limiting import RateLimitedToolExecutor, RateLimiter, rate_limited
 from chuk_tool_processor.execution.wrappers.retry import RetryableToolExecutor, RetryConfig, retryable
 from chuk_tool_processor.models.tool_call import ToolCall
-from chuk_tool_processor.registry import initialize, register_tool
 
 # ----------------------------------------
 # Define example tools with wrapper decorators

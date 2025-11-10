@@ -28,6 +28,11 @@ __version__ = "0.9.7"
 # Core processor
 from chuk_tool_processor.core.processor import ToolProcessor
 
+# Execution strategies
+from chuk_tool_processor.execution.strategies.inprocess_strategy import InProcessStrategy
+from chuk_tool_processor.execution.strategies.subprocess_strategy import SubprocessStrategy
+from chuk_tool_processor.execution.strategies.subprocess_strategy import SubprocessStrategy as IsolatedStrategy
+
 # MCP setup helpers
 from chuk_tool_processor.mcp import (
     setup_mcp_http_streamable,
@@ -86,6 +91,10 @@ __all__ = [
     # Decorators
     "register_tool",
     "register_fn_tool",
+    # Execution strategies
+    "InProcessStrategy",
+    "IsolatedStrategy",
+    "SubprocessStrategy",
     # MCP setup
     "setup_mcp_stdio",
     "setup_mcp_sse",

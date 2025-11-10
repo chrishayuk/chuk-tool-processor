@@ -2150,6 +2150,7 @@ Check out the [`examples/`](examples/) directory for complete working examples:
 - **Atlassian + OAuth**: `examples/04_mcp_integration/atlassian_sse.py` - OAuth with SSE transport (legacy)
 
 ### Advanced MCP
+- **SSE**: `examples/mcp_sse_example.py`
 - **Plugin system**: `examples/06_plugins/plugins_builtins_demo.py`, `examples/06_plugins/plugins_custom_parser_demo.py`
 
 ## FAQ

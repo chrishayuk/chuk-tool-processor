@@ -16,6 +16,12 @@ python quickstart_demo.py
 ```
 """
 
+from chuk_tool_processor import (
+    InProcessStrategy,
+    get_default_registry,
+    initialize,
+    register_tool
+)
 import asyncio
 import time
 from collections.abc import AsyncIterator
@@ -24,11 +30,9 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from chuk_tool_processor.execution.strategies.inprocess_strategy import InProcessStrategy
 from chuk_tool_processor.execution.tool_executor import ToolExecutor
 from chuk_tool_processor.models.streaming_tool import StreamingTool
 from chuk_tool_processor.models.tool_call import ToolCall
-from chuk_tool_processor.registry import get_default_registry, initialize, register_tool
 
 # ----------------------------------------
 # Define simple tools

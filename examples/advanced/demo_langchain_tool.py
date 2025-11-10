@@ -13,7 +13,7 @@ from langchain.tools.base import BaseTool
 
 from chuk_tool_processor.execution.tool_executor import ToolExecutor
 from chuk_tool_processor.models.tool_call import ToolCall
-from chuk_tool_processor.registry import initialize, register_tool
+from chuk_tool_processor import initialize, register_tool
 
 
 # ----------------------------------------------------------------------

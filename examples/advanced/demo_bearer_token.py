@@ -113,7 +113,7 @@ async def test_mcp_imports() -> bool:
 
         print_success("StreamManager imported successfully")
 
-        from chuk_tool_processor.core.processor import ToolProcessor
+        from chuk_tool_processor import ToolProcessor
 
         print_success("ToolProcessor imported successfully")
 
