@@ -28,13 +28,8 @@ async def _build_openai_name_cache() -> None:
     """
     global _OPENAI_NAME_CACHE
 
-    # Fast path - cache already exists
-    if _OPENAI_NAME_CACHE is not None:
-        return
-
-    # Slow path - build the cache with proper locking
+    # Build the cache with proper locking
     async with _CACHE_LOCK:
-        # Double-check pattern: check again after acquiring the lock
         if _OPENAI_NAME_CACHE is not None:
             return
 

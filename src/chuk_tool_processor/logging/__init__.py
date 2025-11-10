@@ -19,14 +19,11 @@ import sys
 
 
 # Auto-initialize shutdown error suppression when logging package is imported
-def _initialize_shutdown_fixes():
+def _initialize_shutdown_fixes() -> None:
     """Initialize shutdown error suppression when the package is imported."""
-    try:
-        from .context import _setup_shutdown_error_suppression
-
-        _setup_shutdown_error_suppression()
-    except ImportError:
-        pass
+    # Note: _setup_shutdown_error_suppression removed as it's no longer needed
+    # Keeping this function as a no-op for backward compatibility
+    pass
 
 
 # Initialize when package is imported
@@ -64,7 +61,7 @@ __all__ = [
 async def setup_logging(
     level: int = logging.INFO,
     structured: bool = True,
-    log_file: str = None,
+    log_file: str | None = None,
 ) -> None:
     """
     Set up the logging system.

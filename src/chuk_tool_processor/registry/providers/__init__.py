@@ -5,6 +5,7 @@ Async registry provider implementations and factory functions.
 
 import asyncio
 import os
+from typing import Any
 
 from chuk_tool_processor.registry.interface import ToolRegistryInterface
 
@@ -13,7 +14,7 @@ _REGISTRY_CACHE: dict[str, ToolRegistryInterface] = {}
 _REGISTRY_LOCKS: dict[str, asyncio.Lock] = {}
 
 
-async def get_registry(provider_type: str | None = None, **kwargs) -> ToolRegistryInterface:
+async def get_registry(provider_type: str | None = None, **kwargs: Any) -> ToolRegistryInterface:
     """
     Factory function to get a registry implementation asynchronously.
 

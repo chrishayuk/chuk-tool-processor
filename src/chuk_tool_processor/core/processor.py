@@ -34,13 +34,62 @@ from chuk_tool_processor.registry import ToolRegistryInterface, ToolRegistryProv
 class ToolProcessor:
     """
     Main class for processing tool calls from LLM responses.
-    Combines parsing, execution, and result handling with full async support.
+
+    ToolProcessor combines parsing, execution, and result handling with full async support.
+    It provides production-ready features including timeouts, retries, caching, rate limiting,
+    and circuit breaking.
+
+    Examples:
+        Basic usage with context manager:
+
+        >>> import asyncio
+        >>> from chuk_tool_processor import ToolProcessor, register_tool
+        >>>
+        >>> @register_tool(name="calculator")
+        ... class Calculator:
+        ...     async def execute(self, a: int, b: int) -> dict:
+        ...         return {"result": a + b}
+        >>>
+        >>> async def main():
+        ...     async with ToolProcessor() as processor:
+        ...         llm_output = '<tool name="calculator" args=\'{"a": 5, "b": 3}\'/>'
+        ...         results = await processor.process(llm_output)
+        ...         print(results[0].result)  # {'result': 8}
+        >>>
+        >>> asyncio.run(main())
+
+        Production configuration:
+
+        >>> processor = ToolProcessor(
+        ...     default_timeout=30.0,
+        ...     enable_caching=True,
+        ...     cache_ttl=600,
+        ...     enable_rate_limiting=True,
+        ...     global_rate_limit=100,  # 100 requests/minute
+        ...     enable_retries=True,
+        ...     max_retries=3,
+        ...     enable_circuit_breaker=True,
+        ... )
+
+        Manual cleanup:
+
+        >>> processor = ToolProcessor()
+        >>> try:
+        ...     results = await processor.process(llm_output)
+        ... finally:
+        ...     await processor.close()
+
+    Attributes:
+        registry: Tool registry containing registered tools
+        strategy: Execution strategy (InProcess or Subprocess)
+        executor: Wrapped executor with caching, retries, etc.
+        parsers: List of parser plugins for extracting tool calls
     """
 
     def __init__(
         self,
         registry: ToolRegistryInterface | None = None,
-        strategy=None,
+        strategy: Any | None = None,  # Strategy can be InProcessStrategy or SubprocessStrategy
         default_timeout: float = 10.0,
         max_concurrency: int | None = None,
         enable_caching: bool = True,
@@ -61,21 +110,60 @@ class ToolProcessor:
 
         Args:
             registry: Tool registry to use. If None, uses the global registry.
-            strategy: Optional execution strategy (default: InProcessStrategy)
+            strategy: Optional execution strategy (default: InProcessStrategy).
+                Use SubprocessStrategy for isolated execution of untrusted code.
             default_timeout: Default timeout for tool execution in seconds.
+                Individual tools can override this. Default: 10.0
             max_concurrency: Maximum number of concurrent tool executions.
-            enable_caching: Whether to enable result caching.
-            cache_ttl: Default cache TTL in seconds.
-            enable_rate_limiting: Whether to enable rate limiting.
+                If None, uses unlimited concurrency. Default: None
+            enable_caching: Whether to enable result caching. Caches results
+                based on tool name and arguments. Default: True
+            cache_ttl: Default cache TTL in seconds. Results older than this
+                are evicted. Default: 300 (5 minutes)
+            enable_rate_limiting: Whether to enable rate limiting. Prevents
+                API abuse and quota exhaustion. Default: False
             global_rate_limit: Optional global rate limit (requests per minute).
+                Applies to all tools unless overridden. Default: None
             tool_rate_limits: Dict mapping tool names to (limit, period) tuples.
-            enable_retries: Whether to enable automatic retries.
-            max_retries: Maximum number of retry attempts.
+                Example: {"api_call": (10, 60)} = 10 requests per 60 seconds
+            enable_retries: Whether to enable automatic retries on transient
+                failures. Uses exponential backoff. Default: True
+            max_retries: Maximum number of retry attempts. Total attempts will
+                be max_retries + 1 (initial + retries). Default: 3
+            retry_config: Optional custom retry configuration. If provided,
+                overrides max_retries. See RetryConfig for details.
             enable_circuit_breaker: Whether to enable circuit breaker pattern.
-            circuit_breaker_threshold: Number of failures before opening circuit.
-            circuit_breaker_timeout: Seconds to wait before testing recovery.
-            parser_plugins: List of parser plugin names to use.
-                If None, uses all available parsers.
+                Opens circuit after repeated failures to prevent cascading
+                failures. Default: False
+            circuit_breaker_threshold: Number of consecutive failures before
+                opening circuit. Default: 5
+            circuit_breaker_timeout: Seconds to wait before attempting recovery
+                (transition from OPEN to HALF_OPEN). Default: 60.0
+            parser_plugins: List of parser plugin names to use. If None, uses
+                all available parsers (XML, OpenAI, JSON). Default: None
+
+        Raises:
+            ImportError: If required dependencies are not installed.
+
+        Example:
+            >>> # Production configuration with all features
+            >>> processor = ToolProcessor(
+            ...     default_timeout=30.0,
+            ...     max_concurrency=20,
+            ...     enable_caching=True,
+            ...     cache_ttl=600,
+            ...     enable_rate_limiting=True,
+            ...     global_rate_limit=100,
+            ...     tool_rate_limits={
+            ...         "expensive_api": (10, 60),
+            ...         "free_api": (100, 60),
+            ...     },
+            ...     enable_retries=True,
+            ...     max_retries=3,
+            ...     enable_circuit_breaker=True,
+            ...     circuit_breaker_threshold=5,
+            ...     circuit_breaker_timeout=60.0,
+            ... )
         """
         self.logger = get_logger("chuk_tool_processor.processor")
 
@@ -97,11 +185,11 @@ class ToolProcessor:
         self.circuit_breaker_timeout = circuit_breaker_timeout
         self.parser_plugin_names = parser_plugins
 
-        # Placeholder for initialized components
-        self.registry = None
-        self.strategy = None
-        self.executor = None
-        self.parsers = []
+        # Placeholder for initialized components (typed as Optional for type safety)
+        self.registry: ToolRegistryInterface | None = None
+        self.strategy: Any | None = None  # Strategy type is complex, use Any for now
+        self.executor: Any | None = None  # Executor type is complex, use Any for now
+        self.parsers: list[Any] = []  # Parser types vary, use Any for now
 
         # Flag for tracking initialization state
         self._initialized = False
@@ -114,13 +202,8 @@ class ToolProcessor:
         This method ensures all components are properly initialized before use.
         It is called automatically by other methods if needed.
         """
-        # Fast path if already initialized
-        if self._initialized:
-            return
-
         # Ensure only one initialization happens at a time
         async with self._init_lock:
-            # Double-check pattern after acquiring lock
             if self._initialized:
                 return
 
@@ -217,21 +300,87 @@ class ToolProcessor:
         request_id: str | None = None,
     ) -> list[ToolResult]:
         """
-        Process tool calls from various input formats.
+        Process tool calls from various LLM output formats.
 
-        This method handles different input types:
-        - String: Parses tool calls from text using registered parsers
-        - Dict: Processes an OpenAI-style tool_calls object
-        - List[Dict]: Processes a list of individual tool calls
+        This method handles different input types from various LLM providers:
+
+        **String Input (Anthropic Claude style)**:
+            Parses tool calls from XML-like text using registered parsers.
+
+            Example:
+                >>> llm_output = '<tool name="calculator" args=\'{"a": 5, "b": 3}\'/>'
+                >>> results = await processor.process(llm_output)
+
+        **Dict Input (OpenAI style)**:
+            Processes an OpenAI-style tool_calls object.
+
+            Example:
+                >>> openai_output = {
+                ...     "tool_calls": [
+                ...         {
+                ...             "type": "function",
+                ...             "function": {
+                ...                 "name": "calculator",
+                ...                 "arguments": '{"a": 5, "b": 3}'
+                ...             }
+                ...         }
+                ...     ]
+                ... }
+                >>> results = await processor.process(openai_output)
+
+        **List[Dict] Input (Direct tool calls)**:
+            Processes a list of individual tool call dictionaries.
+
+            Example:
+                >>> direct_calls = [
+                ...     {"tool": "calculator", "arguments": {"a": 5, "b": 3}},
+                ...     {"tool": "weather", "arguments": {"city": "London"}}
+                ... ]
+                >>> results = await processor.process(direct_calls)
 
         Args:
-            data: Input data containing tool calls
-            timeout: Optional timeout for execution
-            use_cache: Whether to use cached results
-            request_id: Optional request ID for logging
+            data: Input data containing tool calls. Can be:
+                - String: XML/text format (e.g., Anthropic Claude)
+                - Dict: OpenAI tool_calls format
+                - List[Dict]: Direct tool call list
+            timeout: Optional timeout in seconds for tool execution.
+                Overrides default_timeout if provided. Default: None
+            use_cache: Whether to use cached results. If False, forces
+                fresh execution even if cached results exist. Default: True
+            request_id: Optional request ID for tracing and logging.
+                If not provided, a UUID will be generated. Default: None
 
         Returns:
-            List of tool results
+            List of ToolResult objects. Each result contains:
+                - tool: Name of the tool that was executed
+                - result: The tool's output (None if error)
+                - error: Error message if execution failed (None if success)
+                - duration: Execution time in seconds
+                - cached: Whether result was retrieved from cache
+
+            **Always returns a list** (never None), even if empty.
+
+        Raises:
+            ToolNotFoundError: If a tool is not registered in the registry
+            ToolTimeoutError: If tool execution exceeds timeout
+            ToolCircuitOpenError: If circuit breaker is open for a tool
+            ToolRateLimitedError: If rate limit is exceeded
+
+        Example:
+            >>> async with ToolProcessor() as processor:
+            ...     # Process Claude-style XML
+            ...     results = await processor.process(
+            ...         '<tool name="echo" args=\'{"message": "hello"}\'/>'
+            ...     )
+            ...
+            ...     # Check results
+            ...     for result in results:
+            ...         if result.error:
+            ...             print(f"Error: {result.error}")
+            ...         else:
+            ...             print(f"Success: {result.result}")
+            ...             print(f"Duration: {result.duration}s")
+            ...             print(f"From cache: {result.cached}")
         """
         # Ensure initialization
         await self.initialize()
@@ -260,7 +409,11 @@ class ToolProcessor:
                                 args = {"raw": args_str}
 
                             if name:
-                                calls.append(ToolCall(tool=name, arguments=args, id=tc.get("id")))
+                                # Build ToolCall kwargs, only include id if present
+                                call_kwargs: dict[str, Any] = {"tool": name, "arguments": args}
+                                if "id" in tc and tc["id"]:
+                                    call_kwargs["id"] = tc["id"]
+                                calls.append(ToolCall(**call_kwargs))
                 else:
                     # Assume it's a single tool call
                     calls = [ToolCall(**data)]
@@ -268,7 +421,9 @@ class ToolProcessor:
                 # List of tool calls
                 calls = [ToolCall(**tc) for tc in data]
             else:
-                self.logger.warning(f"Unsupported input type: {type(data)}")
+                # Defensive: handle unexpected types at runtime
+                # This shouldn't happen per type signature, but helps with debugging
+                self.logger.warning(f"Unsupported input type: {type(data)}")  # type: ignore[unreachable]
                 return []
 
             if not calls:
@@ -279,6 +434,10 @@ class ToolProcessor:
 
             # Execute tool calls
             async with log_context_span("tool_execution", {"num_calls": len(calls)}):
+                # Assert that initialization completed successfully
+                assert self.registry is not None, "Registry must be initialized"
+                assert self.executor is not None, "Executor must be initialized"
+
                 # Check if any tools are unknown - search across all namespaces
                 unknown_tools = []
                 all_tools = await self.registry.list_tools()  # Returns list of (namespace, name) tuples
@@ -292,7 +451,7 @@ class ToolProcessor:
                     self.logger.debug(f"Unknown tools: {unknown_tools}")
 
                 # Execute tools
-                results = await self.executor.execute(calls, timeout=timeout)
+                results: list[ToolResult] = await self.executor.execute(calls, timeout=timeout)
 
                 # Log metrics for each tool call
                 for call, result in zip(calls, results, strict=False):
@@ -348,21 +507,65 @@ class ToolProcessor:
         """
         Execute a list of ToolCall objects directly.
 
+        This is a lower-level method for executing tool calls when you already
+        have parsed ToolCall objects. For most use cases, prefer process()
+        which handles parsing automatically.
+
         Args:
-            calls: List of tool calls to execute
-            timeout: Optional execution timeout
-            use_cache: Whether to use cached results
+            calls: List of ToolCall objects to execute. Each call must have:
+                - tool: Name of the tool to execute
+                - arguments: Dictionary of arguments for the tool
+            timeout: Optional timeout in seconds for tool execution.
+                Overrides default_timeout if provided. Default: None
+            use_cache: Whether to use cached results. If False, forces
+                fresh execution even if cached results exist. Default: True
 
         Returns:
-            List of tool results
+            List of ToolResult objects, one per input ToolCall.
+            **Always returns a list** (never None), even if empty.
+
+            Each result contains:
+                - tool: Name of the tool that was executed
+                - result: The tool's output (None if error)
+                - error: Error message if execution failed (None if success)
+                - duration: Execution time in seconds
+                - cached: Whether result was retrieved from cache
+
+        Raises:
+            RuntimeError: If processor is not initialized
+            ToolNotFoundError: If a tool is not registered
+            ToolTimeoutError: If tool execution exceeds timeout
+            ToolCircuitOpenError: If circuit breaker is open
+            ToolRateLimitedError: If rate limit is exceeded
+
+        Example:
+            >>> from chuk_tool_processor import ToolCall
+            >>>
+            >>> # Create tool calls directly
+            >>> calls = [
+            ...     ToolCall(tool="calculator", arguments={"a": 5, "b": 3}),
+            ...     ToolCall(tool="weather", arguments={"city": "London"}),
+            ... ]
+            >>>
+            >>> async with ToolProcessor() as processor:
+            ...     results = await processor.execute(calls)
+            ...     for result in results:
+            ...         print(f"{result.tool}: {result.result}")
         """
         # Ensure initialization
         await self.initialize()
 
+        # Safety check: ensure we have an executor
+        if self.executor is None:
+            raise RuntimeError("Executor not initialized. Call initialize() first.")
+
         # Execute with the configured executor
-        return await self.executor.execute(
+        results = await self.executor.execute(
             calls=calls, timeout=timeout, use_cache=use_cache if hasattr(self.executor, "use_cache") else True
         )
+
+        # Ensure we always return a list (never None)
+        return results if results is not None else []
 
     async def _extract_tool_calls(self, text: str) -> list[ToolCall]:
         """
@@ -391,7 +594,8 @@ class ToolProcessor:
             for result in parser_results:
                 if isinstance(result, Exception):
                     continue
-                if result:
+                # At this point, result is list[ToolCall], not an exception
+                if result and isinstance(result, list):
                     all_calls.extend(result)
 
         # ------------------------------------------------------------------ #
@@ -410,7 +614,7 @@ class ToolProcessor:
 
         return list(unique_calls.values())
 
-    async def _try_parser(self, parser, text: str) -> list[ToolCall]:
+    async def _try_parser(self, parser: Any, text: str) -> list[ToolCall]:
         """Try a single parser with metrics and logging."""
         parser_name = parser.__class__.__name__
 
@@ -419,7 +623,7 @@ class ToolProcessor:
 
             try:
                 # Try to parse
-                calls = await parser.try_parse(text)
+                calls: list[ToolCall] = await parser.try_parse(text)
 
                 # Log success
                 duration = time.time() - start_time
@@ -443,6 +647,121 @@ class ToolProcessor:
                 )
                 self.logger.debug(f"Parser {parser_name} failed: {str(e)}")
                 return []
+
+    # ------------------------------------------------------------------ #
+    #  Tool discovery and introspection                                  #
+    # ------------------------------------------------------------------ #
+    async def list_tools(self) -> list[str]:
+        """
+        List all registered tool names.
+
+        This method provides programmatic access to all tools in the registry.
+
+        Returns:
+            List of tool names (strings).
+
+        Example:
+            >>> async with ToolProcessor() as processor:
+            ...     tools = await processor.list_tools()
+            ...     for name in tools:
+            ...         print(f"Available tool: {name}")
+
+        Raises:
+            RuntimeError: If processor is not initialized. Call initialize()
+                or use the processor in a context manager.
+        """
+        await self.initialize()
+
+        if self.registry is None:
+            raise RuntimeError("Registry not initialized")
+
+        # Get tool tuples and extract names
+        tool_tuples = await self.registry.list_tools()
+        return [name for _, name in tool_tuples]
+
+    async def get_tool_count(self) -> int:
+        """
+        Get the number of registered tools.
+
+        Returns:
+            Number of registered tools.
+
+        Example:
+            >>> async with ToolProcessor() as processor:
+            ...     count = await processor.get_tool_count()
+            ...     print(f"Total tools: {count}")
+        """
+        await self.initialize()
+
+        if self.registry is None:
+            raise RuntimeError("Registry not initialized")
+
+        tool_tuples = await self.registry.list_tools()
+        return len(tool_tuples)
+
+    # ------------------------------------------------------------------ #
+    #  Context manager support for automatic cleanup                     #
+    # ------------------------------------------------------------------ #
+    async def __aenter__(self):
+        """Context manager entry - ensures initialization."""
+        await self.initialize()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit with automatic cleanup."""
+        await self.close()
+        return False
+
+    async def close(self) -> None:
+        """
+        Close the processor and clean up resources.
+
+        This method ensures proper cleanup of executor resources, caches,
+        and any other stateful components.
+        """
+        self.logger.debug("Closing tool processor")
+
+        try:
+            # Close the executor if it has a close method
+            if self.executor and hasattr(self.executor, "close"):
+                close_method = self.executor.close
+                if asyncio.iscoroutinefunction(close_method):
+                    await close_method()
+                elif callable(close_method):
+                    close_method()
+
+            # Close the strategy if it has a close method
+            if self.strategy and hasattr(self.strategy, "close"):
+                close_method = self.strategy.close
+                if asyncio.iscoroutinefunction(close_method):
+                    await close_method()
+                elif callable(close_method):
+                    result = close_method()
+                    # Check if the result is a coroutine and await it
+                    if asyncio.iscoroutine(result):
+                        await result
+
+            # Clear cached results if using caching
+            if self.enable_caching and self.executor:
+                # Walk the executor chain to find the CachingToolExecutor
+                current = self.executor
+                while current:
+                    if isinstance(current, CachingToolExecutor):
+                        if hasattr(current.cache, "clear"):
+                            clear_method = current.cache.clear
+                            if asyncio.iscoroutinefunction(clear_method):
+                                await clear_method()
+                            else:
+                                clear_result = clear_method()
+                                if asyncio.iscoroutine(clear_result):
+                                    await clear_result
+                        break
+                    current = getattr(current, "executor", None)
+
+            self.logger.debug("Tool processor closed successfully")
+
+        except Exception as e:
+            self.logger.error(f"Error during processor cleanup: {e}")
 
 
 # Create a global processor instance

@@ -53,6 +53,10 @@ dependencies = [
 where   = ["src"]
 include = ["chuk_tool_processor*"]
 
+# Include py.typed marker file for PEP 561 compliance
+[tool.setuptools.package-data]
+chuk_tool_processor = ["py.typed"]
+
 # pytest settings so it finds your src/ layout automatically
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -117,16 +121,25 @@ omit = [
 
 [tool.mypy]
 python_version = "3.11"
+# Enable more warnings for better type safety
 warn_return_any = true
 warn_unused_configs = true
-disallow_untyped_defs = false
-disallow_any_unimported = false
-no_implicit_optional = true
 warn_redundant_casts = true
-warn_unused_ignores = false
+warn_unused_ignores = true  # Changed from false to catch unused type ignores
 warn_no_return = true
-warn_unreachable = false
-strict_equality = false
+warn_unreachable = true  # Changed from false to catch unreachable code
+strict_equality = true  # Changed from false for stricter equality checks
+no_implicit_optional = true
+
+# Type checking strictness - gradually improve these
+disallow_untyped_defs = false  # TODO: Enable for public APIs
+disallow_any_unimported = false
+check_untyped_defs = true  # NEW: Check function bodies even if signature not typed
+
+# Additional safety checks
+strict_optional = true  # NEW: Strict None checking
+disallow_untyped_calls = false  # TODO: Enable gradually
+disallow_incomplete_defs = true  # NEW: Require either all or no params typed
 
 # Ignore import errors for packages without type stubs
 [[tool.mypy.overrides]]
@@ -141,14 +154,14 @@ ignore_missing_imports = true
 module = ["tests.*", "sample_tools.*"]
 ignore_errors = true
 
-# Be more lenient for complex MCP integration code
+# TODO: Gradually reduce these overrides as code is improved
+# Be more lenient for complex MCP integration code (for now)
 [[tool.mypy.overrides]]
 module = [
     "chuk_tool_processor.mcp.*",
     "chuk_tool_processor.plugins.*",
     "chuk_tool_processor.registry.decorators",
     "chuk_tool_processor.registry.auto_register",
-    "chuk_tool_processor.core.processor",
     "chuk_tool_processor.execution.wrappers.*",
     "chuk_tool_processor.execution.strategies.*",
     "chuk_tool_processor.execution.tool_executor",
@@ -156,7 +169,18 @@ module = [
 ]
 ignore_errors = true
 
-# Less strict for other modules
+# Core modules: Allow untyped defs but check for other issues
+# NOTE: core.processor now has better type coverage with py.typed
+[[tool.mypy.overrides]]
+module = [
+    "chuk_tool_processor.core.processor",
+]
+warn_return_any = true  # Enable for core module
+warn_no_return = true   # Enable for core module
+disallow_untyped_defs = false  # TODO: Enable once types are added
+check_untyped_defs = true  # Check function bodies
+
+# Less strict for other modules (gradually improve)
 [[tool.mypy.overrides]]
 module = [
     "chuk_tool_processor.registry.*",
@@ -166,10 +190,8 @@ module = [
 ]
 warn_return_any = false
 warn_no_return = false
-no_implicit_optional = false
-strict_optional = false
-check_untyped_defs = false
 disallow_untyped_defs = false
+check_untyped_defs = true  # NEW: At least check function bodies
 
 [tool.isort]
 profile = "black"
