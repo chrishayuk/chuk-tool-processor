@@ -47,8 +47,9 @@ from chuk_tool_processor.mcp.stream_manager import StreamManager
 from chuk_tool_processor.models.tool_call import ToolCall
 from chuk_tool_processor.models.tool_result import ToolResult
 
-# Registry functions
+# Registry functions and types
 from chuk_tool_processor.registry import (
+    ToolInfo,
     ToolRegistryProvider,
     get_default_registry,
     initialize,
@@ -56,7 +57,7 @@ from chuk_tool_processor.registry import (
 from chuk_tool_processor.registry.auto_register import register_fn_tool
 
 # Decorators for registering tools
-from chuk_tool_processor.registry.decorators import register_tool
+from chuk_tool_processor.registry.decorators import register_tool, tool
 
 # Type checking imports (not available at runtime)
 if TYPE_CHECKING:
@@ -85,11 +86,13 @@ __all__ = [
     "ToolCall",
     "ToolResult",
     # Registry
+    "ToolInfo",
     "initialize",
     "get_default_registry",
     "ToolRegistryProvider",
     # Decorators
     "register_tool",
+    "tool",
     "register_fn_tool",
     # Execution strategies
     "InProcessStrategy",

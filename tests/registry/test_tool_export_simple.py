@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+from chuk_tool_processor.registry.metadata import ToolInfo
 from chuk_tool_processor.registry.tool_export import (
     _build_openai_name_cache,
     clear_name_cache,
@@ -42,7 +43,9 @@ class TestToolExport:
         await clear_name_cache()
 
         mock_registry = Mock()
-        mock_registry.list_tools = AsyncMock(return_value=[("default", "tool1"), ("custom", "tool2")])
+        mock_registry.list_tools = AsyncMock(
+            return_value=[ToolInfo(namespace="default", name="tool1"), ToolInfo(namespace="custom", name="tool2")]
+        )
         mock_registry.get_tool = AsyncMock(side_effect=[MockTool, MockTool])
 
         with patch("chuk_tool_processor.registry.tool_export.ToolRegistryProvider") as mock_provider:
@@ -78,7 +81,7 @@ class TestToolExport:
         await clear_name_cache()
 
         mock_registry = Mock()
-        mock_registry.list_tools = AsyncMock(return_value=[("default", "MyTool")])
+        mock_registry.list_tools = AsyncMock(return_value=[ToolInfo(namespace="default", name="MyTool")])
         mock_registry.get_tool = AsyncMock(return_value=MockTool)
 
         with patch("chuk_tool_processor.registry.tool_export.ToolRegistryProvider") as mock_provider:
@@ -93,8 +96,6 @@ class TestToolExport:
             assert tool == MockTool
 
             # Unknown tool raises KeyError
-            import pytest
-
             with pytest.raises(KeyError, match="No tool registered for OpenAI name 'UnknownTool'"):
                 await tool_by_openai_name("UnknownTool")
 
@@ -104,7 +105,9 @@ class TestToolExport:
         await clear_name_cache()
 
         mock_registry = Mock()
-        mock_registry.list_tools = AsyncMock(return_value=[("default", "Tool1"), ("custom", "Tool2")])
+        mock_registry.list_tools = AsyncMock(
+            return_value=[ToolInfo(namespace="default", name="Tool1"), ToolInfo(namespace="custom", name="Tool2")]
+        )
         mock_registry.get_tool = AsyncMock(return_value=MockTool)
 
         with patch("chuk_tool_processor.registry.tool_export.ToolRegistryProvider") as mock_provider:
@@ -137,7 +140,7 @@ class TestToolExport:
             __name__ = "BasicTool"
 
         mock_registry = Mock()
-        mock_registry.list_tools = AsyncMock(return_value=[("default", "BasicTool")])
+        mock_registry.list_tools = AsyncMock(return_value=[ToolInfo(namespace="default", name="BasicTool")])
         mock_registry.get_tool = AsyncMock(return_value=BasicTool)
 
         with patch("chuk_tool_processor.registry.tool_export.ToolRegistryProvider") as mock_provider:

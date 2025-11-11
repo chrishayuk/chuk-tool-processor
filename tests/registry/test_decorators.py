@@ -1112,3 +1112,153 @@ class TestEnhancedSetStateForPydantic:
             # Should handle ImportError/AttributeError gracefully
             tools = discover_decorated_tools()
             assert isinstance(tools, list)
+
+    def test_is_pydantic_model_exception_handlers(self):
+        """Test _is_pydantic_model exception handlers - lines 35-40."""
+
+        # Class that raises exception on hasattr for model_fields
+        class ExceptionOnV2Check:
+            def __getattribute__(self, name):
+                if name in ("model_fields", "__pydantic_core_schema__"):
+                    raise RuntimeError("Exception on V2 check")
+                raise AttributeError(f"{name} not found")
+
+        # Should handle exception and try V1 check
+        result = _is_pydantic_model(ExceptionOnV2Check)
+        assert isinstance(result, bool)
+
+    def test_enhanced_setstate_regular_class_branch(self):
+        """Test enhanced setstate for non-Pydantic classes - lines 81, 88."""
+
+        # Create a regular class with custom serialization
+        class RegularCustom:
+            def __init__(self):
+                self.value = None
+
+            def __getstate__(self):
+                return {"value": self.value}
+
+            def __setstate__(self, state):
+                self.value = state.get("value")
+
+        enhanced = _add_subprocess_serialization_support(RegularCustom, "regular_custom")
+        instance = enhanced()
+        instance.value = "test"
+
+        # Test with _custom_state (line 81)
+        if hasattr(instance, "__setstate__"):
+            state = instance.__getstate__()
+            instance2 = enhanced()
+            instance2.__setstate__({"_custom_state": state, "tool_name": "regular_custom"})
+
+        # Test with regular dict state (line 88)
+        instance3 = enhanced()
+        if hasattr(instance3, "__setstate__"):
+            instance3.__setstate__({"value": "restored", "tool_name": "regular_custom"})
+            # Should set tool_name on instance (not class)
+            if hasattr(instance3, "tool_name"):
+                assert instance3.tool_name == "regular_custom"
+
+    def test_pydantic_init_property_addition(self):
+        """Test tool_name property addition in enhanced_init - lines 197-201."""
+
+        class CustomPydanticLike(BaseModel):
+            data: str = "test"
+
+        # Ensure the class doesn't have tool_name property yet
+        if hasattr(CustomPydanticLike, "tool_name"):
+            delattr(CustomPydanticLike, "tool_name")
+
+        enhanced = _add_subprocess_serialization_support(CustomPydanticLike, "prop_test")
+
+        # Create instance - should trigger enhanced_init
+        instance = enhanced(data="value")
+
+        # Should have tool_name accessible
+        assert hasattr(instance, "tool_name") or hasattr(enhanced, "_tool_name")
+
+    def test_pydantic_without_init_path(self):
+        """Test __init__ addition for Pydantic-like class - lines 210-220."""
+
+        # Create a Pydantic-like class without __init__ using type()
+        # This creates a class with no __init__ method
+        PydanticLikeNoInit = type("PydanticLikeNoInit", (), {"model_fields": {}})
+
+        # Verify it doesn't have its own __init__ (it will inherit from object)
+        # This will trigger the else branch in _add_subprocess_serialization_support
+
+        enhanced = _add_subprocess_serialization_support(PydanticLikeNoInit, "no_init_tool")
+
+        # Should add __init__
+        assert hasattr(enhanced, "__init__")
+
+        # Should be able to instantiate
+        _instance = enhanced()
+        assert hasattr(enhanced, "_tool_name")
+        assert enhanced._tool_name == "no_init_tool"
+
+    def test_make_pydantic_compatible_adds_getstate(self):
+        """Test make_pydantic_tool_compatible adds __getstate__ - lines 312-326."""
+
+        # Create a class without __getstate__ but with model_dump
+        class ToolWithoutGetstate:
+            def model_dump(self):
+                return {"key": "value"}
+
+        # Delete __getstate__ if it exists from object class
+        compatible = make_pydantic_tool_compatible(ToolWithoutGetstate, "test_getstate")
+
+        # The function uses hasattr which will find __getstate__ from object class
+        # So we need to verify the function completes without error
+        assert hasattr(compatible, "_tool_name")
+        assert compatible._tool_name == "test_getstate"
+
+    def test_discover_tools_attribute_error(self):
+        """Test discover_decorated_tools handles AttributeError - line 373."""
+
+        class ModuleWithBadAttr:
+            def __dir__(self):
+                return ["tool1", "tool2"]
+
+            def __getattr__(self, name):
+                raise AttributeError(f"Cannot access {name}")
+
+        with patch("sys.modules", {"chuk_tool_processor.bad_module": ModuleWithBadAttr()}):
+            # Should handle AttributeError gracefully
+            tools = discover_decorated_tools()
+            assert isinstance(tools, list)
+
+    def test_discover_tools_import_error(self):
+        """Test discover_decorated_tools handles ImportError - line 373."""
+
+        class ModuleWithImportError:
+            def __dir__(self):
+                return ["tool1"]
+
+            def __getattr__(self, name):
+                raise ImportError(f"Cannot import {name}")
+
+        with patch("sys.modules", {"chuk_tool_processor.import_module": ModuleWithImportError()}):
+            # Should handle ImportError gracefully
+            tools = discover_decorated_tools()
+            assert isinstance(tools, list)
+
+    def test_tool_decorator_alias(self):
+        """Test tool decorator alias function - line 407."""
+        from chuk_tool_processor.registry.decorators import tool
+
+        with patch("chuk_tool_processor.registry.decorators._PENDING_REGISTRATIONS", []) as pending:
+
+            @tool(name="test_via_tool", namespace="custom")
+            class ToolViaAlias(ValidatedTool):
+                class Arguments(BaseModel):
+                    value: str
+
+                async def _execute(self, value: str):
+                    return {"result": value}
+
+            # Should work identically to register_tool
+            assert len(pending) == 1
+            assert hasattr(ToolViaAlias, "_tool_registration_info")
+            assert ToolViaAlias._tool_registration_info["name"] == "test_via_tool"
+            assert ToolViaAlias._tool_registration_info["namespace"] == "custom"

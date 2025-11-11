@@ -97,6 +97,8 @@ async def test_get_tool_strict_raises(registry):
 
 @pytest.mark.asyncio
 async def test_list_tools_and_namespaces(registry):
+    from chuk_tool_processor.registry.metadata import ToolInfo
+
     # Empty initially
     assert await registry.list_tools() == []
     assert await registry.list_namespaces() == []
@@ -107,10 +109,13 @@ async def test_list_tools_and_namespaces(registry):
 
     # List all
     all_tools = set(await registry.list_tools())
-    assert all_tools == {("default", "AsyncTool"), ("other", "NoDocTool")}
+    assert all_tools == {
+        ToolInfo(namespace="default", name="AsyncTool"),
+        ToolInfo(namespace="other", name="NoDocTool"),
+    }
 
     # List just default
-    assert await registry.list_tools(namespace="default") == [("default", "AsyncTool")]
+    assert await registry.list_tools(namespace="default") == [ToolInfo(namespace="default", name="AsyncTool")]
 
     # List unknown namespace -> empty
     assert await registry.list_tools(namespace="missing") == []
@@ -154,8 +159,10 @@ async def test_get_tool_strict_raises_on_missing(registry):
     with pytest.raises(ToolNotFoundError) as exc_info:
         await registry.get_tool_strict("NonExistentTool", namespace="default")
 
-    # Verify the error message includes the namespace and name
-    assert "default.NonExistentTool" in str(exc_info.value)
+    # Verify the error message includes the namespace and name (new format)
+    error_message = str(exc_info.value)
+    assert "NonExistentTool" in error_message
+    assert "namespace 'default'" in error_message
 
 
 @pytest.mark.asyncio

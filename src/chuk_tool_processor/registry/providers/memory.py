@@ -11,7 +11,7 @@ from typing import Any
 
 from chuk_tool_processor.core.exceptions import ToolNotFoundError
 from chuk_tool_processor.registry.interface import ToolRegistryInterface
-from chuk_tool_processor.registry.metadata import ToolMetadata
+from chuk_tool_processor.registry.metadata import ToolInfo, ToolMetadata
 
 
 class InMemoryToolRegistry(ToolRegistryInterface):
@@ -85,7 +85,17 @@ class InMemoryToolRegistry(ToolRegistryInterface):
         """Get a tool with strict validation, raising if not found."""
         tool = await self.get_tool(name, namespace)
         if tool is None:
-            raise ToolNotFoundError(f"{namespace}.{name}")
+            # Gather helpful context for the error message
+            all_tools = await self.list_tools()
+            available_tools = [(t.namespace, t.name) for t in all_tools]
+            available_namespaces = await self.list_namespaces()
+
+            raise ToolNotFoundError(
+                tool_name=name,
+                namespace=namespace,
+                available_tools=available_tools,
+                available_namespaces=available_namespaces,
+            )
         return tool
 
     async def get_metadata(self, name: str, namespace: str = "default") -> ToolMetadata | None:
@@ -96,16 +106,22 @@ class InMemoryToolRegistry(ToolRegistryInterface):
     # listing helpers
     # ------------------------------------------------------------------ #
 
-    async def list_tools(self, namespace: str | None = None) -> list[tuple[str, str]]:
+    async def list_tools(self, namespace: str | None = None) -> list[ToolInfo]:
         """
-        Return a list of ``(namespace, name)`` tuples asynchronously.
+        Return a list of ToolInfo objects asynchronously.
+
+        Args:
+            namespace: Optional namespace filter.
+
+        Returns:
+            List of ToolInfo objects with namespace and name.
         """
         if namespace:
-            return [(namespace, n) for n in self._tools.get(namespace, {})]
+            return [ToolInfo(namespace=namespace, name=n) for n in self._tools.get(namespace, {})]
 
-        result: list[tuple[str, str]] = []
+        result: list[ToolInfo] = []
         for ns, tools in self._tools.items():
-            result.extend((ns, n) for n in tools)
+            result.extend(ToolInfo(namespace=ns, name=n) for n in tools)
         return result
 
     async def list_namespaces(self) -> list[str]:

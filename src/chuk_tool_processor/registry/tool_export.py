@@ -42,14 +42,14 @@ async def _build_openai_name_cache() -> None:
         # Get all tools and their names
         tools_list = await reg.list_tools()
 
-        for ns, key in tools_list:
+        for tool_info in tools_list:
             # Get the tool
-            tool = await reg.get_tool(key, ns)
+            tool = await reg.get_tool(tool_info.name, tool_info.namespace)
             if tool is None:
                 continue
 
             # ▸ registry key -> tool
-            _OPENAI_NAME_CACHE[key] = tool
+            _OPENAI_NAME_CACHE[tool_info.name] = tool
 
             # ▸ class name -> tool (legacy)
             _OPENAI_NAME_CACHE[tool.__class__.__name__] = tool
@@ -86,9 +86,9 @@ async def openai_functions() -> list[dict]:
     # List all tools
     tools_list = await reg.list_tools()
 
-    for ns, key in tools_list:
+    for tool_info in tools_list:
         # Get each tool
-        tool = await reg.get_tool(key, ns)
+        tool = await reg.get_tool(tool_info.name, tool_info.namespace)
         if tool is None:
             continue
 
@@ -96,7 +96,7 @@ async def openai_functions() -> list[dict]:
             # Get the OpenAI spec
             spec = tool.to_openai()
             # Override the name to ensure round-trip consistency
-            spec["function"]["name"] = key
+            spec["function"]["name"] = tool_info.name
             specs.append(spec)
         except (AttributeError, TypeError):
             # Skip tools that don't support OpenAI format
@@ -170,16 +170,16 @@ async def export_tools_as_openapi(
     # List all tools
     tools_list = await reg.list_tools()
 
-    for ns, key in tools_list:
+    for tool_info in tools_list:
         # Get tool and metadata
-        tool = await reg.get_tool(key, ns)
-        metadata = await reg.get_metadata(key, ns)
+        tool = await reg.get_tool(tool_info.name, tool_info.namespace)
+        metadata = await reg.get_metadata(tool_info.name, tool_info.namespace)
 
         if tool is None or metadata is None:
             continue
 
         # Create path
-        path = f"/{ns}/{key}"
+        path = f"/{tool_info.namespace}/{tool_info.name}"
 
         # Get schemas from tool if available
         arg_schema = None
@@ -187,23 +187,23 @@ async def export_tools_as_openapi(
 
         if hasattr(tool, "Arguments") and hasattr(tool.Arguments, "model_json_schema"):
             arg_schema = tool.Arguments.model_json_schema()
-            schemas[f"{key}Args"] = arg_schema
+            schemas[f"{tool_info.name}Args"] = arg_schema
 
         if hasattr(tool, "Result") and hasattr(tool.Result, "model_json_schema"):
             result_schema = tool.Result.model_json_schema()
-            schemas[f"{key}Result"] = result_schema
+            schemas[f"{tool_info.name}Result"] = result_schema
 
         # Add path
         paths[path] = {
             "post": {
-                "summary": metadata.description or f"Execute {key}",
-                "operationId": f"execute_{ns}_{key}",
-                "tags": [ns],
+                "summary": metadata.description or f"Execute {tool_info.name}",
+                "operationId": f"execute_{tool_info.namespace}_{tool_info.name}",
+                "tags": [tool_info.namespace],
                 "requestBody": {
                     "required": True,
                     "content": {
                         "application/json": {
-                            "schema": {"$ref": f"#/components/schemas/{key}Args"} if arg_schema else {}
+                            "schema": {"$ref": f"#/components/schemas/{tool_info.name}Args"} if arg_schema else {}
                         }
                     },
                 },
@@ -212,7 +212,9 @@ async def export_tools_as_openapi(
                         "description": "Successful operation",
                         "content": {
                             "application/json": {
-                                "schema": {"$ref": f"#/components/schemas/{key}Result"} if result_schema else {}
+                                "schema": {"$ref": f"#/components/schemas/{tool_info.name}Result"}
+                                if result_schema
+                                else {}
                             }
                         },
                     },

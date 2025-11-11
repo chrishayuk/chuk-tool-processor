@@ -9,7 +9,7 @@ Updated to support the latest MCP transports:
 """
 
 from chuk_tool_processor.mcp.mcp_tool import MCPTool
-from chuk_tool_processor.mcp.models import MCPServerConfig, MCPTransport
+from chuk_tool_processor.mcp.models import MCPConfig, MCPServerConfig, MCPTransport
 from chuk_tool_processor.mcp.register_mcp_tools import register_mcp_tools
 from chuk_tool_processor.mcp.setup_mcp_http_streamable import setup_mcp_http_streamable
 from chuk_tool_processor.mcp.setup_mcp_sse import setup_mcp_sse
@@ -24,6 +24,7 @@ __all__ = [
     "HTTPStreamableTransport",
     "StreamManager",
     "MCPTool",
+    "MCPConfig",
     "MCPServerConfig",
     "MCPTransport",
     "register_mcp_tools",

@@ -239,6 +239,17 @@ def register_tool(name: str | None = None, namespace: str = "default", **metadat
 
     This decorator automatically adds subprocess serialization support,
     making tools compatible with both InProcessStrategy and SubprocessStrategy.
+
+    Args:
+        name: Optional tool name. If not provided, uses the class name.
+        namespace: Namespace for the tool (default: "default").
+        **metadata: Additional metadata for the tool.
+
+    Example:
+        >>> @register_tool(name="calculator", namespace="math")
+        ... class Calculator:
+        ...     async def execute(self, a: int, b: int) -> int:
+        ...         return a + b
     """
 
     def decorator(cls: type[T]) -> type[T]:
@@ -363,6 +374,37 @@ def discover_decorated_tools() -> list[type]:
                 pass
 
     return tools
+
+
+# --------------------------------------------------------------------------- #
+# Ergonomic alias for register_tool
+# --------------------------------------------------------------------------- #
+def tool(name: str | None = None, namespace: str = "default", **metadata):
+    """
+    Ergonomic alias for @register_tool decorator.
+
+    This is a shorter, more intuitive name for the register_tool decorator.
+    Use whichever you prefer - they're identical in functionality.
+
+    Args:
+        name: Optional tool name. If not provided, uses the class name.
+        namespace: Namespace for the tool (default: "default").
+        **metadata: Additional metadata for the tool.
+
+    Example:
+        >>> # Short and clean
+        >>> @tool(name="add", namespace="math")
+        ... class AddTool:
+        ...     async def execute(self, a: int, b: int) -> int:
+        ...         return a + b
+        >>>
+        >>> # Equivalent to:
+        >>> @register_tool(name="add", namespace="math")
+        ... class AddTool:
+        ...     async def execute(self, a: int, b: int) -> int:
+        ...         return a + b
+    """
+    return register_tool(name=name, namespace=namespace, **metadata)
 
 
 # Shutdown handling

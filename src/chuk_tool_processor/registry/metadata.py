@@ -11,6 +11,32 @@ from typing import Any
 from pydantic import BaseModel, Field, model_validator
 
 
+class ToolInfo(BaseModel):
+    """
+    Information about a registered tool (namespace and name).
+
+    This is a clear, type-safe alternative to plain tuples for tool listings.
+
+    Attributes:
+        namespace: The namespace the tool belongs to.
+        name: The name of the tool.
+
+    Example:
+        >>> tool = ToolInfo(namespace="math", name="add")
+        >>> print(f"{tool.namespace}:{tool.name}")
+        math:add
+    """
+
+    model_config = {"frozen": True}  # Make immutable and hashable
+
+    namespace: str = Field(..., description="Namespace the tool belongs to")
+    name: str = Field(..., description="Tool name")
+
+    def __str__(self) -> str:
+        """String representation in namespace:name format."""
+        return f"{self.namespace}:{self.name}"
+
+
 class ToolMetadata(BaseModel):
     """
     Metadata for registered tools.

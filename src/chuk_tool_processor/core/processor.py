@@ -440,8 +440,8 @@ class ToolProcessor:
 
                 # Check if any tools are unknown - search across all namespaces
                 unknown_tools = []
-                all_tools = await self.registry.list_tools()  # Returns list of (namespace, name) tuples
-                tool_names_in_registry = {name for ns, name in all_tools}
+                all_tools = await self.registry.list_tools()  # Returns list of ToolInfo objects
+                tool_names_in_registry = {tool.name for tool in all_tools}
 
                 for call in calls:
                     if call.tool not in tool_names_in_registry:
@@ -675,9 +675,9 @@ class ToolProcessor:
         if self.registry is None:
             raise RuntimeError("Registry not initialized")
 
-        # Get tool tuples and extract names
-        tool_tuples = await self.registry.list_tools()
-        return [name for _, name in tool_tuples]
+        # Get ToolInfo objects and extract names
+        tools = await self.registry.list_tools()
+        return [tool.name for tool in tools]
 
     async def get_tool_count(self) -> int:
         """

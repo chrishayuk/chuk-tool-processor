@@ -1,6 +1,7 @@
 # chuk_tool_processor/exceptions.py
+from difflib import get_close_matches
 from enum import Enum
-from typing import Any
+from typing import Any, cast
 
 
 class ErrorCode(str, Enum):
@@ -73,13 +74,63 @@ class ToolProcessorError(Exception):
 class ToolNotFoundError(ToolProcessorError):
     """Raised when a requested tool is not found in the registry."""
 
-    def __init__(self, tool_name: str, available_tools: list[str] | None = None):
+    def __init__(
+        self,
+        tool_name: str,
+        namespace: str = "default",
+        available_tools: list[tuple[str, str]] | list[str] | None = None,
+        available_namespaces: list[str] | None = None,
+    ):
         self.tool_name = tool_name
-        details: dict[str, Any] = {"tool_name": tool_name}
+        self.namespace = namespace
+
+        # Build helpful error message
+        message_parts = [f"Tool '{tool_name}' not found in namespace '{namespace}'"]
+
+        # Find similar tool names using fuzzy matching
+        similar_tools: list[str] = []
+        if available_tools:
+            # Handle both tuple format (namespace, name) and string format
+            if isinstance(available_tools[0], tuple):
+                # Type narrowing: cast to the expected type
+                tuple_tools = cast(list[tuple[str, str]], available_tools)
+                all_tool_names = [name for _, name in tuple_tools]
+                # Also check for namespace:name format
+                full_names = [f"{ns}:{name}" for ns, name in tuple_tools]
+                similar_in_namespace = get_close_matches(tool_name, all_tool_names, n=3, cutoff=0.6)
+                similar_full = get_close_matches(f"{namespace}:{tool_name}", full_names, n=3, cutoff=0.6)
+                similar_tools = list(similar_in_namespace) + list(similar_full)
+            else:
+                # Type narrowing: cast to the expected type
+                str_tools = cast(list[str], available_tools)
+                similar_tools = list(get_close_matches(tool_name, str_tools, n=3, cutoff=0.6))
+
+        if similar_tools:
+            message_parts.append(f"\n\nDid you mean: {', '.join(similar_tools)}?")
+
+        # Add available namespaces
+        if available_namespaces:
+            message_parts.append(f"\n\nAvailable namespaces: {', '.join(available_namespaces)}")
+
+        # Add helpful tip
+        message_parts.append(
+            "\n\nTip: Use `await registry.list_tools()` to see all registered tools, "
+            "or `await registry.list_namespaces()` to see available namespaces."
+        )
+
+        message = "".join(message_parts)
+
+        # Store details
+        details: dict[str, Any] = {"tool_name": tool_name, "namespace": namespace}
         if available_tools:
             details["available_tools"] = available_tools
+        if available_namespaces:
+            details["available_namespaces"] = available_namespaces
+        if similar_tools:
+            details["suggestions"] = similar_tools
+
         super().__init__(
-            f"Tool '{tool_name}' not found in registry",
+            message,
             code=ErrorCode.TOOL_NOT_FOUND,
             details=details,
         )

@@ -32,7 +32,10 @@ class TestToolNotFoundError:
         # Then
         assert isinstance(exception, ToolProcessorError)
         assert exception.tool_name == tool_name
-        assert str(exception) == f"Tool '{tool_name}' not found in registry"
+        assert exception.namespace == "default"
+        # New enhanced error message includes helpful tips
+        assert f"Tool '{tool_name}' not found in namespace 'default'" in str(exception)
+        assert "Tip:" in str(exception)
 
 
 class TestToolExecutionError:

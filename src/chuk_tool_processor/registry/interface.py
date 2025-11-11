@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import Any, Protocol, TypeVar, runtime_checkable
 
 # imports
-from chuk_tool_processor.registry.metadata import ToolMetadata
+from chuk_tool_processor.registry.metadata import ToolInfo, ToolMetadata
 
 T = TypeVar("T")
 
@@ -80,7 +80,7 @@ class ToolRegistryInterface(Protocol):
         """
         ...  # pragma: no cover
 
-    async def list_tools(self, namespace: str | None = None) -> list[tuple[str, str]]:
+    async def list_tools(self, namespace: str | None = None) -> list[ToolInfo]:
         """
         List all registered tool names asynchronously, optionally filtered by namespace.
 
@@ -88,7 +88,12 @@ class ToolRegistryInterface(Protocol):
             namespace: Optional namespace filter.
 
         Returns:
-            List of (namespace, name) tuples.
+            List of ToolInfo objects containing namespace and name.
+
+        Example:
+            >>> tools = await registry.list_tools()
+            >>> for tool in tools:
+            ...     print(f"{tool.namespace}:{tool.name}")
         """
         ...  # pragma: no cover
 

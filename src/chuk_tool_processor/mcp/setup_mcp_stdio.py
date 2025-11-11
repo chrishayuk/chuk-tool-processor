@@ -21,7 +21,7 @@ from chuk_tool_processor.mcp.register_mcp_tools import register_mcp_tools
 from chuk_tool_processor.mcp.stream_manager import StreamManager
 
 if TYPE_CHECKING:
-    from chuk_tool_processor.mcp.models import MCPServerConfig
+    from chuk_tool_processor.mcp.models import MCPConfig, MCPServerConfig
 
 logger = get_logger("chuk_tool_processor.mcp.setup_stdio")
 
@@ -31,8 +31,12 @@ logger = get_logger("chuk_tool_processor.mcp.setup_stdio")
 # --------------------------------------------------------------------------- #
 async def setup_mcp_stdio(  # noqa: C901 - long but just a config facade
     *,
+    config: MCPConfig | None = None,  # NEW: Clean config object approach
     config_file: str | None = None,  # NOW OPTIONAL - for backward compatibility
-    servers: list[str] | list[dict[str, Any]] | list[MCPServerConfig],  # Can be server names, dicts, OR Pydantic models
+    servers: list[str]
+    | list[dict[str, Any]]
+    | list[MCPServerConfig]
+    | None = None,  # Can be server names, dicts, OR Pydantic models
     server_names: dict[int, str] | None = None,
     default_timeout: float = 10.0,
     initialization_timeout: float = 60.0,
@@ -52,6 +56,7 @@ async def setup_mcp_stdio(  # noqa: C901 - long but just a config facade
     Call with ``await`` from your async context.
 
     Args:
+        config: MCPConfig object with all settings (BEST DX - recommended!)
         config_file: Optional config file path (legacy mode)
         servers: Can be:
             - List of server names (legacy, requires config_file)
@@ -74,7 +79,24 @@ async def setup_mcp_stdio(  # noqa: C901 - long but just a config facade
         Tuple of (ToolProcessor, StreamManager)
 
     Examples:
-        # Best DX (Pydantic models):
+        # BEST DX (MCPConfig):
+        from chuk_tool_processor.mcp import MCPConfig, MCPServerConfig
+
+        processor, manager = await setup_mcp_stdio(
+            config=MCPConfig(
+                servers=[
+                    MCPServerConfig(
+                        name="echo",
+                        command="uvx",
+                        args=["chuk-mcp-echo", "stdio"],
+                    ),
+                ],
+                namespace="tools",
+                enable_caching=True,
+            )
+        )
+
+        # Good DX (Pydantic models):
         from chuk_tool_processor.mcp import MCPServerConfig, MCPTransport
 
         processor, manager = await setup_mcp_stdio(
@@ -89,14 +111,6 @@ async def setup_mcp_stdio(  # noqa: C901 - long but just a config facade
             namespace="tools",
         )
 
-        # New DX (dicts, no config file):
-        processor, manager = await setup_mcp_stdio(
-            servers=[
-                {"name": "echo", "command": "uvx", "args": ["chuk-mcp-echo", "stdio"]},
-            ],
-            namespace="tools",
-        )
-
         # Legacy (with config file):
         processor, manager = await setup_mcp_stdio(
             config_file="mcp_config.json",
@@ -105,7 +119,32 @@ async def setup_mcp_stdio(  # noqa: C901 - long but just a config facade
         )
     """
     # Import here to avoid circular dependency at module level
+    from chuk_tool_processor.mcp.models import MCPConfig as MCPConfigModel
     from chuk_tool_processor.mcp.models import MCPServerConfig as MCPServerConfigModel
+
+    # If MCPConfig is provided, use it to override all parameters
+    if config is not None:
+        if not isinstance(config, MCPConfigModel):
+            raise TypeError("config must be an MCPConfig instance")
+
+        config_file = config.config_file
+        servers = config.servers
+        server_names = config.server_names
+        default_timeout = config.default_timeout
+        initialization_timeout = config.initialization_timeout
+        max_concurrency = config.max_concurrency
+        enable_caching = config.enable_caching
+        cache_ttl = config.cache_ttl
+        enable_rate_limiting = config.enable_rate_limiting
+        global_rate_limit = config.global_rate_limit
+        tool_rate_limits = config.tool_rate_limits
+        enable_retries = config.enable_retries
+        max_retries = config.max_retries
+        namespace = config.namespace
+
+    # Ensure servers is provided
+    if servers is None:
+        raise ValueError("Either 'config' or 'servers' must be provided")
 
     # Check what format the servers are in
     if servers and isinstance(servers[0], str):

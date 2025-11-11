@@ -68,15 +68,15 @@ Works with OpenAI, Anthropic, local models (Ollama/MLX/vLLM), and any framework 
 
 ```python
 import asyncio
-from chuk_tool_processor import ToolProcessor, register_tool, initialize
+from chuk_tool_processor import ToolProcessor, tool
 
-@register_tool(name="weather")
+@tool(name="weather")  # Clean decorator syntax
 class WeatherTool:
     async def execute(self, city: str) -> dict:
         return {"temp": 72, "condition": "sunny", "city": city}
 
 async def main():
-    await initialize()
+    # No need for initialize() - auto-initializes on first use!
     async with ToolProcessor(enable_caching=True, enable_retries=True) as p:
         # Works with OpenAI, Anthropic, or JSON formats
         result = await p.process('<tool name="weather" args=\'{"city": "SF"}\'/>')
@@ -346,10 +346,10 @@ Copy-paste this into a file and run it:
 
 ```python
 import asyncio
-from chuk_tool_processor import ToolProcessor, register_tool, initialize
+from chuk_tool_processor import ToolProcessor, tool
 
-# Step 1: Define a tool
-@register_tool(name="calculator")
+# Step 1: Define a tool with the clean @tool decorator
+@tool(name="calculator")
 class Calculator:
     async def execute(self, operation: str, a: float, b: float) -> dict:
         ops = {"add": a + b, "multiply": a * b, "subtract": a - b}
@@ -359,7 +359,7 @@ class Calculator:
 
 # Step 2: Process LLM output
 async def main():
-    await initialize()
+    # No initialize() needed - it auto-initializes!
 
     # Use context manager for automatic cleanup
     async with ToolProcessor() as processor:
@@ -384,9 +384,86 @@ asyncio.run(main())
 - ✅ Automatic timeouts, retries, and caching
 - ✅ Clean resource management (context manager)
 - ✅ Full type checking support
+- ✅ Auto-initialization (no boilerplate!)
 
 > **Why not just use OpenAI tool calls?**
 > OpenAI's function calling is great for parsing, but you still need: parsing multiple formats (Anthropic XML, etc.), timeouts, retries, rate limits, caching, subprocess isolation, connecting to external MCP servers, and **per-tool** policy control with cross-provider parsing and MCP fan-out. CHUK Tool Processor **is** that missing middle layer.
+
+### Enhanced Developer Experience
+
+CHUK Tool Processor provides intuitive APIs and helpful error messages:
+
+**1. Clean Decorator Syntax**
+```python
+from chuk_tool_processor import tool
+
+@tool(name="calculator")  # Short and clean!
+class Calculator:
+    async def execute(self, a: int, b: int) -> int:
+        return a + b
+```
+
+**2. Auto-Initialization (No Boilerplate)**
+```python
+from chuk_tool_processor import ToolProcessor
+
+# No initialize() needed - it auto-initializes!
+async with ToolProcessor() as p:
+    results = await p.process(llm_output)
+```
+
+**3. Type-Safe Tool Discovery**
+```python
+from chuk_tool_processor import get_default_registry, ToolInfo
+
+registry = await get_default_registry()
+
+# List all registered tools with clear, typed results
+tools = await registry.list_tools()
+for tool in tools:  # Each tool is a ToolInfo object
+    print(f"{tool.namespace}:{tool.name}")  # Clear attribute access!
+    # No more confusing tuple unpacking: (namespace, name) vs (name, namespace)?
+```
+
+**4. Helpful Error Messages**
+```python
+# Typo in tool name? Get helpful suggestions!
+try:
+    await registry.get_tool_strict("calcuator", namespace="default")
+except Exception as e:
+    print(e)
+    # Output:
+    # Tool 'calcuator' not found in namespace 'default'
+    #
+    # Did you mean: calculator?
+    #
+    # Available namespaces: default, math, mcp
+    #
+    # Tip: Use `await registry.list_tools()` to see all registered tools
+```
+
+**5. Clean MCP Configuration**
+```python
+from chuk_tool_processor.mcp import setup_mcp_stdio, MCPConfig, MCPServerConfig
+
+# Clean Pydantic config object instead of 14+ parameters!
+processor, manager = await setup_mcp_stdio(
+    config=MCPConfig(
+        servers=[MCPServerConfig(name="echo", command="uvx", args=["mcp-echo"])],
+        namespace="tools",
+        enable_caching=True,
+        cache_ttl=600,
+    )
+)
+```
+
+**Key improvements:**
+- ✅ **`@tool` decorator**: Shorter, cleaner than `@register_tool`
+- ✅ **Auto-initialization**: No need for explicit `initialize()` calls
+- ✅ **Type-safe tool listing**: `ToolInfo` objects instead of confusing tuples
+- ✅ **Helpful errors**: Fuzzy matching suggestions when tools aren't found
+- ✅ **MCPConfig**: Clean Pydantic model instead of 14+ parameters
+- ✅ **Better discoverability**: Clear guidance on how to explore available tools
 
 ## Quick Decision Tree (Commit This to Memory)
 
@@ -397,8 +474,8 @@ asyncio.run(main())
 │   ⚠️ No → IsolatedStrategy (sandboxed)     │
 │                                          │
 │ Where do your tools live?                │
-│   📦 Local → @register_tool               │
-│   🌐 Remote → setup_mcp_http_streamable    │
+│   📦 Local → @tool decorator              │
+│   🌐 Remote → setup_mcp_* with MCPConfig  │
 ╰──────────────────────────────────────────╯
 ```
 
@@ -408,22 +485,25 @@ asyncio.run(main())
 
 Understanding the lifecycle helps you use CHUK Tool Processor correctly:
 
-1. **`await initialize()`** — loads the global registry; call **once per process** at application startup
+1. **Auto-initialization** — Registry auto-initializes on first access (or call `await initialize()` explicitly)
 2. Create a **`ToolProcessor(...)`** (or use the one returned by `setup_mcp_*`)
 3. Use **`async with ToolProcessor() as p:`** to ensure cleanup
 4. **`setup_mcp_*`** returns `(processor, manager)` — reuse that `processor`
 5. If you need a custom registry, pass it explicitly to the strategy
 6. You rarely need `get_default_registry()` unless you're composing advanced setups
 
-**⚠️ Important:** `initialize()` must run **once per process**, not once per request or processor instance. Running it multiple times will duplicate tools in the registry.
+**New in this version:** The registry auto-initializes when you create a `ToolProcessor` or access `get_default_registry()`, so you can skip the explicit `initialize()` call in most cases!
 
 ```python
-# Standard pattern
-await initialize()  # Step 1: Register tools
-
-async with ToolProcessor() as p:  # Step 2-3: Create + auto cleanup
+# New simplified pattern (auto-initialization)
+async with ToolProcessor() as p:  # Auto-initializes on first use!
     results = await p.process(llm_output)
-    # Step 4: Processor automatically cleaned up on exit
+    # Processor automatically cleaned up on exit
+
+# Traditional explicit pattern (still works)
+await initialize()  # Explicit initialization
+async with ToolProcessor() as p:
+    results = await p.process(llm_output)
 ```
 
 ## Production Features by Example
@@ -590,7 +670,41 @@ asyncio.run(main())
 
 See `examples/04_mcp_integration/notion_oauth.py` for complete OAuth flow.
 
-**Pattern 3: Local SQLite database via STDIO**
+**Pattern 3: Local SQLite database via STDIO (New Clean API)**
+```python
+import asyncio
+from chuk_tool_processor.mcp import setup_mcp_stdio, MCPConfig, MCPServerConfig
+
+async def main():
+    # NEW: Clean Pydantic config approach (recommended!)
+    processor, manager = await setup_mcp_stdio(
+        config=MCPConfig(
+            servers=[
+                MCPServerConfig(
+                    name="sqlite",
+                    command="uvx",
+                    args=["mcp-server-sqlite", "--db-path", "./app.db"],
+                )
+            ],
+            namespace="db",
+            initialization_timeout=120.0,  # First run downloads the package
+            enable_caching=True,
+            cache_ttl=600,
+        )
+    )
+
+    # Query your local database via MCP
+    results = await processor.process(
+        '<tool name="db.query" args=\'{"sql": "SELECT * FROM users LIMIT 10"}\'/>'
+    )
+    print(results[0].result)
+
+asyncio.run(main())
+```
+
+<details>
+<summary><strong>Legacy approach (still works)</strong></summary>
+
 ```python
 import asyncio
 import json
@@ -615,7 +729,7 @@ async def main():
         config_file="mcp_config.json",
         servers=["sqlite"],
         namespace="db",
-        initialization_timeout=120.0  # First run downloads the package
+        initialization_timeout=120.0
     )
 
     # Query your local database via MCP
@@ -626,6 +740,7 @@ async def main():
 
 asyncio.run(main())
 ```
+</details>
 
 See `examples/04_mcp_integration/stdio_sqlite.py` for complete working example.
 
@@ -909,7 +1024,11 @@ register_fn_tool(get_current_time, namespace="utilities")
 For production tools, use Pydantic validation:
 
 ```python
-@register_tool(name="weather")
+from chuk_tool_processor import tool
+from chuk_tool_processor.models import ValidatedTool
+from pydantic import BaseModel, Field
+
+@tool(name="weather")  # Clean @tool decorator
 class WeatherTool(ValidatedTool):
     class Arguments(BaseModel):
         location: str = Field(..., description="City name")
@@ -923,14 +1042,28 @@ class WeatherTool(ValidatedTool):
         return self.Result(temperature=22.5, conditions="Sunny")
 ```
 
+<details>
+<summary><strong>Alternative: Using @register_tool (still works)</strong></summary>
+
+```python
+from chuk_tool_processor import register_tool
+
+@register_tool(name="weather")  # Longer form, but identical functionality
+class WeatherTool(ValidatedTool):
+    # ... same as above
+```
+</details>
+
 #### StreamingTool (Real-time Results)
 
 For long-running operations that produce incremental results:
 
 ```python
+from chuk_tool_processor import tool
 from chuk_tool_processor.models import StreamingTool
+from pydantic import BaseModel
 
-@register_tool(name="file_processor")
+@tool(name="file_processor")  # Clean @tool decorator
 class FileProcessor(StreamingTool):
     class Arguments(BaseModel):
         file_path: str

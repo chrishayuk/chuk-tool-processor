@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chuk-tool-processor"
-version = "0.10"
+version = "0.11"
 description = "Async-native framework for registering, discovering, and executing tools referenced in LLM responses"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -146,6 +146,8 @@ disallow_incomplete_defs = true  # NEW: Require either all or no params typed
 module = [
     "chuk_mcp.*",
     "httpx_sse.*",
+    "opentelemetry.*",
+    "prometheus_client.*",
 ]
 ignore_missing_imports = true
 

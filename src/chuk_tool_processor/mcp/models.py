@@ -84,4 +84,68 @@ class MCPServerConfig(BaseModel):
             return result
 
 
-__all__ = ["MCPServerConfig", "MCPTransport"]
+class MCPConfig(BaseModel):
+    """
+    Configuration for MCP setup with sensible defaults.
+
+    This model provides a cleaner, type-safe way to configure MCP connections
+    instead of passing many individual parameters.
+
+    Example:
+        >>> from chuk_tool_processor.mcp import MCPConfig, MCPServerConfig
+        >>>
+        >>> # Simple configuration
+        >>> config = MCPConfig(
+        ...     servers=[
+        ...         MCPServerConfig(
+        ...             name="echo",
+        ...             command="uvx",
+        ...             args=["chuk-mcp-echo", "stdio"],
+        ...         )
+        ...     ],
+        ...     namespace="tools",
+        ... )
+        >>>
+        >>> # Advanced configuration
+        >>> config = MCPConfig(
+        ...     servers=[...],
+        ...     namespace="mcp",
+        ...     enable_caching=True,
+        ...     cache_ttl=600,
+        ...     enable_retries=True,
+        ...     max_retries=5,
+        ... )
+    """
+
+    # Server configuration
+    servers: list[MCPServerConfig] = Field(description="List of MCP server configurations")
+    server_names: dict[int, str] | None = Field(
+        default=None, description="Optional server name mapping (for legacy compatibility)"
+    )
+
+    # Basic settings
+    namespace: str = Field(default="mcp", description="Namespace for registered tools")
+    default_timeout: float = Field(default=10.0, description="Default timeout for operations in seconds")
+    initialization_timeout: float = Field(default=60.0, description="Timeout for initialization in seconds")
+    max_concurrency: int | None = Field(default=None, description="Maximum concurrent operations (None = unlimited)")
+
+    # Caching
+    enable_caching: bool = Field(default=True, description="Enable result caching")
+    cache_ttl: int = Field(default=300, description="Cache time-to-live in seconds")
+
+    # Rate limiting
+    enable_rate_limiting: bool = Field(default=False, description="Enable rate limiting")
+    global_rate_limit: int | None = Field(default=None, description="Global rate limit (requests per period)")
+    tool_rate_limits: dict[str, tuple] | None = Field(
+        default=None, description="Per-tool rate limits {tool_name: (requests, period)}"
+    )
+
+    # Retry configuration
+    enable_retries: bool = Field(default=True, description="Enable automatic retries on failure")
+    max_retries: int = Field(default=3, description="Maximum number of retry attempts")
+
+    # Legacy config file support
+    config_file: str | None = Field(default=None, description="Optional config file path (for backward compatibility)")
+
+
+__all__ = ["MCPServerConfig", "MCPTransport", "MCPConfig"]

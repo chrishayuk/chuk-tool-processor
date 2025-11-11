@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+from chuk_tool_processor.registry.metadata import ToolInfo
 from chuk_tool_processor.registry.tool_export import (
     _build_openai_name_cache,
     clear_name_cache,
@@ -43,7 +44,9 @@ class TestToolExport:
         await clear_name_cache()
 
         mock_registry = Mock()
-        mock_registry.list_tools = AsyncMock(return_value=[("default", "tool1"), ("custom", "tool2")])
+        mock_registry.list_tools = AsyncMock(
+            return_value=[ToolInfo(namespace="default", name="tool1"), ToolInfo(namespace="custom", name="tool2")]
+        )
         mock_registry.get_tool = AsyncMock(side_effect=[MockTool, MockTool])
 
         with patch("chuk_tool_processor.registry.tool_export.ToolRegistryProvider") as mock_provider:
@@ -77,7 +80,7 @@ class TestToolExport:
         await clear_name_cache()
 
         mock_registry = Mock()
-        mock_registry.list_tools = AsyncMock(return_value=[("default", "MyTool")])
+        mock_registry.list_tools = AsyncMock(return_value=[ToolInfo(namespace="default", name="MyTool")])
         mock_registry.get_tool = AsyncMock(return_value=MockTool)
 
         with patch("chuk_tool_processor.registry.tool_export.ToolRegistryProvider") as mock_provider:
@@ -104,7 +107,9 @@ class TestToolExport:
         await clear_name_cache()
 
         mock_registry = Mock()
-        mock_registry.list_tools = AsyncMock(return_value=[("default", "Tool1"), ("custom", "Tool2")])
+        mock_registry.list_tools = AsyncMock(
+            return_value=[ToolInfo(namespace="default", name="Tool1"), ToolInfo(namespace="custom", name="Tool2")]
+        )
         mock_registry.get_tool = AsyncMock(return_value=MockTool)
 
         with patch("chuk_tool_processor.registry.tool_export.ToolRegistryProvider") as mock_provider:
@@ -135,7 +140,7 @@ class TestToolExport:
             __name__ = "BasicTool"
 
         mock_registry = Mock()
-        mock_registry.list_tools = AsyncMock(return_value=[("default", "BasicTool")])
+        mock_registry.list_tools = AsyncMock(return_value=[ToolInfo(namespace="default", name="BasicTool")])
         mock_registry.get_tool = AsyncMock(return_value=BasicTool)
 
         with patch("chuk_tool_processor.registry.tool_export.ToolRegistryProvider") as mock_provider:
@@ -175,7 +180,9 @@ class TestToolExport:
         await clear_name_cache()
 
         mock_registry = Mock()
-        mock_registry.list_tools = AsyncMock(return_value=[("default", "tool1"), ("default", "tool2")])
+        mock_registry.list_tools = AsyncMock(
+            return_value=[ToolInfo(namespace="default", name="tool1"), ToolInfo(namespace="default", name="tool2")]
+        )
         # First tool is None, second is valid
         mock_registry.get_tool = AsyncMock(side_effect=[None, MockTool])
 
@@ -192,7 +199,7 @@ class TestToolExport:
         await clear_name_cache()
 
         mock_registry = Mock()
-        mock_registry.list_tools = AsyncMock(return_value=[("default", "NullTool")])
+        mock_registry.list_tools = AsyncMock(return_value=[ToolInfo(namespace="default", name="NullTool")])
         mock_registry.get_tool = AsyncMock(return_value=None)
 
         with patch("chuk_tool_processor.registry.tool_export.ToolRegistryProvider") as mock_provider:
@@ -229,7 +236,7 @@ class TestToolExport:
         await clear_name_cache()
 
         mock_registry = Mock()
-        mock_registry.list_tools = AsyncMock(return_value=[("default", "KnownTool")])
+        mock_registry.list_tools = AsyncMock(return_value=[ToolInfo(namespace="default", name="KnownTool")])
         mock_registry.get_tool = AsyncMock(return_value=MockTool)
 
         with patch("chuk_tool_processor.registry.tool_export.ToolRegistryProvider") as mock_provider:
@@ -288,7 +295,7 @@ class TestExportToolsAsOpenAPI:
         )
 
         mock_registry = Mock()
-        mock_registry.list_tools = AsyncMock(return_value=[("default", "SchemaTool")])
+        mock_registry.list_tools = AsyncMock(return_value=[ToolInfo(namespace="default", name="SchemaTool")])
         mock_registry.get_tool = AsyncMock(return_value=ToolWithSchemas)
         mock_registry.get_metadata = AsyncMock(return_value=metadata)
 
@@ -311,7 +318,7 @@ class TestExportToolsAsOpenAPI:
         from chuk_tool_processor.registry.tool_export import export_tools_as_openapi
 
         mock_registry = Mock()
-        mock_registry.list_tools = AsyncMock(return_value=[("default", "NullTool")])
+        mock_registry.list_tools = AsyncMock(return_value=[ToolInfo(namespace="default", name="NullTool")])
         mock_registry.get_tool = AsyncMock(return_value=None)
         mock_registry.get_metadata = AsyncMock(return_value=None)
 
@@ -331,7 +338,7 @@ class TestExportToolsAsOpenAPI:
             pass
 
         mock_registry = Mock()
-        mock_registry.list_tools = AsyncMock(return_value=[("default", "SimpleTool")])
+        mock_registry.list_tools = AsyncMock(return_value=[ToolInfo(namespace="default", name="SimpleTool")])
         mock_registry.get_tool = AsyncMock(return_value=SimpleTool)
         mock_registry.get_metadata = AsyncMock(return_value=None)
 
@@ -354,7 +361,7 @@ class TestExportToolsAsOpenAPI:
         metadata = ToolMetadata(name="NoSchema", namespace="default", is_async=True, description="No schemas")
 
         mock_registry = Mock()
-        mock_registry.list_tools = AsyncMock(return_value=[("default", "NoSchema")])
+        mock_registry.list_tools = AsyncMock(return_value=[ToolInfo(namespace="default", name="NoSchema")])
         mock_registry.get_tool = AsyncMock(return_value=ToolWithoutSchemas)
         mock_registry.get_metadata = AsyncMock(return_value=metadata)
 
@@ -383,7 +390,9 @@ class TestExportToolsAsOpenAPI:
         metadata2 = ToolMetadata(name="Tool2", namespace="ns2", is_async=True, description="Tool 2")
 
         mock_registry = Mock()
-        mock_registry.list_tools = AsyncMock(return_value=[("ns1", "Tool1"), ("ns2", "Tool2")])
+        mock_registry.list_tools = AsyncMock(
+            return_value=[ToolInfo(namespace="ns1", name="Tool1"), ToolInfo(namespace="ns2", name="Tool2")]
+        )
         mock_registry.get_tool = AsyncMock(side_effect=[Tool1, Tool2])
         mock_registry.get_metadata = AsyncMock(side_effect=[metadata1, metadata2])
 

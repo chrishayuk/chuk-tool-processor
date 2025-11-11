@@ -59,11 +59,14 @@ class TestToolNotFoundError:
         """Test creating error without available tools list."""
         error = ToolNotFoundError("missing_tool")
 
-        assert str(error) == "Tool 'missing_tool' not found in registry"
+        # New enhanced error message includes namespace and helpful tips
+        assert "Tool 'missing_tool' not found in namespace 'default'" in str(error)
+        assert "Tip:" in str(error)
         assert error.code == ErrorCode.TOOL_NOT_FOUND
         assert error.tool_name == "missing_tool"
+        assert error.namespace == "default"
         assert error.details["tool_name"] == "missing_tool"
-        assert "available_tools" not in error.details
+        assert error.details["namespace"] == "default"
 
     def test_creation_with_available_tools(self):
         """Test creating error with available tools list."""

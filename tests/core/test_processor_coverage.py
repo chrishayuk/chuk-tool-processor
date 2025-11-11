@@ -57,11 +57,13 @@ class TestProcessorAdditionalCoverage:
     @pytest.mark.asyncio
     async def test_list_tools(self, mock_registry):
         """Test list_tools method (lines 673-680)."""
+        from chuk_tool_processor.registry.metadata import ToolInfo
+
         mock_registry.list_tools = AsyncMock(
             return_value=[
-                ("default", "tool1"),
-                ("default", "tool2"),
-                ("custom", "tool3"),
+                ToolInfo(namespace="default", name="tool1"),
+                ToolInfo(namespace="default", name="tool2"),
+                ToolInfo(namespace="custom", name="tool3"),
             ]
         )
 
@@ -86,10 +88,12 @@ class TestProcessorAdditionalCoverage:
     @pytest.mark.asyncio
     async def test_get_tool_count(self, mock_registry):
         """Test get_tool_count method (lines 694-700)."""
+        from chuk_tool_processor.registry.metadata import ToolInfo
+
         mock_registry.list_tools = AsyncMock(
             return_value=[
-                ("default", "tool1"),
-                ("default", "tool2"),
+                ToolInfo(namespace="default", name="tool1"),
+                ToolInfo(namespace="default", name="tool2"),
             ]
         )
 
