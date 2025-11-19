@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import json
 import re
 from typing import Any
 
@@ -12,6 +11,7 @@ from pydantic import ValidationError
 from chuk_tool_processor.logging import get_logger
 from chuk_tool_processor.models.tool_call import ToolCall
 from chuk_tool_processor.plugins.parsers.base import ParserPlugin
+from chuk_tool_processor.utils import fast_json as json
 
 __all__ = ["FunctionCallPlugin"]
 

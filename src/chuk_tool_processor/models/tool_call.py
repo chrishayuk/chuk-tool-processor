@@ -10,7 +10,7 @@ import json
 import uuid
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ToolCall(BaseModel):
@@ -31,17 +31,18 @@ class ToolCall(BaseModel):
     tool: str = Field(..., min_length=1, description="Name of the tool to call; must be non-empty")
     namespace: str = Field(default="default", description="Namespace the tool belongs to")
     arguments: dict[str, Any] = Field(default_factory=dict, description="Arguments to pass to the tool")
-    idempotency_key: str | None = Field(
-        None,
-        description="Idempotency key for deduplication. Auto-generated if not provided.",
-    )
+    _idempotency_key: str | None = None  # Cached value, computed lazily
 
-    @model_validator(mode="after")
-    def generate_idempotency_key(self) -> ToolCall:
-        """Generate idempotency key if not provided."""
-        if self.idempotency_key is None:
-            self.idempotency_key = self._compute_idempotency_key()
-        return self
+    def get_idempotency_key(self) -> str:
+        """
+        Get or compute idempotency key lazily.
+
+        PERFORMANCE: Only computed when explicitly needed, avoiding overhead
+        in hot paths where deduplication isn't required.
+        """
+        if self._idempotency_key is None:
+            self._idempotency_key = self._compute_idempotency_key()
+        return self._idempotency_key
 
     def _compute_idempotency_key(self) -> str:
         """

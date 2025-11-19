@@ -41,11 +41,23 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "chuk-mcp>=0.8.1",
+    "chuk-mcp>=0.9",
     "dotenv>=0.9.9",
     "psutil>=7.0.0",
     "pydantic>=2.11.3",
     "uuid>=1.30",
+]
+
+# Optional dependency groups
+[project.optional-dependencies]
+# Fast JSON parsing (2-3x faster than stdlib json)
+fast-json = [
+    "orjson>=3.10.0,<4",
+]
+
+# Full feature set with performance optimizations
+full = [
+    "orjson>=3.10.0,<4",
 ]
 
 # Tell setuptools to look in src/ for your a2a package
@@ -80,6 +92,7 @@ dev = [
     "bandit>=1.7.0",
     "pre-commit>=3.8.0",
     "coverage[toml]>=7.6.0",
+    "orjson>=3.10.0",
 ]
 
 observability = [

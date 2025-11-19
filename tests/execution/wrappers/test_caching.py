@@ -26,7 +26,7 @@ from chuk_tool_processor.models.tool_result import ToolResult
 # --------------------------------------------------------------------------- #
 def _hash_args(arguments: dict) -> str:
     """Return the MD5 hash that the cache uses internally."""
-    return hashlib.md5(json.dumps(arguments, sort_keys=True).encode()).hexdigest()
+    return hashlib.md5(json.dumps(arguments, sort_keys=True, default=str).encode()).hexdigest()
 
 
 class DummyExecutor:
@@ -277,7 +277,7 @@ async def test_executor_with_mixed_cache_hits_and_misses():
     # Add another call to cache directly - need to use the idempotency_key
     call4 = ToolCall(tool="t4", arguments={"d": 4})
     # Use the auto-generated idempotency_key as the cache key
-    await cache.set("t4", call4.idempotency_key, "direct_result", ttl=10)
+    await cache.set("t4", call4.get_idempotency_key(), "direct_result", ttl=10)
 
     # Now check the explicitly added cache item
     result2 = await wrapper.execute([call4])

@@ -232,7 +232,7 @@ class SubprocessStrategy(ExecutionStrategy):
                 await asyncio.wait_for(
                     loop.run_in_executor(self._process_pool, _pool_test_func), timeout=self.worker_init_timeout
                 )
-                logger.info("Process pool initialized with %d workers", self.max_workers)
+                logger.debug("Process pool initialized with %d workers", self.max_workers)
             except Exception as e:
                 # Clean up on initialization error
                 self._process_pool.shutdown(wait=False)

@@ -259,9 +259,38 @@ pip install chuk-tool-processor[observability]
 # With MCP extras
 pip install chuk-tool-processor[mcp]
 
+# With fast JSON serialization (2-3x faster, recommended for production)
+pip install chuk-tool-processor[fast-json]
+
 # All extras
 pip install chuk-tool-processor[all]
 ```
+
+</details>
+
+<details>
+<summary><strong>Performance Optimization (Optional)</strong></summary>
+
+For **2-3x faster JSON operations**, install with the `fast-json` extra:
+
+```bash
+pip install chuk-tool-processor[fast-json]
+```
+
+This installs [orjson](https://github.com/ijl/orjson), a fast C-based JSON library. When available, it's automatically used for JSON serialization/deserialization throughout the processor while maintaining full compatibility with stdlib json.
+
+**Benchmarks** (see `benchmarks/` for full results):
+
+| Operation | stdlib json | orjson | Speedup |
+|-----------|-------------|--------|---------|
+| Simple JSON (100 bytes) | 1.23 µs | 0.45 µs | **2.7x faster** |
+| Complex JSON (5 KB) | 12.5 µs | 4.2 µs | **3.0x faster** |
+| OpenAI tool calls | 8.9 µs | 3.1 µs | **2.9x faster** |
+
+**Notes:**
+- Falls back to stdlib json automatically if orjson is not installed
+- Hash computation uses stdlib json for consistency across environments
+- No code changes required—just install the extra
 
 </details>
 

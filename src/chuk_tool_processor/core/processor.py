@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
+import json as stdlib_json  # Use stdlib json for consistent hashing
 import time
 from typing import Any
 
@@ -29,6 +29,7 @@ from chuk_tool_processor.models.tool_call import ToolCall
 from chuk_tool_processor.models.tool_result import ToolResult
 from chuk_tool_processor.plugins.discovery import discover_default_plugins, plugin_registry
 from chuk_tool_processor.registry import ToolRegistryInterface, ToolRegistryProvider
+from chuk_tool_processor.utils import fast_json as json
 
 
 class ToolProcessor:
@@ -571,6 +572,9 @@ class ToolProcessor:
         """
         Extract tool calls from text using all available parsers.
 
+        PERFORMANCE: Uses content sniffing to try most likely parser first,
+        with early exit on success. Falls back to concurrent parsing if needed.
+
         Args:
             text: Text to parse.
 
@@ -581,6 +585,39 @@ class ToolProcessor:
 
         # Try each parser
         async with log_context_span("parsing", {"text_length": len(text)}):
+            # PERFORMANCE: Smart parser selection based on content hints
+            # Most inputs match exactly ONE format, so try the obvious one first
+            likely_parser = None
+
+            # Quick content sniffing (cheap string checks)
+            if '"tool_calls"' in text or '"function"' in text:
+                # Likely OpenAI format
+                likely_parser = next((p for p in self.parsers if "OpenAI" in p.__class__.__name__), None)
+            elif text.strip().startswith("{") and ('"name"' in text and '"arguments"' in text):
+                # Likely direct JSON tool format
+                likely_parser = next((p for p in self.parsers if "Json" in p.__class__.__name__), None)
+            elif "<tool" in text or "</tool>" in text:
+                # Likely XML format
+                likely_parser = next((p for p in self.parsers if "Xml" in p.__class__.__name__), None)
+
+            # PERFORMANCE: Early exit path - try likely parser first
+            if likely_parser:
+                try:
+                    result = await self._try_parser(likely_parser, text)
+                    if result and isinstance(result, list) and len(result) > 0:
+                        # Success! Return immediately without trying other parsers
+                        all_calls.extend(result)
+                        # Skip to deduplication
+                        if len(all_calls) <= 1:
+                            # Fast path: single call, no dedup needed
+                            return all_calls
+                        # Jump to dedup section
+                        return self._deduplicate_calls(all_calls)
+                except Exception:
+                    # Failed, fall through to try all parsers
+                    pass
+
+            # PERFORMANCE: Fallback - try all parsers concurrently
             parse_tasks = []
 
             # Create parsing tasks
@@ -591,12 +628,30 @@ class ToolProcessor:
             parser_results = await asyncio.gather(*parse_tasks, return_exceptions=True)
 
             # Collect successful results
-            for result in parser_results:
-                if isinstance(result, Exception):
-                    continue
-                # At this point, result is list[ToolCall], not an exception
-                if result and isinstance(result, list):
+            for result in parser_results:  # type: ignore[assignment]
+                # Skip exceptions (return_exceptions=True gives us Exception | result)
+                if isinstance(result, list):
+                    # Type narrowing: result is list[ToolCall] here, not BaseException
                     all_calls.extend(result)
+
+        # PERFORMANCE: Skip deduplication for single calls (common case)
+        return self._deduplicate_calls(all_calls)
+
+    def _deduplicate_calls(self, all_calls: list[ToolCall]) -> list[ToolCall]:
+        """
+        Remove duplicate tool calls from the list.
+
+        PERFORMANCE: Fast path for single calls (no dedup needed).
+
+        Args:
+            all_calls: List of tool calls (may contain duplicates).
+
+        Returns:
+            List of unique tool calls.
+        """
+        # PERFORMANCE: Fast path - no deduplication needed for 0 or 1 calls
+        if len(all_calls) <= 1:
+            return all_calls
 
         # ------------------------------------------------------------------ #
         # Remove duplicates - use a stable digest instead of hashing a
@@ -604,7 +659,8 @@ class ToolProcessor:
         # ------------------------------------------------------------------ #
         def _args_digest(args: dict[str, Any]) -> str:
             """Return a stable hash for any JSON-serialisable payload."""
-            blob = json.dumps(args, sort_keys=True, default=str)
+            # Use stdlib json for consistent hashing across orjson/stdlib
+            blob = stdlib_json.dumps(args, sort_keys=True, default=str)
             return hashlib.md5(blob.encode(), usedforsecurity=False).hexdigest()  # nosec B324
 
         unique_calls: dict[str, ToolCall] = {}

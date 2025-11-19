@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
+import json as stdlib_json  # Use stdlib json for consistent hashing
 from abc import ABC, abstractmethod
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -379,7 +379,8 @@ class CachingToolExecutor:
             MD5 hash of the sorted JSON representation
         """
         try:
-            blob = json.dumps(arguments, sort_keys=True, default=str)
+            # Use stdlib json for consistent hashing across orjson/stdlib
+            blob = stdlib_json.dumps(arguments, sort_keys=True, default=str)
             return hashlib.md5(blob.encode(), usedforsecurity=False).hexdigest()  # nosec B324
         except Exception as e:
             logger.warning(f"Error hashing arguments: {e}")
@@ -447,7 +448,8 @@ class CachingToolExecutor:
                     continue
 
                 # Use idempotency_key if available, otherwise hash arguments
-                cache_key = call.idempotency_key or self._hash_arguments(call.arguments)
+                # PERFORMANCE: Only compute idempotency key when caching is actually used
+                cache_key = call.get_idempotency_key()
 
                 # Trace cache lookup operation
                 with trace_cache_operation("lookup", call.tool):
@@ -515,7 +517,8 @@ class CachingToolExecutor:
                     logger.debug(f"Caching result for {call.tool} with TTL={ttl}s")
 
                     # Use idempotency_key if available, otherwise hash arguments
-                    cache_key = call.idempotency_key or self._hash_arguments(call.arguments)
+                    # PERFORMANCE: Only compute idempotency key when caching is actually used
+                    cache_key = call.get_idempotency_key()
 
                     # Trace and record cache set operation
                     # Bind loop variables to avoid B023 error
@@ -598,8 +601,9 @@ def invalidate_cache(tool: str, arguments: dict[str, Any] | None = None):
 
     async def _invalidate(cache: CacheInterface):
         if arguments is not None:
+            # Use stdlib json for consistent hashing across orjson/stdlib
             h = hashlib.md5(
-                json.dumps(arguments, sort_keys=True, default=str).encode(), usedforsecurity=False
+                stdlib_json.dumps(arguments, sort_keys=True, default=str).encode(), usedforsecurity=False
             ).hexdigest()  # nosec B324
             await cache.invalidate(tool, h)
             logger.debug(f"Invalidated cache entry for {tool} with specific arguments")
