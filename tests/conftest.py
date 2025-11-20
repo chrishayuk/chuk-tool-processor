@@ -1,6 +1,7 @@
 """Global pytest configuration and fixtures."""
 
 import sys
+
 import pytest
 
 
