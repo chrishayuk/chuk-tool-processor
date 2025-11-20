@@ -310,3 +310,33 @@ class TestFunctionCallPlugin:
         # The fallback JSON extraction should find this
         if len(calls) > 0:
             assert calls[0].tool == "extract_tool"
+
+    async def test_parse_text_with_invalid_nested_json(self, parser):
+        """Test handling text with JSON-like strings that aren't valid JSON."""
+        # Text with JSON-like patterns that will fail to parse
+        text = 'Some text {invalid json} and {"also": invalid} more text'
+
+        calls = await parser.try_parse(text)
+
+        # Should handle gracefully and return empty list
+        assert len(calls) == 0
+
+    async def test_parse_validation_error(self, parser):
+        """Test handling ValidationError when creating ToolCall."""
+        from unittest.mock import patch
+
+        # Create a payload that would normally work
+        data = {"function_call": {"name": "test_tool", "arguments": {}}}
+
+        # Mock ToolCall to raise ValidationError
+        with patch("chuk_tool_processor.plugins.parsers.function_call_tool.ToolCall") as mock_tool_call:
+            from pydantic import ValidationError as PydanticValidationError
+
+            mock_tool_call.side_effect = PydanticValidationError.from_exception_data(
+                "test", [{"type": "missing", "loc": ("field",), "msg": "field required", "input": {}}]
+            )
+
+            calls = await parser.try_parse(data)
+
+            # Should handle gracefully and return empty list
+            assert len(calls) == 0

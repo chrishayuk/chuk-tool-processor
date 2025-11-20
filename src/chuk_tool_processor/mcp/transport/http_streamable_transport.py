@@ -122,9 +122,9 @@ class HTTPStreamableTransport(MCPBaseTransport):
         if self.api_key and "Authorization" not in headers:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
-        # Add session ID if provided
+        # Add session ID if provided (use mcp-session-id header expected by MCP server)
         if self.session_id:
-            headers["X-Session-ID"] = self.session_id
+            headers["mcp-session-id"] = self.session_id
 
         return headers
 
@@ -641,6 +641,19 @@ class HTTPStreamableTransport(MCPBaseTransport):
             }
         )
         return metrics
+
+    def set_session_id(self, session_id: str | None) -> None:
+        """
+        Dynamically update the session ID for this transport.
+
+        This allows setting or changing the session ID after initialization,
+        which is useful when the session ID is only known at runtime.
+
+        Args:
+            session_id: New session ID to use, or None to clear it
+        """
+        self.session_id = session_id
+        logger.debug("Session ID updated: %s", session_id if session_id else "(cleared)")
 
     def reset_metrics(self) -> None:
         """Enhanced metrics reset preserving health state."""

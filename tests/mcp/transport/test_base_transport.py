@@ -246,3 +246,98 @@ class TestMCPBaseTransportRepr:
         repr_str = repr(transport)
         assert "calls:" not in repr_str
         assert "success:" not in repr_str
+
+
+class IncompleteTransport(MCPBaseTransport):
+    """Transport that only partially implements abstract methods."""
+
+    async def initialize(self) -> bool:
+        pass
+
+    async def close(self) -> None:
+        pass
+
+    async def send_ping(self) -> bool:
+        pass
+
+    def is_connected(self) -> bool:
+        pass
+
+    async def get_tools(self) -> list[dict]:
+        pass
+
+    async def call_tool(self, tool_name: str, arguments: dict, timeout: float | None = None) -> dict:
+        pass
+
+    async def list_resources(self) -> dict:
+        pass
+
+    async def list_prompts(self) -> dict:
+        pass
+
+    def get_metrics(self) -> dict:
+        pass
+
+    def reset_metrics(self) -> None:
+        pass
+
+
+class TestMCPBaseTransportAbstractMethods:
+    """Test abstract method implementations."""
+
+    @pytest.mark.asyncio
+    async def test_abstract_methods_return_none(self):
+        """Test that abstract method pass statements can be executed."""
+        transport = IncompleteTransport()
+
+        # Test all abstract methods
+        result = await transport.initialize()
+        assert result is None
+
+        await transport.close()
+
+        result = await transport.send_ping()
+        assert result is None
+
+        result = transport.is_connected()
+        assert result is None
+
+        result = await transport.get_tools()
+        assert result is None
+
+        result = await transport.call_tool("test", {})
+        assert result is None
+
+        result = await transport.list_resources()
+        assert result is None
+
+        result = await transport.list_prompts()
+        assert result is None
+
+        result = transport.get_metrics()
+        assert result is None
+
+        transport.reset_metrics()
+        # reset_metrics has no return value
+
+
+class TestMCPBaseTransportEdgeCases:
+    """Test edge cases in response normalization."""
+
+    def test_normalize_mcp_response_error_without_message(self):
+        """Test normalizing error response without message field."""
+        transport = ConcreteTransport()
+
+        # Dict error without message
+        response = {"error": {"code": 123}}
+        normalized = transport._normalize_mcp_response(response)
+        assert normalized == {"isError": True, "error": "Unknown error"}
+
+    def test_extract_mcp_content_single_dict_without_type(self):
+        """Test extracting content from dict without type field."""
+        transport = ConcreteTransport()
+
+        # Single item without type field
+        content = [{"data": "value"}]
+        result = transport._extract_mcp_content(content)
+        assert result == {"data": "value"}

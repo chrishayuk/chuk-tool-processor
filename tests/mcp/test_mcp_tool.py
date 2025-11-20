@@ -1,4 +1,5 @@
 # tests/mcp/test_mcp_tool.py
+import contextlib
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -482,3 +483,196 @@ class TestMCPTool:
         # Verify existing state was preserved
         assert tool.connection_state == ConnectionState.HEALTHY
         assert tool.stats.total_calls == 10
+
+    # ------------------------------------------------------------------ #
+    # Additional tests for missing coverage lines
+    # ------------------------------------------------------------------ #
+
+    @pytest.mark.asyncio
+    async def test_simple_execute_timeout_error(self, simple_mcp_tool, mock_stream_manager):
+        """Test _simple_execute with TimeoutError (lines 190-191)."""
+        # Setup timeout
+        mock_stream_manager.call_tool.side_effect = TimeoutError()
+
+        # Execute and verify timeout is raised
+        with pytest.raises(TimeoutError):
+            await simple_mcp_tool.execute(message="Hello", timeout=1.0)
+
+    @pytest.mark.asyncio
+    async def test_health_check_timeout_path(self, mock_stream_manager):
+        """Test health check timeout specific exception path (lines 339-341)."""
+        # Setup to not have transports attribute, forcing fallback to server_info
+        delattr(mock_stream_manager, "transports")
+
+        # Setup server_info to raise TimeoutError specifically
+        mock_stream_manager.get_server_info.side_effect = TimeoutError()
+
+        tool = MCPTool("test", mock_stream_manager, enable_resilience=True)
+
+        # Check health - should assume healthy despite timeout
+        is_healthy = await tool._is_stream_manager_healthy()
+
+        # New lenient behavior: timeout assumes healthy (line 341)
+        assert is_healthy is True
+
+    @pytest.mark.asyncio
+    async def test_execute_with_timeout_connection_error(self, mcp_tool, mock_stream_manager):
+        """Test _execute_with_timeout with connection error (line 302)."""
+        # Setup connection error
+        mock_stream_manager.call_tool.side_effect = Exception("Connection lost")
+
+        # Execute and verify state changes to DISCONNECTED
+        with contextlib.suppress(Exception):
+            await mcp_tool._execute_with_timeout(30.0, message="test")
+
+        # Verify connection state changed
+        assert mcp_tool.connection_state == ConnectionState.DISCONNECTED
+
+    @pytest.mark.asyncio
+    async def test_health_check_no_stream_manager(self):
+        """Test _is_stream_manager_healthy when _sm is None (line 318)."""
+        tool = MCPTool("test", stream_manager=None, enable_resilience=True)
+
+        # Check health
+        is_healthy = await tool._is_stream_manager_healthy()
+
+        # Should return False when no stream manager
+        assert is_healthy is False
+
+    @pytest.mark.asyncio
+    async def test_health_check_exception_path(self, mock_stream_manager):
+        """Test health check exception handling (lines 338-346)."""
+        # Setup to not have transports
+        delattr(mock_stream_manager, "transports")
+
+        # Setup server_info to raise an exception
+        mock_stream_manager.get_server_info.side_effect = Exception("Health check failed")
+
+        tool = MCPTool("test", mock_stream_manager, enable_resilience=True)
+
+        # Check health - should assume healthy despite exception
+        is_healthy = await tool._is_stream_manager_healthy()
+
+        # New lenient behavior: exceptions assume healthy
+        assert is_healthy is True
+
+    @pytest.mark.asyncio
+    async def test_circuit_breaker_closes_after_success(self, mock_stream_manager):
+        """Test circuit breaker closes after successful execution (lines 375-378)."""
+        # Create tool with low failure threshold
+        recovery_config = RecoveryConfig(circuit_breaker_threshold=2)
+        tool = MCPTool("echo", mock_stream_manager, enable_resilience=True, recovery_config=recovery_config)
+
+        # Open circuit breaker by causing failures
+        mock_stream_manager.call_tool.side_effect = Exception("Error")
+        for _ in range(3):
+            await tool.execute(message="test")
+
+        # Verify circuit is open
+        assert tool._circuit_open is True
+
+        # Now we need to wait for circuit breaker timeout or manually close it
+        # The circuit breaker won't execute if it's open, so we need to test _record_success directly
+        # First, manually set circuit_open to test the closing logic
+        tool._circuit_open = True
+        tool._circuit_open_time = 12345.0  # Set a time
+
+        # Now setup success and call _record_success
+        mock_stream_manager.call_tool.side_effect = None
+        mock_stream_manager.call_tool.return_value = {"isError": False, "content": "Success"}
+
+        # Call _record_success directly to test lines 375-378
+        await tool._record_success()
+
+        # Verify circuit breaker closed
+        assert tool._circuit_open is False
+        assert tool._circuit_open_time is None
+        assert tool.connection_state == ConnectionState.HEALTHY
+
+    @pytest.mark.asyncio
+    async def test_circuit_breaker_timeout_reset(self, mock_stream_manager):
+        """Test circuit breaker resets after timeout (lines 412-416)."""
+        import time
+
+        # Create tool with short timeout
+        recovery_config = RecoveryConfig(circuit_breaker_threshold=1, circuit_breaker_timeout=0.1)
+        tool = MCPTool("echo", mock_stream_manager, enable_resilience=True, recovery_config=recovery_config)
+
+        # Open circuit breaker
+        mock_stream_manager.call_tool.side_effect = Exception("Error")
+        for _ in range(2):
+            await tool.execute(message="test")
+
+        # Verify circuit is open
+        assert tool._circuit_open is True
+
+        # Wait for circuit breaker timeout
+        time.sleep(0.15)
+
+        # Check circuit breaker - should be closed now
+        is_open = tool._is_circuit_open()
+
+        # Verify it reset
+        assert is_open is False
+        assert tool._circuit_open is False
+        assert tool._circuit_open_time is None
+        assert tool.connection_state == ConnectionState.HEALTHY
+
+    @pytest.mark.asyncio
+    async def test_get_stats_with_success_rate(self, mcp_tool, mock_stream_manager):
+        """Test get_stats with success rate calculation (line 444)."""
+        # Setup successful execution
+        mock_stream_manager.call_tool.return_value = {"isError": False, "content": "Success"}
+
+        # Execute multiple times
+        for _ in range(3):
+            await mcp_tool.execute(message="test")
+
+        # Get stats
+        stats = mcp_tool.get_stats()
+
+        # Verify success rate is calculated
+        assert stats["total_calls"] == 3
+        assert stats["successful_calls"] == 3
+        assert stats["success_rate"] == 100.0
+
+    def test_reset_circuit_breaker_resilience_disabled(self, simple_mcp_tool):
+        """Test reset_circuit_breaker when resilience is disabled (line 464)."""
+        # Call reset on tool with resilience disabled
+        simple_mcp_tool.reset_circuit_breaker()
+
+        # Should return early without error
+        # Verify it doesn't have circuit breaker attributes since resilience is disabled
+        assert simple_mcp_tool.enable_resilience is False
+
+    def test_set_stream_manager_closes_circuit_breaker(self, mock_stream_manager):
+        """Test set_stream_manager closes circuit breaker (lines 488-492)."""
+        # Create tool with no stream manager and resilience enabled
+        tool = MCPTool("test", stream_manager=None, enable_resilience=True)
+
+        # Manually open circuit breaker
+        tool._circuit_open = True
+        tool._circuit_open_time = 12345.0
+
+        # Set stream manager
+        tool.set_stream_manager(mock_stream_manager)
+
+        # Verify circuit breaker was closed
+        assert tool._circuit_open is False
+        assert tool._circuit_open_time is None
+        assert tool.connection_state == ConnectionState.HEALTHY
+
+    def test_set_stream_manager_to_none_with_resilience(self, mock_stream_manager):
+        """Test set_stream_manager to None (line 492)."""
+        # Create tool with stream manager
+        tool = MCPTool("test", stream_manager=mock_stream_manager, enable_resilience=True)
+
+        # Verify initial state
+        assert tool.connection_state == ConnectionState.HEALTHY
+
+        # Set stream manager to None
+        tool.set_stream_manager(None)
+
+        # Verify state changed to disconnected
+        assert tool._sm is None
+        assert tool.connection_state == ConnectionState.DISCONNECTED

@@ -206,6 +206,10 @@ class TestModuleFunctions:
 
     def test_get_metrics_when_none(self):
         """Test get_metrics when not initialized."""
+        # Reset module state to ensure clean test
+        import chuk_tool_processor.observability.metrics as metrics_module
+
+        metrics_module._metrics_client = None
         assert get_metrics() is None
 
     def test_start_metrics_server_success(self):

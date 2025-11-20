@@ -28,12 +28,12 @@ class MCPBaseTransport(ABC):
         Returns:
             True if initialization was successful, False otherwise.
         """
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     async def close(self) -> None:
         """Close the transport connection and clean up all resources."""
-        pass
+        raise NotImplementedError
 
     # ------------------------------------------------------------------ #
     #  Health and diagnostics                                            #
@@ -46,7 +46,7 @@ class MCPBaseTransport(ABC):
         Returns:
             True if ping was successful, False otherwise.
         """
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def is_connected(self) -> bool:
@@ -56,7 +56,7 @@ class MCPBaseTransport(ABC):
         Returns:
             True if connected, False otherwise.
         """
-        pass
+        raise NotImplementedError
 
     # ------------------------------------------------------------------ #
     #  Core MCP operations                                               #
@@ -69,7 +69,7 @@ class MCPBaseTransport(ABC):
         Returns:
             List of tool definitions.
         """
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     async def call_tool(
@@ -86,7 +86,7 @@ class MCPBaseTransport(ABC):
         Returns:
             Dictionary with 'isError' boolean and either 'content' or 'error'
         """
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     async def list_resources(self) -> dict[str, Any]:
@@ -96,7 +96,7 @@ class MCPBaseTransport(ABC):
         Returns:
             Dictionary containing resources list or empty dict if not supported.
         """
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     async def list_prompts(self) -> dict[str, Any]:
@@ -106,7 +106,7 @@ class MCPBaseTransport(ABC):
         Returns:
             Dictionary containing prompts list or empty dict if not supported.
         """
-        pass
+        raise NotImplementedError
 
     # ------------------------------------------------------------------ #
     #  Metrics and monitoring (all transports should support these)     #
@@ -119,12 +119,12 @@ class MCPBaseTransport(ABC):
         Returns:
             Dictionary containing metrics data.
         """
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def reset_metrics(self) -> None:
         """Reset performance metrics to initial state."""
-        pass
+        raise NotImplementedError
 
     # ------------------------------------------------------------------ #
     #  Backward compatibility and utility methods                       #

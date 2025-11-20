@@ -565,6 +565,21 @@ class StreamManager:
     def get_server_info(self) -> list[dict[str, Any]]:
         return self.server_info
 
+    def set_session_id(self, session_id: str | None) -> None:
+        """
+        Set the session ID on all HTTP/SSE transports.
+
+        This allows dynamically updating the session ID at runtime,
+        which is useful when the session ID is only known after agent initialization.
+
+        Args:
+            session_id: Session ID to set, or None to clear it
+        """
+        for name, transport in self.transports.items():
+            if hasattr(transport, "set_session_id"):
+                transport.set_session_id(session_id)
+                logger.debug("Set session ID for transport %s", name)
+
     async def list_tools(self, server_name: str) -> list[dict[str, Any]]:
         """List all tools available from a specific server."""
         if self._closed:

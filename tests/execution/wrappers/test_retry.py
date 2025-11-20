@@ -466,3 +466,323 @@ async def test_retry_executor_retries_non_oauth_errors():
     assert dummy.calls == 3  # Original + 2 retries
     assert res.attempts == 3
     assert res.result == "success"
+
+
+def test_retry_config_negative_max_retries():
+    """Test that RetryConfig raises ValueError for negative max_retries."""
+    with pytest.raises(ValueError, match="max_retries cannot be negative"):
+        RetryConfig(max_retries=-1)
+
+
+@pytest.mark.asyncio
+async def test_retry_executor_timeout_before_first_attempt(monkeypatch):
+    """Test that timeout is enforced before the first attempt."""
+    import time
+
+    # Mock time.monotonic to simulate timeout expiration before first attempt
+    mock_time = 100.0
+
+    def mock_monotonic():
+        nonlocal mock_time
+        result = mock_time
+        # After deadline is set, next call should show timeout
+        mock_time += 10.0
+        return result
+
+    monkeypatch.setattr(time, "monotonic", mock_monotonic)
+
+    dummy = DummyExecutor(fail_times=0)
+    wrapper = RetryableToolExecutor(
+        executor=dummy,
+        default_config=RetryConfig(max_retries=3),
+    )
+
+    # Set timeout that will expire before first attempt
+    res = (await wrapper.execute([ToolCall(tool="t1", arguments={})], timeout=5.0))[0]
+
+    assert res.error == "Timeout after 5.0s"
+    assert dummy.calls == 0  # No calls made due to timeout
+
+
+@pytest.mark.asyncio
+async def test_retry_executor_timeout_during_retries(monkeypatch):
+    """Test that timeout is enforced between retries."""
+    import time
+
+    # Mock time.monotonic to simulate time passing
+    mock_time = 100.0
+
+    def mock_monotonic():
+        nonlocal mock_time
+        result = mock_time
+        # Each call advances time slightly
+        mock_time += 0.1
+        return result
+
+    monkeypatch.setattr(time, "monotonic", mock_monotonic)
+
+    # Executor that always fails
+    dummy = DummyExecutor(fail_times=10, error_message="Network error")
+    wrapper = RetryableToolExecutor(
+        executor=dummy,
+        default_config=RetryConfig(max_retries=5, base_delay=2.0),
+    )
+
+    # Execute with a timeout
+    res = (await wrapper.execute([ToolCall(tool="t1", arguments={})], timeout=10.0))[0]
+
+    # Should have made some attempts but eventually timed out
+    assert dummy.calls >= 1
+    assert res.error is not None
+
+
+@pytest.mark.asyncio
+async def test_retry_executor_deadline_caps_delay_in_error_path(monkeypatch):
+    """Test that delay is capped by remaining deadline time in error result path."""
+    import time
+
+    # Track sleep calls to verify delay capping
+    sleep_calls = []
+
+    async def mock_sleep(delay):
+        sleep_calls.append(delay)
+
+    monkeypatch.setattr(asyncio, "sleep", mock_sleep)
+
+    # Mock time.monotonic to simulate time passing
+    mock_time = 100.0
+
+    def mock_monotonic():
+        nonlocal mock_time
+        result = mock_time
+        # Advance time by 0.5s each call
+        mock_time += 0.5
+        return result
+
+    monkeypatch.setattr(time, "monotonic", mock_monotonic)
+
+    # Executor that always fails
+    dummy = DummyExecutor(fail_times=10, error_message="Network error")
+    wrapper = RetryableToolExecutor(
+        executor=dummy,
+        default_config=RetryConfig(max_retries=3, base_delay=5.0, jitter=False),
+    )
+
+    # Execute with a timeout that will cap the delays
+    await wrapper.execute([ToolCall(tool="t1", arguments={})], timeout=2.0)
+
+    # Should have attempted retries with capped delays
+    assert len(sleep_calls) > 0
+    # At least one delay should be capped to a smaller value than base_delay
+    assert any(delay < 5.0 for delay in sleep_calls)
+
+
+@pytest.mark.asyncio
+async def test_retry_executor_deadline_caps_delay_in_exception_path(monkeypatch):
+    """Test that delay is capped by remaining deadline time in exception path."""
+    import time
+
+    # Track sleep calls to verify delay capping
+    sleep_calls = []
+
+    async def mock_sleep(delay):
+        sleep_calls.append(delay)
+
+    monkeypatch.setattr(asyncio, "sleep", mock_sleep)
+
+    # Mock time.monotonic to simulate time passing
+    mock_time = 100.0
+
+    def mock_monotonic():
+        nonlocal mock_time
+        result = mock_time
+        # Advance time by 0.5s each call
+        mock_time += 0.5
+        return result
+
+    monkeypatch.setattr(time, "monotonic", mock_monotonic)
+
+    # Executor that always raises exceptions
+    exc_exec = ExceptionExecutor(exception_type=RuntimeError)
+    wrapper = RetryableToolExecutor(
+        executor=exc_exec,
+        default_config=RetryConfig(
+            max_retries=3,
+            base_delay=5.0,
+            jitter=False,
+            retry_on_exceptions=[RuntimeError],
+        ),
+    )
+
+    # Execute with a timeout that will cap the delays
+    await wrapper.execute([ToolCall(tool="t1", arguments={})], timeout=2.0)
+
+    # Should have attempted retries with capped delays
+    assert len(sleep_calls) > 0
+    # At least one delay should be capped to a smaller value than base_delay
+    assert any(delay < 5.0 for delay in sleep_calls)
+
+
+@pytest.mark.asyncio
+async def test_retry_executor_with_observability_available(monkeypatch):
+    """Test that retry executor works with observability metrics available."""
+
+    # Mock the get_metrics function to return a mock metrics object
+    class MockMetrics:
+        def __init__(self):
+            self.retry_attempts = []
+
+        def record_retry_attempt(self, tool, attempt, success):
+            self.retry_attempts.append((tool, attempt, success))
+
+    mock_metrics = MockMetrics()
+
+    # Import the retry module to patch it
+    import chuk_tool_processor.execution.wrappers.retry as retry_module
+
+    # Save original values
+    original_available = retry_module._observability_available
+    original_get_metrics = retry_module.get_metrics
+
+    try:
+        # Patch to make observability available
+        retry_module._observability_available = True
+        monkeypatch.setattr(retry_module, "get_metrics", lambda: mock_metrics)
+
+        # Create executor that fails once then succeeds
+        dummy = DummyExecutor(fail_times=1)
+        wrapper = RetryableToolExecutor(
+            executor=dummy,
+            default_config=RetryConfig(max_retries=3, base_delay=0.1),
+        )
+
+        res = (await wrapper.execute([ToolCall(tool="t1", arguments={})]))[0]
+
+        # Verify metrics were recorded
+        assert len(mock_metrics.retry_attempts) == 2  # Failed attempt + successful attempt
+        assert mock_metrics.retry_attempts[0] == ("t1", 0, False)  # First attempt failed
+        assert mock_metrics.retry_attempts[1] == ("t1", 1, True)  # Second attempt succeeded
+        assert res.result == "success"
+        assert res.attempts == 2
+
+    finally:
+        # Restore original values
+        retry_module._observability_available = original_available
+        retry_module.get_metrics = original_get_metrics
+
+
+def test_observability_fallback_functions():
+    """Test that fallback functions work when observability is not available."""
+    # Import the retry module
+    import chuk_tool_processor.execution.wrappers.retry as retry_module
+
+    # Save original value
+    original_available = retry_module._observability_available
+
+    try:
+        # Simulate observability not being available
+        retry_module._observability_available = False
+
+        # Force re-import of the fallback functions by calling them
+        # The module-level try/except already ran, so we need to call the fallbacks directly
+        if not retry_module._observability_available:
+            # Test get_metrics fallback - should return None
+            result = retry_module.get_metrics()
+            assert result is None
+
+            # Test trace_retry_attempt fallback - should return nullcontext
+            context = retry_module.trace_retry_attempt("test_tool", 0, 3)
+            # Should return a context manager (nullcontext)
+            with context:
+                pass  # Should not raise
+
+    finally:
+        # Restore original value
+        retry_module._observability_available = original_available
+
+
+@pytest.mark.asyncio
+async def test_retry_executor_without_use_cache_attribute():
+    """Test that executor works when executor doesn't have use_cache attribute."""
+
+    class SimpleExecutor:
+        """Executor without use_cache attribute."""
+
+        def __init__(self):
+            self.calls = 0
+
+        async def execute(self, calls, timeout=None):
+            """Execute without use_cache parameter."""
+            self.calls += 1
+            call = calls[0]
+            return [
+                ToolResult(
+                    tool=call.tool,
+                    result="success",
+                    error=None,
+                    start_time=datetime.now(UTC),
+                    end_time=datetime.now(UTC),
+                    machine="test",
+                    pid=123,
+                )
+            ]
+
+    simple_exec = SimpleExecutor()
+    wrapper = RetryableToolExecutor(
+        executor=simple_exec,
+        default_config=RetryConfig(max_retries=2),
+    )
+
+    res = (await wrapper.execute([ToolCall(tool="t1", arguments={})], use_cache=False))[0]
+    assert res.result == "success"
+    assert simple_exec.calls == 1
+
+
+def test_observability_import_fallback(monkeypatch):
+    """Test that the observability import fallback works correctly."""
+    import builtins
+    import importlib
+    import sys
+
+    # Remove the retry module if it's already imported
+    if "chuk_tool_processor.execution.wrappers.retry" in sys.modules:
+        del sys.modules["chuk_tool_processor.execution.wrappers.retry"]
+
+    # Also remove observability modules to force re-import
+    for key in list(sys.modules.keys()):
+        if "chuk_tool_processor.observability" in key:
+            del sys.modules[key]
+
+    # Mock the observability imports to raise ImportError
+    original_import = builtins.__import__
+
+    def mock_import(name, *args, **kwargs):
+        if "chuk_tool_processor.observability.metrics" in name or "chuk_tool_processor.observability.tracing" in name:
+            raise ImportError("Mocked observability import error")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", mock_import)
+
+    try:
+        # Import the module with mocked observability failure
+        import chuk_tool_processor.execution.wrappers.retry as retry_module
+
+        # Verify that _observability_available is False
+        assert retry_module._observability_available is False
+
+        # Test that fallback functions work
+        metrics = retry_module.get_metrics()
+        assert metrics is None
+
+        # Test trace_retry_attempt fallback
+        context = retry_module.trace_retry_attempt("test_tool", 0, 3)
+        with context:
+            pass  # Should not raise
+
+    finally:
+        # Restore the import
+        monkeypatch.undo()
+        # Re-import normally
+        if "chuk_tool_processor.execution.wrappers.retry" in sys.modules:
+            del sys.modules["chuk_tool_processor.execution.wrappers.retry"]
+        importlib.import_module("chuk_tool_processor.execution.wrappers.retry")

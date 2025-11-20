@@ -64,6 +64,40 @@ async def test_log_context_span_no_duration():
 
 
 @pytest.mark.asyncio
+async def test_log_context_span_nested():
+    """Test nested log_context_span context managers restore previous context."""
+    # Mock the logger
+    mock_logger = MagicMock()
+    mock_logger.debug = MagicMock()
+
+    with patch("chuk_tool_processor.logging.helpers.get_logger", return_value=mock_logger):
+        # Use nested context managers
+        async with log_context_span("outer_operation", {"outer": "data"}):
+            outer_span_id = log_context.context["span_id"]
+            outer_context = log_context.get_copy()
+            assert outer_context["operation"] == "outer_operation"
+            assert outer_context["outer"] == "data"
+
+            # Nested span - saves previous context and creates new one
+            async with log_context_span("inner_operation", {"inner": "data"}):
+                inner_context = log_context.get_copy()
+                assert inner_context["operation"] == "inner_operation"
+                assert inner_context["inner"] == "data"
+                # The context is updated, so outer data carries forward
+                assert inner_context["outer"] == "data"
+                # Span ID should be different
+                assert inner_context["span_id"] != outer_span_id
+
+            # After inner span completes, outer context should be restored
+            restored_context = log_context.get_copy()
+            assert restored_context["operation"] == "outer_operation"
+            assert restored_context["outer"] == "data"
+            assert restored_context["span_id"] == outer_span_id
+            # Inner data should not be present after restoration
+            assert "inner" not in restored_context
+
+
+@pytest.mark.asyncio
 async def test_log_context_span_with_exception():
     """Test log_context_span with an exception."""
     # Mock the logger
@@ -332,3 +366,172 @@ async def test_log_tool_call_with_optional_fields():
         assert ctx["attempts"] == 3
         assert ctx["stream_id"] == "stream-123"
         assert ctx["is_partial"] is True
+
+
+@pytest.mark.asyncio
+async def test_log_tool_call_with_duration_exception():
+    """Test log_tool_call when duration calculation fails."""
+
+    # Mock the logger
+    mock_logger = MagicMock()
+    mock_logger.debug = MagicMock()
+
+    # Mock tool call
+    mock_tool_call = MagicMock()
+    mock_tool_call.tool = "test_tool"
+    mock_tool_call.arguments = {"arg1": "value1"}
+
+    # Create a mock result where start_time and end_time raise TypeError
+    mock_result = MagicMock()
+    mock_result.tool = "test_tool"
+    mock_result.result = {"output": "test_output"}
+    mock_result.error = None
+    mock_result.machine = "test-machine"
+    mock_result.pid = 1234
+
+    # Configure start_time and end_time to raise TypeError when subtracted
+    mock_result.start_time = MagicMock()
+    mock_result.end_time = MagicMock()
+    # Make subtraction raise TypeError
+    mock_result.end_time.__sub__ = MagicMock(side_effect=TypeError("Cannot subtract"))
+
+    with patch("chuk_tool_processor.logging.helpers.get_logger", return_value=mock_logger):
+        # Log the tool call
+        await log_tool_call(mock_tool_call, mock_result)
+
+        # Should have logged success with duration 0.0
+        mock_logger.debug.assert_called_once()
+        args, kwargs = mock_logger.debug.call_args
+        assert args[0] == "Tool %s succeeded in %.3fs"
+        assert args[1] == "test_tool"
+        assert args[2] == 0.0  # Duration should be 0.0 when calculation fails
+
+        # Check context has duration 0.0
+        ctx = kwargs["extra"]["context"]
+        assert ctx["duration"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_log_tool_call_with_cached_exception():
+    """Test log_tool_call when cached attribute access raises exception."""
+
+    # Mock the logger
+    mock_logger = MagicMock()
+    mock_logger.debug = MagicMock()
+
+    # Mock tool call
+    mock_tool_call = MagicMock()
+    mock_tool_call.tool = "test_tool"
+    mock_tool_call.arguments = {"arg1": "value1"}
+
+    # Create a mock result with proper datetime objects
+    start_time = datetime.now(UTC) - timedelta(seconds=1)
+    end_time = datetime.now(UTC)
+
+    mock_result = MagicMock()
+    mock_result.tool = "test_tool"
+    mock_result.result = {"output": "test_output"}
+    mock_result.error = None
+    mock_result.start_time = start_time
+    mock_result.end_time = end_time
+    mock_result.machine = "test-machine"
+    mock_result.pid = 1234
+
+    # Configure cached to be True but raise TypeError when checked in boolean context
+    mock_cached = MagicMock()
+    mock_cached.__bool__ = MagicMock(side_effect=TypeError("Cannot convert to bool"))
+    mock_result.cached = mock_cached
+
+    with patch("chuk_tool_processor.logging.helpers.get_logger", return_value=mock_logger):
+        # Log the tool call
+        await log_tool_call(mock_tool_call, mock_result)
+
+        # Should have logged success without cached field
+        mock_logger.debug.assert_called_once()
+        ctx = mock_logger.debug.call_args[1]["extra"]["context"]
+        assert "cached" not in ctx
+
+
+@pytest.mark.asyncio
+async def test_log_tool_call_with_attempts_conversion_exception():
+    """Test log_tool_call when attempts needs conversion but fails."""
+
+    # Mock the logger
+    mock_logger = MagicMock()
+    mock_logger.debug = MagicMock()
+
+    # Mock tool call
+    mock_tool_call = MagicMock()
+    mock_tool_call.tool = "test_tool"
+    mock_tool_call.arguments = {"arg1": "value1"}
+
+    # Create a mock result with proper datetime objects
+    start_time = datetime.now(UTC) - timedelta(seconds=1)
+    end_time = datetime.now(UTC)
+
+    mock_result = MagicMock()
+    mock_result.tool = "test_tool"
+    mock_result.result = {"output": "test_output"}
+    mock_result.error = None
+    mock_result.start_time = start_time
+    mock_result.end_time = end_time
+    mock_result.machine = "test-machine"
+    mock_result.pid = 1234
+
+    # Configure attempts to fail comparison but succeed int() conversion fails too
+    mock_attempts = MagicMock()
+    mock_attempts.__gt__ = MagicMock(side_effect=TypeError("Cannot compare"))
+    mock_attempts.__int__ = MagicMock(side_effect=TypeError("Cannot convert to int"))
+    mock_result.attempts = mock_attempts
+
+    with patch("chuk_tool_processor.logging.helpers.get_logger", return_value=mock_logger):
+        # Log the tool call
+        await log_tool_call(mock_tool_call, mock_result)
+
+        # Should have logged success with attempts as-is (the MagicMock)
+        mock_logger.debug.assert_called_once()
+        ctx = mock_logger.debug.call_args[1]["extra"]["context"]
+        assert "attempts" in ctx
+        assert ctx["attempts"] is mock_attempts
+
+
+@pytest.mark.asyncio
+async def test_log_tool_call_with_stream_id_exception():
+    """Test log_tool_call when stream_id attribute access raises exception."""
+
+    # Mock the logger
+    mock_logger = MagicMock()
+    mock_logger.debug = MagicMock()
+
+    # Mock tool call
+    mock_tool_call = MagicMock()
+    mock_tool_call.tool = "test_tool"
+    mock_tool_call.arguments = {"arg1": "value1"}
+
+    # Create a mock result with proper datetime objects
+    start_time = datetime.now(UTC) - timedelta(seconds=1)
+    end_time = datetime.now(UTC)
+
+    mock_result = MagicMock()
+    mock_result.tool = "test_tool"
+    mock_result.result = {"output": "test_output"}
+    mock_result.error = None
+    mock_result.start_time = start_time
+    mock_result.end_time = end_time
+    mock_result.machine = "test-machine"
+    mock_result.pid = 1234
+
+    # Configure stream_id to be truthy but raise TypeError when checked
+    mock_stream_id = MagicMock()
+    mock_stream_id.__bool__ = MagicMock(side_effect=TypeError("Cannot convert to bool"))
+    mock_result.stream_id = mock_stream_id
+
+    with patch("chuk_tool_processor.logging.helpers.get_logger", return_value=mock_logger):
+        # Log the tool call
+        await log_tool_call(mock_tool_call, mock_result)
+
+        # Should have logged success without stream_id field
+        mock_logger.debug.assert_called_once()
+        ctx = mock_logger.debug.call_args[1]["extra"]["context"]
+        assert "stream_id" not in ctx
+        assert "is_partial" not in ctx

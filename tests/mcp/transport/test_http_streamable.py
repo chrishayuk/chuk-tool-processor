@@ -1077,3 +1077,284 @@ class TestHTTPStreamableTransport:
             assert result["isError"] is True
             # Failure counter should not be reset
             assert transport._consecutive_failures == 1
+
+    @pytest.mark.asyncio
+    async def test_test_connection_health_with_httpx_exception(self, transport):
+        """Test _test_connection_health handles httpx exceptions."""
+        # Mock httpx at import time within the function
+        import sys
+        from unittest.mock import MagicMock
+
+        mock_httpx = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = None
+        mock_client.get.side_effect = Exception("Connection failed")
+        mock_httpx.AsyncClient.return_value = mock_client
+
+        # Temporarily add httpx to modules
+        old_httpx = sys.modules.get("httpx")
+        sys.modules["httpx"] = mock_httpx
+
+        try:
+            # Should return True even on exception (don't fail on health check errors)
+            result = await transport._test_connection_health()
+            assert result is True
+        finally:
+            # Restore original httpx
+            if old_httpx is not None:
+                sys.modules["httpx"] = old_httpx
+            else:
+                sys.modules.pop("httpx", None)
+
+    @pytest.mark.asyncio
+    async def test_initialize_connection_health_fails(self, transport):
+        """Test initialization when connection health test fails (returns False)."""
+        mock_http_transport = AsyncMock()
+        mock_read_stream = AsyncMock()
+        mock_write_stream = AsyncMock()
+
+        with (
+            patch.object(transport, "_test_connection_health", AsyncMock(return_value=False)),
+            patch(
+                "chuk_tool_processor.mcp.transport.http_streamable_transport.ChukHTTPTransport",
+                return_value=mock_http_transport,
+            ),
+            patch(
+                "chuk_tool_processor.mcp.transport.http_streamable_transport.send_initialize",
+                AsyncMock(return_value=Mock(serverInfo=Mock(name="TestServer"))),
+            ),
+            patch(
+                "chuk_tool_processor.mcp.transport.http_streamable_transport.send_ping", AsyncMock(return_value=True)
+            ),
+        ):
+            mock_http_transport.get_streams.return_value = (mock_read_stream, mock_write_stream)
+
+            result = await transport.initialize()
+
+            # Should still initialize successfully despite health check failure
+            assert result is True
+            assert transport._initialized is True
+
+    @pytest.mark.asyncio
+    async def test_get_tools_with_pydantic_model_dump(self, transport):
+        """Test get_tools with Pydantic model that has model_dump method."""
+        transport._initialized = True
+        transport._read_stream = Mock()
+        transport._write_stream = Mock()
+
+        # Mock a Pydantic tool model with model_dump method
+        mock_tool = Mock()
+        mock_tool.model_dump.return_value = {"name": "search", "description": "Search tool"}
+
+        mock_response = Mock()
+        mock_response.tools = [mock_tool]
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.send_tools_list",
+            AsyncMock(return_value=mock_response),
+        ):
+            tools = await transport.get_tools()
+            assert len(tools) == 1
+            assert tools[0] == {"name": "search", "description": "Search tool"}
+            mock_tool.model_dump.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_tools_with_pydantic_dict_method(self, transport):
+        """Test get_tools with Pydantic model that has dict method."""
+        transport._initialized = True
+        transport._read_stream = Mock()
+        transport._write_stream = Mock()
+
+        # Create a custom mock object that has dict but not model_dump
+        class OldPydanticTool:
+            def dict(self):
+                return {"name": "research", "description": "Research tool"}
+
+        mock_tool = OldPydanticTool()
+
+        mock_response = Mock()
+        mock_response.tools = [mock_tool]
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.send_tools_list",
+            AsyncMock(return_value=mock_response),
+        ):
+            tools = await transport.get_tools()
+            assert len(tools) == 1
+            assert tools[0] == {"name": "research", "description": "Research tool"}
+
+    @pytest.mark.asyncio
+    async def test_get_tools_with_unexpected_response_type(self, transport):
+        """Test get_tools with unexpected response type."""
+        transport._initialized = True
+        transport._read_stream = Mock()
+        transport._write_stream = Mock()
+
+        # Return a string instead of expected types
+        with patch(
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.send_tools_list",
+            AsyncMock(return_value="unexpected string"),
+        ):
+            tools = await transport.get_tools()
+            assert tools == []
+
+    @pytest.mark.asyncio
+    async def test_get_tools_timeout_exception(self, transport):
+        """Test get_tools with timeout exception."""
+        transport._initialized = True
+        transport._read_stream = Mock()
+        transport._write_stream = Mock()
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.send_tools_list",
+            AsyncMock(side_effect=asyncio.TimeoutError),
+        ):
+            tools = await transport.get_tools()
+            assert tools == []
+            assert transport._consecutive_failures == 1
+
+    @pytest.mark.asyncio
+    async def test_call_tool_connection_unhealthy_recovery_fails(self, transport):
+        """Test call_tool when connection is unhealthy and recovery fails."""
+        transport._initialized = True
+        transport._read_stream = Mock()
+        transport._write_stream = Mock()
+        transport._consecutive_failures = 3  # Make connection unhealthy
+
+        with patch.object(transport, "_attempt_recovery", AsyncMock(return_value=False)):
+            result = await transport.call_tool("search", {"query": "test"})
+            assert result["isError"] is True
+            assert result["error"] == "Failed to recover connection"
+
+    @pytest.mark.asyncio
+    async def test_call_tool_connection_error_detection(self, transport):
+        """Test call_tool detects connection errors and updates state."""
+        transport._initialized = True
+        transport._read_stream = Mock()
+        transport._write_stream = Mock()
+
+        # Test various connection error messages
+        connection_errors = [
+            "connection reset by peer",
+            "client disconnected",
+            "broken pipe error",
+            "unexpected EOF",
+        ]
+
+        for error_msg in connection_errors:
+            transport._initialized = True  # Reset state
+            initial_conn_errors = transport._metrics.connection_errors
+
+            with patch(
+                "chuk_tool_processor.mcp.transport.http_streamable_transport.send_tools_call",
+                AsyncMock(side_effect=Exception(error_msg)),
+            ):
+                result = await transport.call_tool("search", {"query": "test"})
+                assert result["isError"] is True
+                assert transport._initialized is False
+                assert transport._metrics.connection_errors == initial_conn_errors + 1
+
+    @pytest.mark.asyncio
+    async def test_update_metrics_with_disabled_metrics(self, transport_no_metrics):
+        """Test _update_metrics when metrics are disabled."""
+        # This should not raise an error even with None metrics
+        transport_no_metrics._update_metrics(0.5, True)
+
+    @pytest.mark.asyncio
+    async def test_list_resources_timeout_exception(self, transport):
+        """Test list_resources with timeout exception."""
+        transport._initialized = True
+        transport._read_stream = Mock()
+        transport._write_stream = Mock()
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.send_resources_list",
+            AsyncMock(side_effect=asyncio.TimeoutError),
+        ):
+            result = await transport.list_resources()
+            assert result == {}
+            assert transport._consecutive_failures == 1
+
+    @pytest.mark.asyncio
+    async def test_list_prompts_timeout_exception(self, transport):
+        """Test list_prompts with timeout exception."""
+        transport._initialized = True
+        transport._read_stream = Mock()
+        transport._write_stream = Mock()
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.send_prompts_list",
+            AsyncMock(side_effect=asyncio.TimeoutError),
+        ):
+            result = await transport.list_prompts()
+            assert result == {}
+            assert transport._consecutive_failures == 1
+
+    @pytest.mark.asyncio
+    async def test_read_resource_timeout_exception(self, transport):
+        """Test read_resource with timeout exception."""
+        transport._initialized = True
+        transport._read_stream = Mock()
+        transport._write_stream = Mock()
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.send_resources_read",
+            AsyncMock(side_effect=asyncio.TimeoutError),
+        ):
+            result = await transport.read_resource("test://uri")
+            assert result == {}
+            assert transport._consecutive_failures == 1
+
+    @pytest.mark.asyncio
+    async def test_get_prompt_timeout_exception(self, transport):
+        """Test get_prompt with timeout exception."""
+        transport._initialized = True
+        transport._read_stream = Mock()
+        transport._write_stream = Mock()
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.http_streamable_transport.send_prompts_get",
+            AsyncMock(side_effect=asyncio.TimeoutError),
+        ):
+            result = await transport.get_prompt("test_prompt")
+            assert result == {}
+            assert transport._consecutive_failures == 1
+
+    def test_set_session_id_with_none(self, transport):
+        """Test setting session ID to None."""
+        transport.session_id = "existing-session"
+        transport.set_session_id(None)
+        assert transport.session_id is None
+
+    def test_reset_metrics_with_disabled_metrics(self, transport_no_metrics):
+        """Test reset_metrics when metrics are disabled."""
+        # Should not raise error even with None metrics
+        transport_no_metrics.reset_metrics()
+        # Metrics should remain None
+        assert transport_no_metrics._metrics is None
+
+    def test_get_headers_without_configured_headers(self):
+        """Test _get_headers when no custom headers are configured."""
+        transport = HTTPStreamableTransport("http://test.com", api_key="test-key")
+        headers = transport._get_headers()
+
+        # Should have default headers plus API key
+        assert "Content-Type" in headers
+        assert "Accept" in headers
+        assert "User-Agent" in headers
+        assert headers["Authorization"] == "Bearer test-key"
+
+    def test_get_headers_with_configured_headers(self):
+        """Test _get_headers properly merges configured headers."""
+        custom_headers = {"X-Custom-Header": "custom-value", "X-Another": "another-value"}
+        transport = HTTPStreamableTransport("http://test.com", headers=custom_headers, api_key="test-key")
+        headers = transport._get_headers()
+
+        # Should have default headers, custom headers, and API key
+        assert "Content-Type" in headers
+        assert "Accept" in headers
+        assert "User-Agent" in headers
+        assert headers["X-Custom-Header"] == "custom-value"
+        assert headers["X-Another"] == "another-value"
+        assert headers["Authorization"] == "Bearer test-key"

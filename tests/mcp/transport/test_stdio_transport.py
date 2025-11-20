@@ -990,3 +990,373 @@ class TestStdioTransport:
         transport._initialized = False
         result = await transport.get_prompt("test")
         assert result == {}
+
+    def test_init_with_stdio_parameters_with_env(self):
+        """Test initialization with StdioParameters object that has env."""
+        params = StdioParameters(command="test", args=["arg1"], env={"CUSTOM": "value"})
+        transport = StdioTransport(params)
+        # Verify env was merged with system env
+        assert "CUSTOM" in transport.server_params.env
+        assert transport.server_params.command == "test"
+
+    @pytest.mark.asyncio
+    async def test_get_process_info_with_exceptions(self, transport):
+        """Test get_process_info handles various exceptions."""
+        transport._process_id = 12345
+        transport.process_monitor = True
+
+        # Test with psutil.NoSuchProcess
+        import psutil
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.stdio_transport.psutil.Process",
+            side_effect=psutil.NoSuchProcess(12345),
+        ):
+            result = await transport._get_process_info()
+            assert result is None
+
+        # Test with psutil.AccessDenied
+        with patch(
+            "chuk_tool_processor.mcp.transport.stdio_transport.psutil.Process",
+            side_effect=psutil.AccessDenied(12345),
+        ):
+            result = await transport._get_process_info()
+            assert result is None
+
+        # Test with AttributeError
+        with patch(
+            "chuk_tool_processor.mcp.transport.stdio_transport.psutil.Process",
+            side_effect=AttributeError("No attribute"),
+        ):
+            result = await transport._get_process_info()
+            assert result is None
+
+    @pytest.mark.asyncio
+    async def test_monitor_process_health_no_process_info(self, transport):
+        """Test process health monitoring when get_process_info returns None."""
+        transport._process_id = 12345
+        transport.process_monitor = True
+
+        with patch.object(transport, "_get_process_info", AsyncMock(return_value=None)):
+            result = await transport._monitor_process_health()
+            assert result is True  # Should return True in test environments
+
+    @pytest.mark.asyncio
+    async def test_send_ping_false_result(self, transport):
+        """Test send_ping when ping returns False."""
+        transport._initialized = True
+        transport._streams = (Mock(), Mock())
+
+        with patch("chuk_tool_processor.mcp.transport.stdio_transport.send_ping", AsyncMock(return_value=False)):
+            result = await transport.send_ping()
+            assert result is False
+            assert transport._consecutive_failures == 1
+
+    @pytest.mark.asyncio
+    async def test_get_tools_pydantic_model_with_tools_attribute(self, transport):
+        """Test get_tools with Pydantic model containing tools attribute."""
+        transport._initialized = True
+        transport._streams = (Mock(), Mock())
+
+        # Mock a Pydantic model with tools attribute
+        mock_tool = Mock()
+        mock_tool.model_dump.return_value = {"name": "test_tool"}
+        mock_response = Mock()
+        mock_response.tools = [mock_tool]
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.stdio_transport.send_tools_list",
+            AsyncMock(return_value=mock_response),
+        ):
+            tools = await transport.get_tools()
+            assert len(tools) == 1
+            assert tools[0]["name"] == "test_tool"
+
+    @pytest.mark.asyncio
+    async def test_get_tools_pydantic_model_with_dict_method(self, transport):
+        """Test get_tools with older Pydantic model using dict() method."""
+        transport._initialized = True
+        transport._streams = (Mock(), Mock())
+
+        # Mock an older Pydantic model with dict() method
+        mock_tool = Mock()
+        mock_tool.dict.return_value = {"name": "test_tool"}
+        delattr(mock_tool, "model_dump")  # Remove model_dump to simulate older version
+        mock_response = Mock()
+        mock_response.tools = [mock_tool]
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.stdio_transport.send_tools_list",
+            AsyncMock(return_value=mock_response),
+        ):
+            tools = await transport.get_tools()
+            assert len(tools) == 1
+            assert tools[0]["name"] == "test_tool"
+
+    @pytest.mark.asyncio
+    async def test_get_tools_pydantic_model_dump(self, transport):
+        """Test get_tools with Pydantic model that has model_dump."""
+        transport._initialized = True
+        transport._streams = (Mock(), Mock())
+
+        mock_response = Mock()
+        mock_response.model_dump.return_value = {"tools": [{"name": "test_tool"}]}
+        delattr(mock_response, "tools")  # Ensure it doesn't have tools attribute
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.stdio_transport.send_tools_list",
+            AsyncMock(return_value=mock_response),
+        ):
+            tools = await transport.get_tools()
+            assert len(tools) == 1
+            assert tools[0]["name"] == "test_tool"
+
+    @pytest.mark.asyncio
+    async def test_get_tools_dict_with_nested_result(self, transport):
+        """Test get_tools with dict response containing nested result.tools."""
+        transport._initialized = True
+        transport._streams = (Mock(), Mock())
+
+        response = {"result": {"tools": [{"name": "nested_tool"}]}}
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.stdio_transport.send_tools_list",
+            AsyncMock(return_value=response),
+        ):
+            tools = await transport.get_tools()
+            assert len(tools) == 1
+            assert tools[0]["name"] == "nested_tool"
+
+    @pytest.mark.asyncio
+    async def test_get_tools_jsonrpc_format_with_dict_result(self, transport):
+        """Test get_tools with JSON-RPC format response."""
+        transport._initialized = True
+        transport._streams = (Mock(), Mock())
+
+        response = {"jsonrpc": "2.0", "result": {"tools": [{"name": "rpc_tool"}]}}
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.stdio_transport.send_tools_list",
+            AsyncMock(return_value=response),
+        ):
+            tools = await transport.get_tools()
+            assert len(tools) == 1
+            assert tools[0]["name"] == "rpc_tool"
+
+    @pytest.mark.asyncio
+    async def test_get_tools_jsonrpc_format_with_list_result(self, transport):
+        """Test get_tools with JSON-RPC format response where result is a list."""
+        transport._initialized = True
+        transport._streams = (Mock(), Mock())
+
+        response = {"jsonrpc": "2.0", "result": [{"name": "rpc_tool_list"}]}
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.stdio_transport.send_tools_list",
+            AsyncMock(return_value=response),
+        ):
+            tools = await transport.get_tools()
+            assert len(tools) == 1
+            assert tools[0]["name"] == "rpc_tool_list"
+
+    @pytest.mark.asyncio
+    async def test_get_tools_jsonrpc_format_with_other_result(self, transport):
+        """Test get_tools with JSON-RPC format response where result is neither dict nor list."""
+        transport._initialized = True
+        transport._streams = (Mock(), Mock())
+
+        response = {"jsonrpc": "2.0", "result": "unexpected"}
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.stdio_transport.send_tools_list",
+            AsyncMock(return_value=response),
+        ):
+            tools = await transport.get_tools()
+            assert tools == []
+
+    @pytest.mark.asyncio
+    async def test_get_tools_dict_without_tools_key(self, transport):
+        """Test get_tools with dict response without tools key."""
+        transport._initialized = True
+        transport._streams = (Mock(), Mock())
+
+        response = {"other_key": "value"}
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.stdio_transport.send_tools_list",
+            AsyncMock(return_value=response),
+        ):
+            tools = await transport.get_tools()
+            assert tools == []
+
+    @pytest.mark.asyncio
+    async def test_get_tools_jsonrpc_format_dict_without_tools(self, transport):
+        """Test get_tools with JSON-RPC format where result dict has no tools key."""
+        transport._initialized = True
+        transport._streams = (Mock(), Mock())
+
+        response = {"jsonrpc": "2.0", "result": {"other": "data"}}
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.stdio_transport.send_tools_list",
+            AsyncMock(return_value=response),
+        ):
+            tools = await transport.get_tools()
+            assert tools == []
+
+    @pytest.mark.asyncio
+    async def test_call_tool_with_connection_recovery(self, transport):
+        """Test call_tool attempts recovery when connection is unhealthy."""
+        transport._initialized = True
+        transport._streams = (Mock(), Mock())
+        transport._consecutive_failures = 5  # Make connection unhealthy
+
+        # Mock recovery to fail
+        with patch.object(transport, "_attempt_recovery", AsyncMock(return_value=False)):
+            result = await transport.call_tool("test", {})
+            assert result["isError"] is True
+            assert "Failed to recover connection" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_call_tool_with_successful_recovery(self, transport):
+        """Test call_tool successfully recovers connection."""
+        transport._initialized = True
+        transport._streams = (Mock(), Mock())
+        transport._consecutive_failures = 5  # Make connection unhealthy
+
+        response = {"result": {"content": "success"}}
+
+        # Mock recovery to succeed
+        with (
+            patch.object(transport, "_attempt_recovery", AsyncMock(return_value=True)),
+            patch(
+                "chuk_tool_processor.mcp.transport.stdio_transport.send_tools_call",
+                AsyncMock(return_value=response),
+            ),
+        ):
+            result = await transport.call_tool("test", {})
+            assert result["isError"] is False
+
+    @pytest.mark.asyncio
+    async def test_call_tool_with_process_error(self, transport):
+        """Test call_tool handles process-related errors."""
+        transport._initialized = True
+        transport._streams = (Mock(), Mock())
+
+        # Test with broken pipe error
+        with patch(
+            "chuk_tool_processor.mcp.transport.stdio_transport.send_tools_call",
+            AsyncMock(side_effect=Exception("Broken pipe error")),
+        ):
+            result = await transport.call_tool("test", {})
+            assert result["isError"] is True
+            assert transport._initialized is False
+            assert transport._metrics["process_crashes"] == 1
+
+        # Reset for next test
+        transport._initialized = True
+        transport._metrics["process_crashes"] = 0
+
+        # Test with process died error
+        with patch(
+            "chuk_tool_processor.mcp.transport.stdio_transport.send_tools_call",
+            AsyncMock(side_effect=Exception("process died unexpectedly")),
+        ):
+            result = await transport.call_tool("test", {})
+            assert result["isError"] is True
+            assert transport._initialized is False
+            assert transport._metrics["process_crashes"] == 1
+
+    @pytest.mark.asyncio
+    async def test_normalize_response_with_direct_content(self, transport):
+        """Test normalize response with direct content field."""
+        response = {"content": [{"type": "text", "text": "direct content"}]}
+        result = transport._normalize_mcp_response(response)
+        assert result["isError"] is False
+        assert result["content"] == "direct content"
+
+    @pytest.mark.asyncio
+    async def test_normalize_response_with_plain_response(self, transport):
+        """Test normalize response with plain response object."""
+        response = {"data": "value"}
+        result = transport._normalize_mcp_response(response)
+        assert result["isError"] is False
+        assert result["content"] == {"data": "value"}
+
+    def test_extract_stdio_content_non_list(self, transport):
+        """Test extract content with non-list input."""
+        result = transport._extract_stdio_content("plain string")
+        assert result == "plain string"
+
+    def test_extract_stdio_content_empty_list(self, transport):
+        """Test extract content with empty list."""
+        result = transport._extract_stdio_content([])
+        assert result == []
+
+    def test_extract_stdio_content_multiple_items(self, transport):
+        """Test extract content with multiple items in list."""
+        content = [{"type": "text", "text": "item1"}, {"type": "text", "text": "item2"}]
+        result = transport._extract_stdio_content(content)
+        assert result == content  # Should return the list as-is
+
+    def test_extract_stdio_content_non_text_type(self, transport):
+        """Test extract content with non-text type."""
+        content = [{"type": "image", "data": "base64data"}]
+        result = transport._extract_stdio_content(content)
+        assert result == {"type": "image", "data": "base64data"}
+
+    @pytest.mark.asyncio
+    async def test_list_resources_timeout(self, transport):
+        """Test list_resources with timeout."""
+        transport._initialized = True
+        transport._streams = (Mock(), Mock())
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.stdio_transport.send_resources_list",
+            AsyncMock(side_effect=asyncio.TimeoutError),
+        ):
+            result = await transport.list_resources()
+            assert result == {}
+            assert transport._consecutive_failures == 1
+
+    @pytest.mark.asyncio
+    async def test_list_prompts_timeout(self, transport):
+        """Test list_prompts with timeout."""
+        transport._initialized = True
+        transport._streams = (Mock(), Mock())
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.stdio_transport.send_prompts_list",
+            AsyncMock(side_effect=asyncio.TimeoutError),
+        ):
+            result = await transport.list_prompts()
+            assert result == {}
+            assert transport._consecutive_failures == 1
+
+    @pytest.mark.asyncio
+    async def test_read_resource_timeout(self, transport):
+        """Test read_resource with timeout."""
+        transport._initialized = True
+        transport._streams = (Mock(), Mock())
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.stdio_transport.send_resources_read",
+            AsyncMock(side_effect=asyncio.TimeoutError),
+        ):
+            result = await transport.read_resource("test://uri")
+            assert result == {}
+            assert transport._consecutive_failures == 1
+
+    @pytest.mark.asyncio
+    async def test_get_prompt_timeout(self, transport):
+        """Test get_prompt with timeout."""
+        transport._initialized = True
+        transport._streams = (Mock(), Mock())
+
+        with patch(
+            "chuk_tool_processor.mcp.transport.stdio_transport.send_prompts_get",
+            AsyncMock(side_effect=asyncio.TimeoutError),
+        ):
+            result = await transport.get_prompt("test_prompt")
+            assert result == {}
+            assert transport._consecutive_failures == 1

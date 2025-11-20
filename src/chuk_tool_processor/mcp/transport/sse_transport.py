@@ -714,6 +714,19 @@ class SSETransport(MCPBaseTransport):
         self._last_successful_ping = None
         self._initialization_time = None
 
+    def set_session_id(self, session_id: str | None) -> None:
+        """
+        Dynamically update the session ID for this transport.
+
+        This allows setting or changing the session ID after initialization,
+        which is useful when the session ID is only known at runtime.
+
+        Args:
+            session_id: New session ID to use, or None to clear it
+        """
+        self.session_id = session_id
+        logger.debug("Session ID updated: %s", session_id if session_id else "(cleared)")
+
     def get_metrics(self) -> dict[str, Any]:
         """Get performance and connection metrics with health info."""
         if not self._metrics:
