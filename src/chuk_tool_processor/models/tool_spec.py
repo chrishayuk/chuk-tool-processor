@@ -87,6 +87,20 @@ class ToolSpec(BaseModel):
         description="Maximum recommended retries (None = use default)",
     )
 
+    # Dynamic loading (advanced tool use)
+    defer_loading: bool = Field(
+        default=False,
+        description="If True, tool metadata is sent to LLM but full schema only loaded on-demand",
+    )
+    search_keywords: list[str] = Field(
+        default_factory=list,
+        description="Keywords for tool discovery (supplements description for search)",
+    )
+    allowed_callers: list[str] | None = Field(
+        None,
+        description="Allowed callers: ['claude', 'programmatic']. None = all allowed.",
+    )
+
     # ------------------------------------------------------------------ #
     # Capability checks
     # ------------------------------------------------------------------ #
@@ -132,11 +146,17 @@ class ToolSpec(BaseModel):
         Returns:
             Dict compatible with Anthropic's tools parameter
         """
-        return {
+        result = {
             "name": self.name,
             "description": self.description,
             "input_schema": self.parameters,
         }
+
+        # Add advanced tool use fields if present
+        if self.allowed_callers:
+            result["allowed_callers"] = self.allowed_callers
+
+        return result
 
     def to_mcp(self) -> dict[str, Any]:
         """

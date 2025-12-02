@@ -25,6 +25,8 @@ T = TypeVar("T")
 _PENDING_REGISTRATIONS: list[Callable[[], Awaitable]] = []
 _REGISTERED_CLASSES = weakref.WeakSet()
 _SHUTTING_DOWN = False
+# Store original registration info for test resets
+_REGISTRATION_INFO: list[tuple[type, str, str, dict]] = []  # (cls, name, namespace, metadata)
 
 
 def _is_pydantic_model(cls: type) -> bool:
@@ -231,7 +233,14 @@ def _add_subprocess_serialization_support(cls: type, tool_name: str) -> type:
     return cls
 
 
-def register_tool(name: str | None = None, namespace: str = "default", **metadata):
+def register_tool(
+    name: str | None = None,
+    namespace: str = "default",
+    defer_loading: bool = False,
+    search_keywords: list[str] | None = None,
+    allowed_callers: list[str] | None = None,
+    **metadata,
+):
     """
     Decorator for registering tools with the global registry.
 
@@ -243,6 +252,9 @@ def register_tool(name: str | None = None, namespace: str = "default", **metadat
     Args:
         name: Optional tool name. If not provided, uses the class name.
         namespace: Namespace for the tool (default: "default").
+        defer_loading: If True, tool is loaded on-demand rather than eagerly (default: False).
+        search_keywords: Keywords for tool discovery when using defer_loading.
+        allowed_callers: Allowed callers list (e.g., ['claude', 'programmatic']).
         **metadata: Additional metadata for the tool.
 
     Example:
@@ -250,6 +262,15 @@ def register_tool(name: str | None = None, namespace: str = "default", **metadat
         ... class Calculator:
         ...     async def execute(self, a: int, b: int) -> int:
         ...         return a + b
+
+        >>> @register_tool(
+        ...     namespace="data",
+        ...     defer_loading=True,
+        ...     search_keywords=["pandas", "dataframe", "csv"]
+        ... )
+        ... class PandasTool:
+        ...     async def execute(self, **kwargs):
+        ...         pass
     """
 
     def decorator(cls: type[T]) -> type[T]:
@@ -271,16 +292,37 @@ def register_tool(name: str | None = None, namespace: str = "default", **metadat
         # FIXED: Add subprocess serialization support with Pydantic handling
         enhanced_cls = _add_subprocess_serialization_support(cls, tool_name)
 
+        # Build complete metadata dict with defer_loading fields
+        complete_metadata = dict(metadata)
+        complete_metadata["defer_loading"] = defer_loading
+        if search_keywords:
+            complete_metadata["search_keywords"] = search_keywords
+        if allowed_callers:
+            complete_metadata["allowed_callers"] = allowed_callers
+
+        # For deferred tools, store import path
+        if defer_loading:
+            module_name = cls.__module__
+            class_name = cls.__name__
+            complete_metadata["import_path"] = f"{module_name}.{class_name}"
+
         # Create registration function
         async def do_register():
             registry = await ToolRegistryProvider.get_registry()
-            await registry.register_tool(enhanced_cls, name=tool_name, namespace=namespace, metadata=metadata)
+            await registry.register_tool(enhanced_cls, name=tool_name, namespace=namespace, metadata=complete_metadata)
 
         _PENDING_REGISTRATIONS.append(do_register)
         _REGISTERED_CLASSES.add(enhanced_cls)
 
         # Add class attribute for identification
-        enhanced_cls._tool_registration_info = {"name": tool_name, "namespace": namespace, "metadata": metadata}
+        enhanced_cls._tool_registration_info = {
+            "name": tool_name,
+            "namespace": namespace,
+            "metadata": complete_metadata,
+        }
+
+        # Store for test resets
+        _REGISTRATION_INFO.append((enhanced_cls, tool_name, namespace, complete_metadata))
 
         return enhanced_cls
 
@@ -357,6 +399,28 @@ async def ensure_registrations() -> None:
         await asyncio.gather(*tasks)
 
 
+def _rebuild_pending_registrations() -> None:
+    """
+    Rebuild pending registrations from stored registration info.
+
+    This is used when resetting the registry in tests to allow tools
+    to be re-registered.
+    """
+    global _PENDING_REGISTRATIONS
+
+    # Clear existing pending registrations
+    _PENDING_REGISTRATIONS.clear()
+
+    # Rebuild from stored registration info
+    for cls, name, namespace, metadata in _REGISTRATION_INFO:
+        # Create registration function with captured values
+        async def do_register(c=cls, n=name, ns=namespace, m=metadata):
+            registry = await ToolRegistryProvider.get_registry()
+            await registry.register_tool(c, name=n, namespace=ns, metadata=m)
+
+        _PENDING_REGISTRATIONS.append(do_register)
+
+
 def discover_decorated_tools() -> list[type]:
     """Discover all tool classes decorated with @register_tool."""
     tools = []
@@ -379,7 +443,14 @@ def discover_decorated_tools() -> list[type]:
 # --------------------------------------------------------------------------- #
 # Ergonomic alias for register_tool
 # --------------------------------------------------------------------------- #
-def tool(name: str | None = None, namespace: str = "default", **metadata):
+def tool(
+    name: str | None = None,
+    namespace: str = "default",
+    defer_loading: bool = False,
+    search_keywords: list[str] | None = None,
+    allowed_callers: list[str] | None = None,
+    **metadata,
+):
     """
     Ergonomic alias for @register_tool decorator.
 
@@ -389,6 +460,9 @@ def tool(name: str | None = None, namespace: str = "default", **metadata):
     Args:
         name: Optional tool name. If not provided, uses the class name.
         namespace: Namespace for the tool (default: "default").
+        defer_loading: If True, tool is loaded on-demand rather than eagerly.
+        search_keywords: Keywords for tool discovery when using defer_loading.
+        allowed_callers: Allowed callers list (e.g., ['claude', 'programmatic']).
         **metadata: Additional metadata for the tool.
 
     Example:
@@ -404,7 +478,14 @@ def tool(name: str | None = None, namespace: str = "default", **metadata):
         ...     async def execute(self, a: int, b: int) -> int:
         ...         return a + b
     """
-    return register_tool(name=name, namespace=namespace, **metadata)
+    return register_tool(
+        name=name,
+        namespace=namespace,
+        defer_loading=defer_loading,
+        search_keywords=search_keywords,
+        allowed_callers=allowed_callers,
+        **metadata,
+    )
 
 
 # Shutdown handling

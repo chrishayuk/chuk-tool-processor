@@ -11,6 +11,20 @@ from typing import Any
 from pydantic import BaseModel, Field, model_validator
 
 
+class MCPToolFactoryParams(BaseModel):
+    """
+    Factory parameters for creating MCP tools on-demand.
+
+    Used for deferred loading of MCP tools.
+    """
+
+    tool_name: str = Field(..., description="Name of the MCP tool")
+    default_timeout: float = Field(30.0, description="Default timeout for tool execution")
+    enable_resilience: bool = Field(True, description="Whether to enable resilience features")
+    recovery_config: Any | None = Field(None, description="Optional recovery configuration")
+    namespace: str = Field(..., description="Namespace where stream_manager is stored")
+
+
 class ToolInfo(BaseModel):
     """
     Information about a registered tool (namespace and name).
@@ -81,6 +95,15 @@ class ToolMetadata(BaseModel):
     supports_streaming: bool = Field(False, description="Whether the tool supports streaming responses")
     execution_options: dict[str, Any] = Field(default_factory=dict, description="Additional execution options")
     dependencies: list[str] = Field(default_factory=list, description="Dependencies on other tools")
+
+    # Dynamic loading fields (advanced tool use)
+    defer_loading: bool = Field(False, description="If True, tool is loaded on-demand rather than eagerly")
+    search_keywords: list[str] = Field(default_factory=list, description="Keywords for tool discovery")
+    import_path: str | None = Field(None, description="Import path for lazy loading (e.g., 'module.ClassName')")
+    allowed_callers: list[str] | None = Field(None, description="Allowed callers: ['claude', 'programmatic']")
+    mcp_factory_params: MCPToolFactoryParams | None = Field(
+        None, description="Factory parameters for creating deferred MCP tools"
+    )
 
     @model_validator(mode="after")
     def ensure_async(self) -> ToolMetadata:
