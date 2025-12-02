@@ -175,7 +175,7 @@ class StdioTransport(MCPBaseTransport):
     async def initialize(self) -> bool:
         """Enhanced initialization with process monitoring."""
         if self._initialized:
-            logger.warning("Transport already initialized")
+            logger.debug("Transport already initialized")
             return True
 
         start_time = time.time()
@@ -252,7 +252,7 @@ class StdioTransport(MCPBaseTransport):
             self._metrics["recovery_attempts"] += 1
             self._metrics["process_restarts"] += 1
 
-        logger.warning("Attempting STDIO process recovery...")
+        logger.debug("Attempting STDIO process recovery...")
 
         try:
             # Force cleanup of existing process
@@ -374,7 +374,7 @@ class StdioTransport(MCPBaseTransport):
 
         # Check for too many consecutive failures (like SSE)
         if self._consecutive_failures >= self._max_consecutive_failures:
-            logger.warning("Connection marked unhealthy after %d failures", self._consecutive_failures)
+            logger.debug("Connection marked unhealthy after %d failures", self._consecutive_failures)
             return False
 
         return True
@@ -467,7 +467,7 @@ class StdioTransport(MCPBaseTransport):
 
             # Enhanced connection check with recovery attempt
             if not self.is_connected():
-                logger.warning("Connection unhealthy, attempting recovery...")
+                logger.debug("Connection unhealthy, attempting recovery...")
                 if not await self._attempt_recovery():
                     if self.enable_metrics:
                         self._update_metrics(time.time() - start_time, False)

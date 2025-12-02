@@ -75,6 +75,7 @@ class ToolSpec(BaseModel):
     license: str | None = Field(None, description="License (e.g., 'MIT', 'Apache-2.0')")
     documentation_url: str | None = Field(None, description="Link to full documentation")
     source_url: str | None = Field(None, description="Link to source code")
+    icon: str | None = Field(None, description="Icon URI or data URL for tool (MCP spec 2025-11-25)")
 
     # Execution hints
     estimated_duration_seconds: float | None = Field(

@@ -36,7 +36,7 @@ class StreamManager:
     Updated to support the latest transports:
     - STDIO (process-based)
     - SSE (Server-Sent Events) with headers support
-    - HTTP Streamable (modern replacement for SSE, spec 2025-03-26) with graceful headers handling
+    - HTTP Streamable (modern replacement for SSE, spec 2025-11-25) with graceful headers handling
     """
 
     def __init__(self, timeout_config: TimeoutConfig | None = None) -> None:
@@ -197,7 +197,7 @@ class StreamManager:
                         params, server_timeout = await load_config(config_file, server_name)
                         # Use per-server timeout if specified, otherwise use global default
                         effective_timeout = server_timeout if server_timeout is not None else default_timeout
-                        logger.info(
+                        logger.debug(
                             f"Server '{server_name}' using timeout: {effective_timeout}s (per-server: {server_timeout}, default: {default_timeout})"
                         )
                         # Use initialization_timeout for connection_timeout since subprocess
@@ -249,6 +249,13 @@ class StreamManager:
                             headers = {}
                             session_id = None
                             logger.debug("No URL configured for HTTP Streamable transport, using default: %s", http_url)
+
+                        # IMPORTANT: If transport already exists for this server, preserve its session ID
+                        if server_name in self.transports:
+                            existing_transport = self.transports[server_name]
+                            if hasattr(existing_transport, "session_id") and existing_transport.session_id:
+                                session_id = existing_transport.session_id
+                                logger.debug(f"Preserving session ID for {server_name}: {session_id}")
 
                         # Build HTTP transport (headers not supported yet)
                         transport_params = {

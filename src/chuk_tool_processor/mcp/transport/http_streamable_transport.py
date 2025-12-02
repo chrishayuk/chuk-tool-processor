@@ -145,8 +145,8 @@ class HTTPStreamableTransport(MCPBaseTransport):
 
     async def initialize(self) -> bool:
         """Initialize with enhanced error handling and health monitoring."""
-        if self._initialized:
-            logger.warning("Transport already initialized")
+        if self._initialized and self._http_transport:
+            logger.debug("Transport already initialized, reusing existing connection")
             return True
 
         start_time = time.time()
@@ -164,11 +164,15 @@ class HTTPStreamableTransport(MCPBaseTransport):
 
             # Create StreamableHTTPParameters with minimal configuration
             # NOTE: Keep params minimal - extra params can break message routing
+            # IMPORTANT: Pass session_id if we have one from a previous connection
+            if self.session_id:
+                logger.debug(f"Creating transport with existing session ID: {self.session_id}")
             http_params = StreamableHTTPParameters(
                 url=self.url,
                 timeout=self.default_timeout,
                 headers=headers,
                 enable_streaming=True,
+                session_id=self.session_id,  # Reuse session ID if available
             )
 
             # Create and store transport (will be managed via async with in parent scope)
@@ -213,6 +217,16 @@ class HTTPStreamableTransport(MCPBaseTransport):
                 self._initialized = True
                 self._last_successful_ping = time.time()
                 self._consecutive_failures = 0
+
+                # CRITICAL: Extract and persist session ID from transport
+                # This allows stateful MCP servers to maintain user sessions across requests
+                if self._http_transport:
+                    extracted_session_id = self._http_transport.get_session_id()
+                    print(f"DEBUG: Extracted session ID from transport: {extracted_session_id}")
+                    if extracted_session_id and extracted_session_id != self.session_id:
+                        self.session_id = extracted_session_id
+                        print(f"✓ Session ID established: {self.session_id}")
+                        logger.info(f"Session ID established: {self.session_id}")
 
                 total_init_time = time.time() - start_time
                 if self.enable_metrics and self._metrics:
@@ -294,10 +308,14 @@ class HTTPStreamableTransport(MCPBaseTransport):
 
     async def _cleanup(self) -> None:
         """Enhanced cleanup with state reset."""
+        # IMPORTANT: Preserve session_id across cleanup/reconnection
+        # Session IDs must persist for the lifetime of the StreamableTransport object
+        print(f"DEBUG: _cleanup() called on object {id(self)}, preserving session_id={self.session_id}")
         self._http_transport = None
         self._read_stream = None
         self._write_stream = None
         self._initialized = False
+        # NOTE: We do NOT reset self.session_id here - it should persist across reconnections
 
     async def send_ping(self) -> bool:
         """Enhanced ping with health monitoring (like SSE)."""
@@ -470,6 +488,14 @@ class HTTPStreamableTransport(MCPBaseTransport):
             if not result.get("isError", False):
                 self._consecutive_failures = 0
                 self._last_successful_ping = time.time()  # Update health timestamp
+
+                # Extract and persist session ID after successful calls
+                # This ensures we maintain session state even if it changes mid-session
+                if self._http_transport:
+                    current_session_id = self._http_transport.get_session_id()
+                    if current_session_id and current_session_id != self.session_id:
+                        self.session_id = current_session_id
+                        logger.debug(f"Session ID updated: {self.session_id}")
 
             if self.enable_metrics:
                 self._update_metrics(response_time, not result.get("isError", False))

@@ -207,6 +207,18 @@ Runs the same on macOS, Linux, and Windows — locally, serverside, and inside c
 | **LLM Providers** | OpenAI, Anthropic, Local models | Any LLM that outputs tool calls |
 | **MCP Transports** | HTTP Streamable, STDIO, SSE | All MCP 1.0 transports |
 | **MCP Servers** | Notion, SQLite, Atlassian, Echo, Custom | Any MCP-compliant server |
+| **MCP Specification** | 2025-11-25, 2025-06-18, 2025-03-26 | Full support via chuk-mcp 0.9 |
+
+**MCP Protocol Support:**
+- ✅ MCP Spec versions: 2025-11-25 (November), 2025-06-18, 2025-03-26
+- ✅ Transports: HTTP Streamable, STDIO, SSE
+- ✅ Core operations: tools/call, tools/list, resources/list, resources/read, prompts/list, prompts/get
+- ✅ Icon metadata for tools, resources, and prompts (2025-11-25)
+- ✅ Structured content in tool results (2025-06-18)
+- ✅ OAuth 2.1 with PKCE and automatic token refresh
+- ✅ Session persistence and reconnection handling
+- ⏳ Tasks (experimental in 2025-11-25) - awaiting chuk-mcp support
+- ⏳ Sampling with tool invocation - server-side feature
 
 **Tested Configurations:**
 - ✅ macOS 14+ (Apple Silicon & Intel)

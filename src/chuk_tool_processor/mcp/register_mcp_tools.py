@@ -68,6 +68,10 @@ async def register_mcp_tools(
             "argument_schema": tool_def.get("inputSchema", {}),
         }
 
+        # Add icon if present (MCP spec 2025-11-25)
+        if "icon" in tool_def:
+            meta["icon"] = tool_def["icon"]
+
         try:
             # Create MCPTool wrapper with optional resilience configuration
             wrapper = MCPTool(

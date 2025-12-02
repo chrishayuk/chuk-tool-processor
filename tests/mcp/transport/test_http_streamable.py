@@ -549,6 +549,7 @@ class TestHTTPStreamableTransport:
     async def test_initialize_already_initialized(self, transport):
         """Test initialization when already initialized."""
         transport._initialized = True
+        transport._http_transport = Mock()  # Mock the transport object
         result = await transport.initialize()
         assert result is True
 
