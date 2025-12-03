@@ -130,13 +130,19 @@ class ToolSpec(BaseModel):
         Returns:
             Dict compatible with OpenAI's tools=[...] parameter
         """
+        function_def: dict[str, Any] = {
+            "name": self.name,
+            "description": self.description,
+            "parameters": self.parameters,
+        }
+
+        # Add examples if present (for improved tool use accuracy)
+        if self.examples:
+            function_def["examples"] = self.examples
+
         return {
             "type": "function",
-            "function": {
-                "name": self.name,
-                "description": self.description,
-                "parameters": self.parameters,
-            },
+            "function": function_def,
         }
 
     def to_anthropic(self) -> dict[str, Any]:
@@ -146,15 +152,18 @@ class ToolSpec(BaseModel):
         Returns:
             Dict compatible with Anthropic's tools parameter
         """
-        result = {
+        result: dict[str, Any] = {
             "name": self.name,
             "description": self.description,
             "input_schema": self.parameters,
         }
 
-        # Add advanced tool use fields if present
+        # Add advanced tool use fields if present (beta: advanced-tool-use-2025-11-20)
         if self.allowed_callers:
             result["allowed_callers"] = self.allowed_callers
+
+        if self.examples:
+            result["examples"] = self.examples
 
         return result
 
@@ -165,7 +174,7 @@ class ToolSpec(BaseModel):
         Returns:
             Dict compatible with MCP tool schema
         """
-        result = {
+        result: dict[str, Any] = {
             "name": self.name,
             "description": self.description,
             "inputSchema": self.parameters,
@@ -174,6 +183,12 @@ class ToolSpec(BaseModel):
         # Add optional fields if present
         if self.returns:
             result["outputSchema"] = self.returns
+
+        if self.examples:
+            result["examples"] = self.examples
+
+        if self.icon:
+            result["icon"] = self.icon
 
         return result
 
