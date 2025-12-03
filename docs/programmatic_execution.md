@@ -55,7 +55,40 @@ Total: 1 API call, 3K tokens (85% reduction!), ~2 seconds
 
 ## Provider Support
 
-### Anthropic Claude
+### Option 1: Tool-Processor Code Sandbox (Works with ANY LLM)
+
+**NEW**: The tool-processor now includes a **built-in code execution sandbox** that works with any LLM!
+
+**Benefits**:
+- Works with **any LLM** (OpenAI, Anthropic, Llama, Mistral, etc.)
+- LLM generates Python → Tool-processor executes safely
+- No need for LLM-specific code execution features
+- Full security controls and resource limits
+
+**Example**:
+```python
+from chuk_tool_processor.execution import CodeSandbox
+
+# Create sandbox
+sandbox = CodeSandbox(timeout=30.0)
+
+# LLM generates this code
+code = """
+# Process data using tools in a loop
+results = []
+for i in range(1, 6):
+    result = await add(a=str(i), b=str(i))
+    results.append(result)
+return results
+"""
+
+# Tool-processor executes it safely
+result = await sandbox.execute(code, namespace="math")
+```
+
+See `examples/code_sandbox_demo.py` for complete working example.
+
+### Option 2: Anthropic Claude (Built-in Execution)
 
 Claude has **built-in code execution** via the `code_execution_20250825` tool.
 
@@ -90,9 +123,9 @@ response = client.messages.create(
 )
 ```
 
-### OpenAI (via Custom Sandbox)
+### Option 3: OpenAI (via Tool-Processor Sandbox)
 
-OpenAI doesn't have built-in code execution for tool orchestration, but you can implement it:
+OpenAI doesn't have built-in code execution for tool orchestration, so use the tool-processor's code sandbox:
 
 ```python
 from chuk_tool_processor.execution.code_sandbox import CodeSandbox
@@ -110,11 +143,13 @@ sandbox = CodeSandbox(registry=your_tool_registry)
 result = await sandbox.execute(code)
 ```
 
-### Any LLM (Self-Hosted Sandbox)
+### Option 4: Any Other LLM (via Tool-Processor Sandbox)
 
-Works with any LLM that can generate Python code:
+Works with any LLM that can generate Python code (Llama, Mistral, etc.):
 
 ```python
+from chuk_tool_processor.execution import CodeSandbox
+
 # 1. Prompt LLM to write code
 prompt = f"""
 Available tools:
@@ -126,8 +161,9 @@ Write Python code to: {user_request}
 # 2. LLM generates code
 code = await llm.generate(prompt)
 
-# 3. Execute safely
-result = await code_sandbox.execute(code, tools=registry)
+# 3. Execute safely with tool-processor sandbox
+sandbox = CodeSandbox()
+result = await sandbox.execute(code, namespace="your_namespace")
 ```
 
 ## When to Use Programmatic Execution

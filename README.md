@@ -241,6 +241,8 @@ Runs the same on macOS, Linux, and Windows — locally, serverside, and inside c
 * **MCP in one call**: `setup_mcp_http_streamable|stdio|sse(...)` connects to remote tools instantly
 * **Context managers**: `async with ToolProcessor() as p:` ensures automatic cleanup
 * **Full type safety**: PEP 561 compliant—mypy, pyright, and IDEs get complete type information
+* **Advanced tool use** (NEW): Deferred loading, tool examples, programmatic execution—works with ANY LLM
+* **Code sandbox** (NEW): Execute LLM-generated Python with tool access—OpenAI, Claude, Llama, etc.
 
 ## Quick Start
 
@@ -1403,6 +1405,174 @@ result = await tool.execute(**llm_output)
 ```
 
 ## Advanced Topics
+
+### Advanced Tool Use (NEW)
+
+**Three powerful features for scaling to large tool sets with ANY LLM:**
+
+1. **Deferred Loading** - Load 1000s of tools, expose only a few
+2. **Tool Use Examples** - Improve accuracy from 72% to 90%
+3. **Programmatic Execution** - LLMs orchestrate tools via Python code
+
+#### Deferred Loading (99% Token Reduction)
+
+Traditional approach: Send all 393 tools → Exceeds limits! (~196K tokens)
+
+**Advanced approach**: Send only 4 core tools initially (~2K tokens) = **99% reduction**
+
+```python
+from chuk_tool_processor.mcp import register_mcp_tools, setup_mcp_stdio
+
+# Connect to math server with 393 tools
+processor, manager = await setup_mcp_stdio(
+    config_file="mcp_config.json",
+    servers=["math"],
+    namespace="math"
+)
+
+# Register with deferred loading
+await register_mcp_tools(
+    stream_manager=manager,
+    namespace="math",
+    defer_loading=True,  # Only load on-demand
+    defer_all_except=["add", "subtract", "multiply", "divide"],  # Core 4
+)
+
+# LLM only sees 4 tools initially
+# If it needs "power", search and load dynamically
+registry = await get_default_registry()
+results = await registry.search_deferred_tools(query="power exponent")
+await registry.load_deferred_tool(results[0].name, "math")
+```
+
+**Benefits**: Works with OpenAI (128 tool limit), Claude, and any LLM
+
+#### Tool Use Examples (+25% Accuracy)
+
+Add concrete usage examples to improve LLM tool calling accuracy:
+
+```python
+from chuk_tool_processor.models.tool_spec import ToolSpec
+
+spec = ToolSpec(
+    name="create_event",
+    description="Create calendar event",
+    parameters={...},
+    examples=[
+        {
+            "input": {
+                "title": "Team Standup",
+                "start_date": "2024-01-15T09:00:00Z",
+                "attendees": ["alice@company.com"],
+                "recurrence": "daily"
+            },
+            "description": "Daily recurring meeting"
+        },
+        {
+            "input": {
+                "title": "Project Deadline",
+                "start_date": "2024-03-01T23:59:59Z",
+                "attendees": []
+            },
+            "description": "Single event with no attendees"
+        }
+    ]
+)
+
+# Export to any provider (all support examples now)
+openai_format = spec.to_openai()
+anthropic_format = spec.to_anthropic()
+mcp_format = spec.to_mcp()
+```
+
+**Research**: Anthropic found examples improve accuracy from 72% → 90% on complex parameters
+
+#### Programmatic Execution (37% Token Savings)
+
+**NEW**: Tool-processor now includes a **built-in code sandbox** that works with ANY LLM!
+
+```python
+from chuk_tool_processor.execution import CodeSandbox
+
+# Create sandbox
+sandbox = CodeSandbox(timeout=30.0)
+
+# LLM generates Python code (OpenAI, Claude, Llama, etc.)
+code = """
+# Process data using tools in a loop
+results = []
+for i in range(1, 6):
+    result = await add(a=str(i), b=str(i))
+    results.append(result)
+return results
+"""
+
+# Tool-processor executes safely
+result = await sandbox.execute(code, namespace="math")
+# All 5 tool calls happen in single execution context!
+```
+
+**Benefits**:
+- **Works with ANY LLM** (OpenAI, Claude, Llama, Mistral, etc.)
+- **37% token reduction** on complex workflows
+- **Faster execution** (no API round-trips for intermediate values)
+- **Safe execution** (restricted builtins, timeouts, tool allowlist)
+
+**Traditional approach** (Sequential API calls):
+```
+User: "Process top 10 customers"
+API Call 1: get_sales_data() → 1000 rows (20K tokens)
+API Call 2: filter_top_customers() → 10 rows (2K tokens)
+API Call 3: analyze_trends() → analysis (3K tokens)
+Total: 3 API calls, 25K tokens, ~10 seconds
+```
+
+**Programmatic approach** (Code execution):
+```
+User: "Process top 10 customers"
+API Call 1: LLM writes code → Tool-processor executes
+sales = await get_sales_data()
+top_10 = sorted(sales, key=lambda x: x['revenue'])[:10]
+analysis = await analyze_trends(top_10)
+Total: 1 execution, 3K tokens (85% reduction!), ~2 seconds
+```
+
+**Complete Example**:
+```python
+from chuk_tool_processor.execution import CodeSandbox
+from chuk_tool_processor.mcp import setup_mcp_stdio
+
+# Setup tools
+processor, manager = await setup_mcp_stdio(
+    config_file="mcp_config.json",
+    servers=["math"],
+    namespace="math"
+)
+
+# Create code sandbox
+sandbox = CodeSandbox()
+
+# LLM generates this code
+llm_generated_code = """
+# Complex workflow with loops and conditionals
+results = []
+for i in range(1, 6):
+    if i < 3:
+        result = await add(a=str(i), b="100")
+    else:
+        result = await add(a=str(i), b="200")
+    results.append(result)
+return results
+"""
+
+# Execute safely
+result = await sandbox.execute(llm_generated_code, namespace="math")
+print(result)  # All tool calls executed!
+```
+
+See `examples/code_sandbox_demo.py` and `examples/advanced_tool_use_math_server.py` for complete working examples.
+
+**Documentation**: See `docs/advanced_tool_use.md`, `docs/tool_examples.md`, and `docs/programmatic_execution.md` for full guides.
 
 ### Using Isolated Strategy
 
