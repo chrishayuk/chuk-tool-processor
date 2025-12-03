@@ -57,6 +57,29 @@ async def get_default_registry(auto_initialize: bool = True) -> ToolRegistryInte
     return registry
 
 
+async def reset_registry() -> None:
+    """
+    Reset the registry for testing purposes.
+
+    This clears the global registry and resets initialization state,
+    allowing tests to start with a clean slate.
+
+    WARNING: Only use this in tests! Do not call in production code.
+    """
+    global _INITIALIZED
+
+    async with _INIT_LOCK:
+        # Reset both module and class level registries
+        await ToolRegistryProvider.reset()
+        _INITIALIZED = False
+
+        # Clear the registered classes set and rebuild pending registrations
+        from chuk_tool_processor.registry.decorators import _REGISTERED_CLASSES, _rebuild_pending_registrations
+
+        _REGISTERED_CLASSES.clear()
+        _rebuild_pending_registrations()
+
+
 __all__ = [
     "ToolRegistryInterface",
     "ToolInfo",
@@ -69,6 +92,7 @@ __all__ = [
     "discover_decorated_tools",
     "get_default_registry",
     "get_registry",
+    "reset_registry",
 ]
 
 
