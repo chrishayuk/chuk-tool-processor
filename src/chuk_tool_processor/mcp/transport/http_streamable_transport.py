@@ -222,11 +222,10 @@ class HTTPStreamableTransport(MCPBaseTransport):
                 # This allows stateful MCP servers to maintain user sessions across requests
                 if self._http_transport:
                     extracted_session_id = self._http_transport.get_session_id()
-                    print(f"DEBUG: Extracted session ID from transport: {extracted_session_id}")
+                    logger.debug(f"Extracted session ID from transport: {extracted_session_id}")
                     if extracted_session_id and extracted_session_id != self.session_id:
                         self.session_id = extracted_session_id
-                        print(f"✓ Session ID established: {self.session_id}")
-                        logger.info(f"Session ID established: {self.session_id}")
+                        logger.debug(f"Session ID established: {self.session_id}")
 
                 total_init_time = time.time() - start_time
                 if self.enable_metrics and self._metrics:
