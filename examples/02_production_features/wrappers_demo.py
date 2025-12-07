@@ -253,6 +253,7 @@ async def caching_wrapper_demo(registry) -> None:
     cache = InMemoryCache(default_ttl=30)  # 30 second TTL by default
 
     # Wrap with CachingToolExecutor
+    # Note: Must explicitly specify which tools are cacheable (opt-in)
     executor = CachingToolExecutor(
         executor=base_executor,
         cache=cache,
@@ -260,6 +261,7 @@ async def caching_wrapper_demo(registry) -> None:
         tool_ttls={
             "expensive_computation": 60  # 60 second TTL for this specific tool
         },
+        cacheable_tools=["expensive_computation"],  # Opt-in: only cache this tool
     )
 
     # Create tool calls with same and different parameters
@@ -346,7 +348,9 @@ async def combined_wrappers_demo(registry) -> None:
 
     # 2. Then, cache successful results (including retried successes)
     cache = InMemoryCache(default_ttl=30)
-    cache_executor = CachingToolExecutor(executor=retry_executor, cache=cache)
+    cache_executor = CachingToolExecutor(
+        executor=retry_executor, cache=cache, cacheable_tools=["flaky_api"]
+    )
 
     # 3. Finally, apply rate limiting (operates on cache hits too)
     rate_limiter = RateLimiter(global_limit=5, global_period=10.0)

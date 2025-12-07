@@ -116,7 +116,7 @@ class TestCachingAdditionalCoverage:
             mock_executor.execute = mock_execute
 
             cache = InMemoryCache()
-            caching_executor = CachingToolExecutor(executor=mock_executor, cache=cache)
+            caching_executor = CachingToolExecutor(executor=mock_executor, cache=cache, cacheable_tools=["test_tool"])
 
             # Execute a call (cache miss)
             call = ToolCall(tool="test_tool", arguments={})

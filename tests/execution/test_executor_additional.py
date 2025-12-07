@@ -262,7 +262,7 @@ async def test_caching_executor_use_cache_false():
     executor.execute = AsyncMock(return_value=[ToolResult(tool="tool1", result="result1")])
 
     cache = InMemoryCache()
-    caching = CachingToolExecutor(executor, cache)
+    caching = CachingToolExecutor(executor, cache, cacheable_tools=["tool1"])
 
     call = ToolCall(tool="tool1", arguments={"x": 1})
 
@@ -282,20 +282,20 @@ async def test_caching_executor_use_cache_false():
 async def test_caching_executor_handles_different_executors():
     """Test CachingToolExecutor with different executor types for coverage."""
 
-    # Test 1: Executor without use_cache parameter
+    # Test 1: Executor without use_cache parameter - no caching by default
     class SimpleExecutor:
         async def execute(self, calls, timeout=None):
             return [ToolResult(tool=c.tool, result=f"simple_{c.tool}") for c in calls]
 
     executor1 = SimpleExecutor()
     cache1 = InMemoryCache()
-    caching1 = CachingToolExecutor(executor1, cache1)
+    caching1 = CachingToolExecutor(executor1, cache1)  # No cacheable_tools = no caching
 
     call1 = ToolCall(tool="test1", arguments={"x": 1})
     results1 = await caching1.execute([call1])
     assert results1[0].result == "simple_test1"
 
-    # Test 2: Executor with use_cache parameter - covers lines 366-369
+    # Test 2: Executor with use_cache parameter and explicit cacheable tools
     class ExecutorWithCache:
         async def execute(self, calls, timeout=None, use_cache=True):
             # The parameter exists but we don't assert its value to avoid test failures
@@ -303,7 +303,7 @@ async def test_caching_executor_handles_different_executors():
 
     executor2 = ExecutorWithCache()
     cache2 = InMemoryCache()
-    caching2 = CachingToolExecutor(executor2, cache2)
+    caching2 = CachingToolExecutor(executor2, cache2, cacheable_tools=["test2"])
 
     call2 = ToolCall(tool="test2", arguments={"x": 2})
 

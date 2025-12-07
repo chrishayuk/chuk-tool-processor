@@ -354,7 +354,7 @@ class CachingToolExecutor:
             cache: Cache implementation to use
             default_ttl: Default time-to-live in seconds
             tool_ttls: Dict mapping tool names to custom TTL values
-            cacheable_tools: List of tool names that should be cached. If None, all tools are cacheable.
+            cacheable_tools: List of tool names that should be cached. If None, no tools are cacheable (opt-in).
         """
         self.executor = executor
         self.cache = cache
@@ -397,7 +397,8 @@ class CachingToolExecutor:
         Returns:
             True if the tool should be cached, False otherwise
         """
-        return self.cacheable_tools is None or tool in self.cacheable_tools
+        # Opt-in caching: tools must be explicitly marked as cacheable
+        return self.cacheable_tools is not None and tool in self.cacheable_tools
 
     def _ttl_for(self, tool: str) -> int | None:
         """

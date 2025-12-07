@@ -197,7 +197,7 @@ async def test_inmemory_cache_clear():
 async def test_executor_caches_and_marks_hits():
     exec_ = DummyExecutor()
     cache = InMemoryCache(default_ttl=10)
-    wrapper = CachingToolExecutor(exec_, cache, default_ttl=5)
+    wrapper = CachingToolExecutor(exec_, cache, default_ttl=5, cacheable_tools=["t1"])
 
     call = ToolCall(tool="t1", arguments={"v": 1})
 
@@ -228,10 +228,30 @@ async def test_executor_respects_cacheable_whitelist():
 
 
 @pytest.mark.asyncio
+async def test_executor_default_no_caching():
+    """Test that by default (cacheable_tools=None), no tools are cached."""
+    exec_ = DummyExecutor()
+    cache = InMemoryCache()
+    wrapper = CachingToolExecutor(exec_, cache, default_ttl=5)  # No cacheable_tools specified
+
+    call = ToolCall(tool="some_tool", arguments={"x": 1})
+
+    # First call
+    res1 = await wrapper.execute([call])
+    assert len(exec_.called) == 1
+    assert res1[0].cached is False
+
+    # Second call - should NOT be cached (opt-in by default)
+    res2 = await wrapper.execute([call])
+    assert len(exec_.called) == 2  # Called again, not cached
+    assert res2[0].cached is False
+
+
+@pytest.mark.asyncio
 async def test_executor_respects_per_tool_ttl():
     exec_ = DummyExecutor()
     cache = InMemoryCache()
-    wrapper = CachingToolExecutor(exec_, cache, default_ttl=10, tool_ttls={"t1": 1})
+    wrapper = CachingToolExecutor(exec_, cache, default_ttl=10, tool_ttls={"t1": 1}, cacheable_tools=["t1"])
 
     call = ToolCall(tool="t1", arguments={"n": 5})
 
@@ -254,7 +274,7 @@ async def test_executor_with_mixed_cache_hits_and_misses():
     """Test executor with a mix of cached and uncached calls."""
     exec_ = DummyExecutor()
     cache = InMemoryCache()
-    wrapper = CachingToolExecutor(exec_, cache, default_ttl=10)
+    wrapper = CachingToolExecutor(exec_, cache, default_ttl=10, cacheable_tools=["t1", "t2", "t3", "t4"])
 
     # Create three different calls
     call1 = ToolCall(tool="t1", arguments={"a": 1})
@@ -290,7 +310,7 @@ async def test_executor_respects_use_cache_parameter():
     """Test that use_cache=False bypasses cache completely."""
     exec_ = DummyExecutor()
     cache = InMemoryCache()
-    wrapper = CachingToolExecutor(exec_, cache, default_ttl=10)
+    wrapper = CachingToolExecutor(exec_, cache, default_ttl=10, cacheable_tools=["t1"])
 
     call = ToolCall(tool="t1", arguments={"x": 1})
 
