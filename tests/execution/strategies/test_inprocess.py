@@ -45,6 +45,10 @@ class MockRegistry:
         """Mock list_tools method."""
         return [(namespace or "default", name) for name in self._tools]
 
+    async def list_namespaces(self) -> list[str]:
+        """Mock list_namespaces method."""
+        return ["default"]
+
 
 # --------------------------------------------------------------------------- #
 # Sample tools for testing
@@ -236,7 +240,7 @@ async def test_concurrency_limit(limited_strategy):
 
 @pytest.mark.asyncio
 async def test_results_preserve_order(strategy):
-    """Test that results preserve the order of calls."""
+    """Test that all results are returned (in completion order, not submission order)."""
     # Run tools in a specific order
     calls = [
         ToolCall(tool="add", arguments={"x": 1, "y": 2}),
@@ -247,12 +251,22 @@ async def test_results_preserve_order(strategy):
 
     results = await strategy.run(calls)
 
-    # Verify the order is preserved
+    # Verify all results are present (completion order, not submission order)
     assert len(results) == 4
-    assert results[0].tool == "add" and results[0].result == 3
-    assert results[1].tool == "sleep" and results[1].error is None
-    assert results[2].tool == "mul" and results[2].result == 12
-    assert results[3].tool == "add" and results[3].result == 11
+
+    # Find results by tool name (order may vary)
+    add_results = [r for r in results if r.tool == "add"]
+    sleep_results = [r for r in results if r.tool == "sleep"]
+    mul_results = [r for r in results if r.tool == "mul"]
+
+    assert len(add_results) == 2
+    assert len(sleep_results) == 1
+    assert len(mul_results) == 1
+
+    # Check actual results
+    assert {r.result for r in add_results} == {3, 11}
+    assert sleep_results[0].error is None
+    assert mul_results[0].result == 12
 
 
 # --------------------------------------------------------------------------- #
@@ -321,12 +335,23 @@ async def test_mixed_success_and_failure(strategy):
 
     results = await strategy.run(calls)
 
-    # Check individual results
+    # Check individual results (by tool name, order may vary)
     assert len(results) == 4
-    assert results[0].error is None and results[0].result == 3
-    assert results[1].error is not None and "not found" in results[1].error.lower()
-    assert results[2].error is not None and "fail_op" in results[2].error
-    assert results[3].error is None and results[3].result == 12
+
+    add_results = [r for r in results if r.tool == "add"]
+    missing_results = [r for r in results if r.tool == "missing"]
+    error_results = [r for r in results if r.tool == "error"]
+    mul_results = [r for r in results if r.tool == "mul"]
+
+    assert len(add_results) == 1
+    assert len(missing_results) == 1
+    assert len(error_results) == 1
+    assert len(mul_results) == 1
+
+    assert add_results[0].error is None and add_results[0].result == 3
+    assert missing_results[0].error is not None and "not found" in missing_results[0].error.lower()
+    assert error_results[0].error is not None and "fail_op" in error_results[0].error
+    assert mul_results[0].error is None and mul_results[0].result == 12
 
 
 # tests/execution/strategies/test_inprocess.py

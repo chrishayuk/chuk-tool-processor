@@ -21,7 +21,9 @@ from typing import Any
 import pytest
 import pytest_asyncio
 
-from chuk_tool_processor.execution.strategies.subprocess_strategy import SubprocessStrategy
+from chuk_tool_processor.execution.strategies.subprocess_strategy import (
+    SubprocessStrategy,
+)
 from chuk_tool_processor.models.tool_call import ToolCall
 
 
@@ -39,7 +41,10 @@ class MockRegistry:
     async def get_metadata(self, name: str, namespace: str = "default") -> Any | None:
         """Mock metadata retrieval."""
         if name in self._tools:
-            return {"description": f"Mock metadata for {name}", "supports_streaming": False}
+            return {
+                "description": f"Mock metadata for {name}",
+                "supports_streaming": False,
+            }
         return None
 
     async def list_tools(self, namespace: str | None = None) -> list:
@@ -75,7 +80,11 @@ class SleepTool:
 
     async def execute(self):
         await asyncio.sleep(self.delay)
-        return {"done": True, "pid": os.getpid(), "timestamp": datetime.now().isoformat()}
+        return {
+            "done": True,
+            "pid": os.getpid(),
+            "timestamp": datetime.now().isoformat(),
+        }
 
 
 class ErrorTool:
@@ -220,7 +229,12 @@ async def test_parallel_execution(strategy):
     """Test that tools execute in parallel in separate processes."""
     # Run two sleep tools concurrently - should take close to 0.3s, not 0.6s
     start_time = time.time()
-    results = await strategy.run([ToolCall(tool="sleep", arguments={}), ToolCall(tool="custom_sleep", arguments={})])
+    results = await strategy.run(
+        [
+            ToolCall(tool="sleep", arguments={}),
+            ToolCall(tool="custom_sleep", arguments={}),
+        ]
+    )
     duration = time.time() - start_time
 
     # Verify both completed successfully
@@ -327,12 +341,14 @@ async def test_concurrent_with_different_timeouts(strategy):
         timeout=0.5,
     )  # Only enough time for add and sleep, not custom_sleep
 
-    # First tool should succeed
-    assert results[0].error is None
-    assert results[0].result == 3
-
-    # At least one of the slower tools should succeed or timeout
+    # All tools should return results (in completion order, not submission order)
     assert len(results) == 3, "Expected 3 results"
+
+    # Find add result by tool name (order may vary due to completion order)
+    add_result = next((r for r in results if r.tool == "add"), None)
+    assert add_result is not None, "Expected 'add' tool result"
+    assert add_result.error is None
+    assert add_result.result == 3
 
 
 @pytest.mark.asyncio
@@ -345,7 +361,7 @@ async def test_empty_calls_list(strategy):
 
 @pytest.mark.asyncio
 async def test_mixed_success_and_failure(strategy):
-    """FIXED: Test a mix of successful and failed tool calls."""
+    """FIXED: Test a mix of successful and failed tool calls (results in completion order)."""
     calls = [
         ToolCall(tool="add", arguments={"x": 1, "y": 2}),  # Should succeed
         ToolCall(tool="missing", arguments={}),  # Should fail (not found)
@@ -355,12 +371,21 @@ async def test_mixed_success_and_failure(strategy):
 
     results = await strategy.run(calls)
 
-    # Check individual results
+    # All tools should return results (in completion order, not submission order)
     assert len(results) == 4
-    assert results[0].error is None and results[0].result == 3
-    assert results[1].error is not None and "not found" in results[1].error.lower()
-    assert results[2].error is not None
-    assert results[3].error is None and results[3].result == 12  # Should now pass
+
+    # Find results by tool name since order may vary
+    add_result = next((r for r in results if r.tool == "add"), None)
+    missing_result = next((r for r in results if r.tool == "missing"), None)
+    error_result = next((r for r in results if r.tool == "error"), None)
+    mul_result = next((r for r in results if r.tool == "mul"), None)
+
+    assert add_result is not None and add_result.error is None and add_result.result == 3
+    assert (
+        missing_result is not None and missing_result.error is not None and "not found" in missing_result.error.lower()
+    )
+    assert error_result is not None and error_result.error is not None
+    assert mul_result is not None and mul_result.error is None and mul_result.result == 12
 
 
 @pytest.mark.asyncio
@@ -418,7 +443,14 @@ async def test_shutdown_cancels_running_tasks(registry):
                 # If cancelled, verify error message indicates termination
                 assert any(
                     msg in results[0].error.lower()
-                    for msg in ["cancel", "shutdown", "abort", "terminate", "process", "stop"]
+                    for msg in [
+                        "cancel",
+                        "shutdown",
+                        "abort",
+                        "terminate",
+                        "process",
+                        "stop",
+                    ]
                 )
             # If no error (task completed), that's also acceptable on Windows
         else:
@@ -426,7 +458,14 @@ async def test_shutdown_cancels_running_tasks(registry):
             assert results[0].error is not None
             assert any(
                 msg in results[0].error.lower()
-                for msg in ["cancel", "shutdown", "abort", "terminate", "process", "stop"]
+                for msg in [
+                    "cancel",
+                    "shutdown",
+                    "abort",
+                    "terminate",
+                    "process",
+                    "stop",
+                ]
             )
     except Exception:
         # If there's an error, ensure shutdown still happens

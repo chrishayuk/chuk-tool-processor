@@ -7,6 +7,18 @@ This strategy executes tools concurrently in the same process using asyncio.
 It has special support for streaming tools, accessing their stream_execute method
 directly to enable true item-by-item streaming.
 
+PARALLEL EXECUTION:
+- All tool calls execute concurrently using asyncio tasks
+- Results are returned/yielded as each tool completes (completion order, not submission order)
+- Faster tools return immediately without waiting for slower ones
+- Use run() for batch results in completion order
+- Use stream_run() to yield results as they arrive
+
+STREAMING SUPPORT:
+- stream_run() yields ToolResult objects as each tool completes
+- Optional on_tool_start callback for emitting start events
+- True streaming for tools that implement stream_execute
+
 Enhanced tool name resolution that properly handles:
 - Simple names: "get_current_time"
 - Namespaced names: "diagnostic_test.get_current_time"
@@ -23,7 +35,7 @@ import builtins
 import inspect
 import os
 import platform
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
 from typing import Any
@@ -122,14 +134,17 @@ class InProcessStrategy(ExecutionStrategy):
         timeout: float | None = None,
     ) -> list[ToolResult]:
         """
-        Execute tool calls concurrently and preserve order.
+        Execute tool calls concurrently and return results as they complete.
+
+        NOTE: Results are returned in COMPLETION ORDER, not submission order.
+        This allows faster tools to return immediately without waiting for slower ones.
 
         Args:
             calls: List of tool calls to execute
             timeout: Optional timeout for execution
 
         Returns:
-            List of tool results in the same order as calls
+            List of tool results in completion order (not submission order)
         """
         if not calls:
             return []
@@ -138,6 +153,7 @@ class InProcessStrategy(ExecutionStrategy):
         effective_timeout = timeout if timeout is not None else self.default_timeout
         logger.debug("Executing %d calls with %ss timeout each", len(calls), effective_timeout)
 
+        # Create all tasks immediately so they start running in parallel
         tasks = []
         for call in calls:
             task = asyncio.create_task(
@@ -148,17 +164,35 @@ class InProcessStrategy(ExecutionStrategy):
             tasks.append(task)
 
         async with log_context_span("inprocess_execution", {"num_calls": len(calls)}):
-            return await asyncio.gather(*tasks)
+            # Use as_completed to return results as they finish, not all at once
+            results = []
+            for completed_task in asyncio.as_completed(tasks):
+                result = await completed_task
+                results.append(result)
+            return results
 
     # ------------------------------------------------------------------ #
     async def stream_run(
         self,
         calls: list[ToolCall],
         timeout: float | None = None,
+        on_tool_start: Callable[[ToolCall], Awaitable[None]] | None = None,
     ) -> AsyncIterator[ToolResult]:
         """
         Execute tool calls concurrently and *yield* results as soon as they are
-        produced, preserving completion order.
+        produced in completion order (not submission order).
+
+        This method allows results to stream back as each tool completes, without
+        waiting for all tools to finish. Faster tools return immediately.
+
+        Args:
+            calls: List of tool calls to execute concurrently
+            timeout: Optional timeout for each tool execution
+            on_tool_start: Optional callback invoked when each tool starts execution.
+                          Useful for emitting start events before results arrive.
+
+        Yields:
+            ToolResult objects as each tool completes (in completion order)
         """
         if not calls:
             return
@@ -168,9 +202,7 @@ class InProcessStrategy(ExecutionStrategy):
 
         queue: asyncio.Queue[ToolResult] = asyncio.Queue()
         tasks = {
-            asyncio.create_task(
-                self._stream_tool_call(call, queue, effective_timeout)  # Always pass timeout
-            )
+            asyncio.create_task(self._stream_tool_call(call, queue, effective_timeout, on_tool_start))
             for call in calls
             if call.id not in self._direct_streaming_calls
         }
@@ -194,6 +226,7 @@ class InProcessStrategy(ExecutionStrategy):
         call: ToolCall,
         queue: asyncio.Queue,
         timeout: float,  # Make timeout required
+        on_tool_start: Callable[[ToolCall], Awaitable[None]] | None = None,
     ) -> None:
         """
         Execute a tool call with streaming support.
@@ -205,6 +238,7 @@ class InProcessStrategy(ExecutionStrategy):
             call: The tool call to execute
             queue: Queue to put results into
             timeout: Timeout in seconds (required)
+            on_tool_start: Optional callback to invoke when tool execution starts
         """
         # Skip if call is being handled directly by the executor
         if call.id in self._direct_streaming_calls:
@@ -224,6 +258,13 @@ class InProcessStrategy(ExecutionStrategy):
             )
             await queue.put(result)
             return
+
+        # Invoke start callback if provided
+        if on_tool_start:
+            try:
+                await on_tool_start(call)
+            except Exception as e:
+                logger.warning(f"on_tool_start callback failed for {call.tool}: {e}")
 
         try:
             # Use enhanced tool resolution instead of direct lookup
