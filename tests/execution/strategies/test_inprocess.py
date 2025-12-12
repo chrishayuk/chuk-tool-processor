@@ -45,6 +45,10 @@ class MockRegistry:
         """Mock list_tools method."""
         return [(namespace or "default", name) for name in self._tools]
 
+    async def list_namespaces(self) -> list[str]:
+        """Mock list_namespaces method."""
+        return ["default"]
+
 
 # --------------------------------------------------------------------------- #
 # Sample tools for testing

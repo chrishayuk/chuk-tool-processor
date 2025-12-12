@@ -25,7 +25,7 @@ import os
 import pickle
 import platform
 import signal
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -264,14 +264,17 @@ class SubprocessStrategy(ExecutionStrategy):
         timeout: float | None = None,
     ) -> list[ToolResult]:
         """
-        Execute tool calls in separate processes.
+        Execute tool calls in separate processes and return results as they complete.
+
+        NOTE: Results are returned in COMPLETION ORDER, not submission order.
+        This allows faster tools to return immediately without waiting for slower ones.
 
         Args:
             calls: List of tool calls to execute
             timeout: Optional timeout for each execution (overrides default)
 
         Returns:
-            List of tool results in the same order as calls
+            List of tool results in completion order (not submission order)
         """
         if not calls:
             return []
@@ -308,14 +311,19 @@ class SubprocessStrategy(ExecutionStrategy):
             task.add_done_callback(self._active_tasks.discard)
             tasks.append(task)
 
-        # Execute all tasks concurrently
+        # Execute all tasks concurrently and return results in completion order
         async with log_context_span("subprocess_execution", {"num_calls": len(calls)}):
-            return await asyncio.gather(*tasks)
+            results = []
+            for completed_task in asyncio.as_completed(tasks):
+                result = await completed_task
+                results.append(result)
+            return results
 
     async def stream_run(
         self,
         calls: list[ToolCall],
         timeout: float | None = None,
+        on_tool_start: Callable[[ToolCall], Awaitable[None]] | None = None,
     ) -> AsyncIterator[ToolResult]:
         """
         Execute tool calls and yield results as they become available.
@@ -323,9 +331,11 @@ class SubprocessStrategy(ExecutionStrategy):
         Args:
             calls: List of tool calls to execute
             timeout: Optional timeout for each execution
+            on_tool_start: Optional callback invoked when each tool starts execution.
+                          Useful for emitting start events before results arrive.
 
         Yields:
-            Tool results as they complete (not necessarily in order)
+            Tool results as they complete (in completion order)
         """
         if not calls:
             return
@@ -358,6 +368,7 @@ class SubprocessStrategy(ExecutionStrategy):
                     call,
                     queue,
                     effective_timeout,  # Always pass concrete timeout
+                    on_tool_start,
                 )
             )
             self._active_tasks.add(task)
@@ -385,8 +396,16 @@ class SubprocessStrategy(ExecutionStrategy):
         call: ToolCall,
         queue: asyncio.Queue,
         timeout: float,  # Make timeout required
+        on_tool_start: Callable[[ToolCall], Awaitable[None]] | None = None,
     ) -> None:
         """Execute a single call and put the result in the queue."""
+        # Invoke start callback if provided
+        if on_tool_start:
+            try:
+                await on_tool_start(call)
+            except Exception as e:
+                logger.warning(f"on_tool_start callback failed for {call.tool}: {e}")
+
         result = await self._execute_single_call(call, timeout)
         await queue.put(result)
 

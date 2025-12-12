@@ -620,6 +620,57 @@ async with ToolProcessor(
     ''')
 ```
 
+### Parallel Execution & Streaming Results
+
+Tools execute concurrently by default. Results return in **completion order** — faster tools return immediately without waiting for slower ones:
+
+```python
+import asyncio
+from chuk_tool_processor.execution.strategies.inprocess_strategy import InProcessStrategy
+from chuk_tool_processor.models.tool_call import ToolCall
+
+# Tools with different execution times
+calls = [
+    ToolCall(tool="slow_api", arguments={"query": "complex"}),    # 500ms
+    ToolCall(tool="medium_api", arguments={"query": "medium"}),   # 200ms
+    ToolCall(tool="fast_api", arguments={"query": "simple"}),     # 50ms
+]
+
+# Results return as: fast_api, medium_api, slow_api (completion order)
+results = await strategy.run(calls)
+
+# Match results back to original calls by tool name
+for result in results:
+    print(f"{result.tool}: {result.result}")
+```
+
+**Stream results as they arrive** with `stream_run()`:
+
+```python
+async for result in strategy.stream_run(calls):
+    # Process each result immediately as it completes
+    print(f"Completed: {result.tool}")
+```
+
+**Track when tools start** with `on_tool_start` callback:
+
+```python
+async def on_start(call: ToolCall):
+    print(f"Starting: {call.tool}")
+
+async for result in strategy.stream_run(calls, on_tool_start=on_start):
+    print(f"Completed: {result.tool}")
+```
+
+**Control concurrency** with `max_concurrency`:
+
+```python
+# Limit to 2 concurrent tools (others queue)
+strategy = InProcessStrategy(registry, max_concurrency=2)
+```
+
+> **See:** `examples/parallel_execution_demo.py` for a complete demonstration.
+
 ## Documentation Quick Reference
 
 | Document | What It Covers |
@@ -830,6 +881,8 @@ class WeatherTool(ValidatedTool):
 |----------|----------|------------|
 | **InProcessStrategy** | Fast, trusted tools | Speed ✅, Isolation ❌ |
 | **IsolatedStrategy** | Untrusted or risky code | Isolation ✅, Speed ❌ |
+
+**Parallel Execution:** Both strategies execute tools concurrently by default. Results return in **completion order** (faster tools return first), not submission order. Use `ToolResult.tool` to match results to original calls.
 
 ```python
 import asyncio

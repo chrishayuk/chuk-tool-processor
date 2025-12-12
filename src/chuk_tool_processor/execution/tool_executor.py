@@ -107,7 +107,8 @@ class ToolExecutor:
             use_cache: Whether to use cached results (for caching wrappers)
 
         Returns:
-            List of tool results in the same order as calls
+            List of tool results in completion order (not submission order).
+            Use ToolResult.tool to match results back to their original calls.
         """
         if not calls:
             return []
