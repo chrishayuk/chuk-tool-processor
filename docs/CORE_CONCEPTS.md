@@ -2,6 +2,23 @@
 
 This guide explains the fundamental building blocks of CHUK Tool Processor.
 
+## What CHUK Tool Processor Is (and Isn't)
+
+CHUK Tool Processor is a **tool execution runtime** for AI systems. It deliberately does not:
+- Plan workflows or decide which tools to call
+- Manage conversation history or memory
+- Implement agent loops or reasoning chains
+
+It **does**:
+- Execute tool calls reliably, with timeouts, retries, caching, and rate limits
+- Parse tool calls from any LLM format (Anthropic XML, OpenAI tool_calls, JSON)
+- Run tools locally, in isolated subprocesses, or remotely via MCP
+- Provide observability (tracing, metrics) for tool execution
+
+This separation is intentional. Higher-level planners (your agent, LangChain, LlamaIndex) decide *which* tools to call. CHUK Tool Processor makes sure those calls **actually succeed**.
+
+---
+
 ## Table of Contents
 
 - [Tool Registry](#1-tool-registry)

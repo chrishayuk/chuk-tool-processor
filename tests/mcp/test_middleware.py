@@ -452,7 +452,7 @@ class TestMiddlewareStack:
         assert result.success is True
         assert result.result == {"result": "success"}
         assert result.tool_name == "test_tool"
-        assert result.duration_ms > 0
+        assert result.duration_ms >= 0  # Can be 0 on Windows due to timer resolution
 
     @pytest.mark.asyncio
     async def test_call_tool_with_error(self, mock_stream_manager):
