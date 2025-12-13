@@ -309,7 +309,6 @@ class HTTPStreamableTransport(MCPBaseTransport):
         """Enhanced cleanup with state reset."""
         # IMPORTANT: Preserve session_id across cleanup/reconnection
         # Session IDs must persist for the lifetime of the StreamableTransport object
-        print(f"DEBUG: _cleanup() called on object {id(self)}, preserving session_id={self.session_id}")
         self._http_transport = None
         self._read_stream = None
         self._write_stream = None

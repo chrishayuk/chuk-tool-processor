@@ -116,6 +116,10 @@ Do **not** use this if:
 - [Compatibility Matrix](#compatibility-matrix)
 - [Developer Experience Highlights](#developer-experience-highlights)
 - [Quick Start](#quick-start)
+- [Production Features by Example](#production-features-by-example)
+  - [Scoped Registries](#scoped-registries-multi-tenant-isolation)
+  - [Bulkheads](#bulkheads-per-tool-concurrency-limits)
+  - [ExecutionContext](#executioncontext-request-tracing)
 - [Documentation Quick Reference](#documentation-quick-reference)
 - [Choose Your Path](#choose-your-path)
 - [Core Concepts](#core-concepts)
@@ -187,6 +191,9 @@ Research code vs production code is about handling the edges. CHUK Tool Processo
 - ✅ **Rate Limiting** — Global and per-tool rate limits with sliding windows → [CONFIGURATION.md](docs/CONFIGURATION.md)
 - ✅ **Caching** — Intelligent result caching with TTL and idempotency key support
 - ✅ **Circuit Breakers** — Prevent cascading failures with automatic fault detection
+- ✅ **Bulkheads** — Per-tool/namespace concurrency isolation to prevent resource starvation
+- ✅ **Scoped Registries** — Isolated registries for multi-tenant apps and testing
+- ✅ **ExecutionContext** — Request-scoped metadata propagation (user, tenant, tracing, deadlines)
 - ✅ **Idempotency** — SHA256-based deduplication of LLM retry quirks
 - ✅ **Error Handling** — Machine-readable error codes with structured details → [ERRORS.md](docs/ERRORS.md)
 - ✅ **Observability** — Structured logging, metrics, OpenTelemetry tracing → [OBSERVABILITY.md](docs/OBSERVABILITY.md)
@@ -670,6 +677,119 @@ strategy = InProcessStrategy(registry, max_concurrency=2)
 ```
 
 > **See:** `examples/parallel_execution_demo.py` for a complete demonstration.
+
+### Scoped Registries (Multi-Tenant Isolation)
+
+Create isolated tool registries for multi-tenant apps, testing, or plugin systems:
+
+```python
+from chuk_tool_processor import ToolProcessor, create_registry
+
+# Each tenant gets their own isolated registry
+tenant_a_registry = create_registry()
+tenant_b_registry = create_registry()
+
+# Register different tools per tenant
+await tenant_a_registry.register_tool(BasicTool, name="basic")
+await tenant_b_registry.register_tool(BasicTool, name="basic")
+await tenant_b_registry.register_tool(PremiumTool, name="premium")  # Only tenant B
+
+# Create processors with isolated registries
+processor_a = ToolProcessor(registry=tenant_a_registry)
+processor_b = ToolProcessor(registry=tenant_b_registry)
+
+# Tenant A cannot access premium tools
+tools_a = await processor_a.list_tools()  # ['basic']
+tools_b = await processor_b.list_tools()  # ['basic', 'premium']
+```
+
+**Use cases:**
+- **Multi-tenant SaaS**: Different tool access per customer tier
+- **Testing**: Isolated registries prevent test pollution
+- **Plugin systems**: Each plugin gets its own namespace
+
+### Bulkheads (Per-Tool Concurrency Limits)
+
+Prevent slow tools from starving fast ones with bulkhead isolation:
+
+```python
+from chuk_tool_processor import Bulkhead, BulkheadConfig
+
+# Configure per-tool concurrency limits
+config = BulkheadConfig(
+    default_limit=10,              # Default: 10 concurrent per tool
+    tool_limits={"slow_api": 2},   # Slow API: max 2 concurrent
+    namespace_limits={"external": 5},  # External namespace: max 5 total
+    global_limit=50,               # System-wide: max 50 concurrent
+    acquisition_timeout=5.0,       # Wait up to 5s for a slot
+)
+
+bulkhead = Bulkhead(config)
+
+# Use as context manager
+async with bulkhead.acquire("slow_api", namespace="external"):
+    result = await call_slow_api()
+
+# Check stats
+stats = bulkhead.get_stats("slow_api", "external")
+print(f"Peak concurrent: {stats.peak_active}")
+print(f"Total wait time: {stats.total_wait_time:.3f}s")
+```
+
+**Three levels of isolation:**
+1. **Per-tool limits**: Prevent one tool from consuming all resources
+2. **Per-namespace limits**: Group limits (e.g., all external APIs)
+3. **Global limit**: System-wide concurrency cap
+
+### ExecutionContext (Request Tracing)
+
+Propagate request metadata through the entire execution pipeline:
+
+```python
+from chuk_tool_processor import ToolProcessor, ExecutionContext, get_current_context
+
+# Create context with request metadata
+ctx = ExecutionContext(
+    request_id="req-12345",
+    user_id="user-alice",
+    tenant_id="acme-corp",
+    traceparent="00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+    budget=100.0,  # Abstract budget units
+)
+
+# Or with a deadline
+ctx = ExecutionContext.with_deadline(
+    seconds=30,
+    user_id="user-bob",
+    tenant_id="other-corp",
+)
+
+# Pass to processor - tools can access via get_current_context()
+async with ToolProcessor() as processor:
+    results = await processor.process(tool_calls, context=ctx)
+
+# Inside your tool:
+class MyTool:
+    async def execute(self, query: str) -> dict:
+        ctx = get_current_context()
+        user = ctx.user_id if ctx else "anonymous"
+        return {"result": f"Processed for {user}"}
+
+# Convert to headers for MCP propagation
+headers = ctx.to_headers()
+# {'X-Request-ID': 'req-12345', 'X-User-ID': 'user-alice', ...}
+
+# Convert to dict for structured logging
+log_context = ctx.to_dict()
+```
+
+**Features:**
+- **Immutable** (Pydantic frozen model)
+- **Deadline propagation**: `remaining_time`, `is_expired` properties
+- **W3C Trace Context**: Standard `traceparent` header support
+- **MCP-ready**: `to_headers()` for cross-service propagation
+
+> **See:** `examples/02_production_features/production_patterns_demo.py` for a complete demonstration.
 
 ## Documentation Quick Reference
 

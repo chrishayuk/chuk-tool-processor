@@ -8,7 +8,7 @@ import asyncio
 from chuk_tool_processor.registry.decorators import discover_decorated_tools, ensure_registrations, register_tool, tool
 from chuk_tool_processor.registry.interface import ToolRegistryInterface
 from chuk_tool_processor.registry.metadata import StreamingToolMetadata, ToolInfo, ToolMetadata
-from chuk_tool_processor.registry.provider import ToolRegistryProvider, get_registry
+from chuk_tool_processor.registry.provider import ToolRegistryProvider, create_registry, get_registry
 
 # Track whether initialization has occurred
 _INITIALIZED = False
@@ -92,6 +92,7 @@ __all__ = [
     "discover_decorated_tools",
     "get_default_registry",
     "get_registry",
+    "create_registry",
     "reset_registry",
 ]
 
