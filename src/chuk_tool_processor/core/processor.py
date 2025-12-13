@@ -16,18 +16,43 @@ import json as stdlib_json  # Use stdlib json for consistent hashing
 import time
 from typing import Any
 
-from chuk_tool_processor.execution.strategies.inprocess_strategy import InProcessStrategy
-from chuk_tool_processor.execution.wrappers.caching import CachingToolExecutor, InMemoryCache
+from chuk_tool_processor.core.context import (
+    ExecutionContext,
+    execution_scope,
+)
+from chuk_tool_processor.execution.bulkhead import Bulkhead, BulkheadConfig
+from chuk_tool_processor.execution.strategies.inprocess_strategy import (
+    InProcessStrategy,
+)
+from chuk_tool_processor.execution.wrappers.caching import (
+    CachingToolExecutor,
+    InMemoryCache,
+)
 from chuk_tool_processor.execution.wrappers.circuit_breaker import (
     CircuitBreakerConfig,
     CircuitBreakerExecutor,
 )
-from chuk_tool_processor.execution.wrappers.rate_limiting import RateLimitedToolExecutor, RateLimiter
-from chuk_tool_processor.execution.wrappers.retry import RetryableToolExecutor, RetryConfig
-from chuk_tool_processor.logging import get_logger, log_context_span, log_tool_call, metrics, request_logging
+from chuk_tool_processor.execution.wrappers.rate_limiting import (
+    RateLimitedToolExecutor,
+    RateLimiter,
+)
+from chuk_tool_processor.execution.wrappers.retry import (
+    RetryableToolExecutor,
+    RetryConfig,
+)
+from chuk_tool_processor.logging import (
+    get_logger,
+    log_context_span,
+    log_tool_call,
+    metrics,
+    request_logging,
+)
 from chuk_tool_processor.models.tool_call import ToolCall
 from chuk_tool_processor.models.tool_result import ToolResult
-from chuk_tool_processor.plugins.discovery import discover_default_plugins, plugin_registry
+from chuk_tool_processor.plugins.discovery import (
+    discover_default_plugins,
+    plugin_registry,
+)
 from chuk_tool_processor.registry import ToolRegistryInterface, ToolRegistryProvider
 from chuk_tool_processor.utils import fast_json as json
 
@@ -90,7 +115,7 @@ class ToolProcessor:
     def __init__(
         self,
         registry: ToolRegistryInterface | None = None,
-        strategy: Any | None = None,  # Strategy can be InProcessStrategy or SubprocessStrategy
+        strategy: (Any | None) = None,  # Strategy can be InProcessStrategy or SubprocessStrategy
         default_timeout: float = 10.0,
         max_concurrency: int | None = None,
         enable_caching: bool = True,
@@ -105,6 +130,9 @@ class ToolProcessor:
         circuit_breaker_threshold: int = 5,
         circuit_breaker_timeout: float = 60.0,
         parser_plugins: list[str] | None = None,
+        # New: Bulkhead configuration
+        bulkhead_config: BulkheadConfig | None = None,
+        enable_bulkhead: bool = False,
     ):
         """
         Initialize the tool processor.
@@ -142,6 +170,9 @@ class ToolProcessor:
                 (transition from OPEN to HALF_OPEN). Default: 60.0
             parser_plugins: List of parser plugin names to use. If None, uses
                 all available parsers (XML, OpenAI, JSON). Default: None
+            bulkhead_config: Configuration for per-tool/namespace concurrency limits.
+                Enables bulkhead pattern for resource isolation. Default: None
+            enable_bulkhead: Whether to enable bulkhead pattern. Default: False
 
         Raises:
             ImportError: If required dependencies are not installed.
@@ -185,12 +216,15 @@ class ToolProcessor:
         self.circuit_breaker_threshold = circuit_breaker_threshold
         self.circuit_breaker_timeout = circuit_breaker_timeout
         self.parser_plugin_names = parser_plugins
+        self.bulkhead_config = bulkhead_config
+        self.enable_bulkhead = enable_bulkhead
 
         # Placeholder for initialized components (typed as Optional for type safety)
         self.registry: ToolRegistryInterface | None = None
         self.strategy: Any | None = None  # Strategy type is complex, use Any for now
         self.executor: Any | None = None  # Executor type is complex, use Any for now
         self.parsers: list[Any] = []  # Parser types vary, use Any for now
+        self.bulkhead: Bulkhead | None = None  # Bulkhead for concurrency isolation
 
         # Flag for tracking initialization state
         self._initialized = False
@@ -273,6 +307,11 @@ class ToolProcessor:
 
             self.executor = executor
 
+            # Initialize bulkhead if enabled
+            if self.enable_bulkhead:
+                self.logger.debug("Enabling bulkhead concurrency isolation")
+                self.bulkhead = Bulkhead(self.bulkhead_config)
+
             # Initialize parser plugins
             # Discover plugins if not already done
             plugins = plugin_registry.list_plugins().get("parser", [])
@@ -299,6 +338,7 @@ class ToolProcessor:
         timeout: float | None = None,
         use_cache: bool = True,  # noqa: ARG002
         request_id: str | None = None,
+        context: ExecutionContext | None = None,
     ) -> list[ToolResult]:
         """
         Process tool calls from various LLM output formats.
@@ -350,6 +390,9 @@ class ToolProcessor:
                 fresh execution even if cached results exist. Default: True
             request_id: Optional request ID for tracing and logging.
                 If not provided, a UUID will be generated. Default: None
+            context: Optional ExecutionContext for request-scoped data.
+                Carries user_id, tenant_id, traceparent, deadline, etc.
+                If provided, context.request_id takes precedence over request_id.
 
         Returns:
             List of ToolResult objects. Each result contains:
@@ -386,8 +429,22 @@ class ToolProcessor:
         # Ensure initialization
         await self.initialize()
 
+        # Determine effective request_id (context takes precedence)
+        effective_request_id = context.request_id if context else request_id
+
+        # Determine effective timeout (context deadline takes precedence)
+        effective_timeout = timeout
+        if context and context.deadline:
+            remaining = context.remaining_time
+            if remaining is not None:
+                # Use the smaller of explicit timeout and remaining deadline
+                effective_timeout = min(effective_timeout, remaining) if effective_timeout is not None else remaining
+
+        # Set up execution context scope if provided
+        context_manager = execution_scope(context) if context else None
+
         # Create request context
-        async with request_logging(request_id):
+        async with request_logging(effective_request_id):
             # Handle different input types
             if isinstance(data, str):
                 # Text processing
@@ -411,7 +468,10 @@ class ToolProcessor:
 
                             if name:
                                 # Build ToolCall kwargs, only include id if present
-                                call_kwargs: dict[str, Any] = {"tool": name, "arguments": args}
+                                call_kwargs: dict[str, Any] = {
+                                    "tool": name,
+                                    "arguments": args,
+                                }
                                 if "id" in tc and tc["id"]:
                                     call_kwargs["id"] = tc["id"]
                                 calls.append(ToolCall(**call_kwargs))
@@ -451,8 +511,17 @@ class ToolProcessor:
                 if unknown_tools:
                     self.logger.debug(f"Unknown tools: {unknown_tools}")
 
-                # Execute tools
-                results: list[ToolResult] = await self.executor.execute(calls, timeout=timeout)
+                # Execute tools (with context scope if provided)
+                async def _execute_with_context() -> list[ToolResult]:
+                    assert self.executor is not None
+                    result: list[ToolResult] = await self.executor.execute(calls, timeout=effective_timeout)
+                    return result
+
+                if context_manager:
+                    async with context_manager:
+                        results = await _execute_with_context()
+                else:
+                    results = await _execute_with_context()
 
                 # Log metrics for each tool call
                 for call, result in zip(calls, results, strict=False):
@@ -562,7 +631,9 @@ class ToolProcessor:
 
         # Execute with the configured executor
         results = await self.executor.execute(
-            calls=calls, timeout=timeout, use_cache=use_cache if hasattr(self.executor, "use_cache") else True
+            calls=calls,
+            timeout=timeout,
+            use_cache=use_cache if hasattr(self.executor, "use_cache") else True,
         )
 
         # Ensure we always return a list (never None)

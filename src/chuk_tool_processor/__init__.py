@@ -25,10 +25,25 @@ from typing import TYPE_CHECKING
 # Version
 __version__ = "0.9.7"
 
-# Core processor
+# Core processor and context
+from chuk_tool_processor.core.context import (
+    ContextHeader,
+    ContextKey,
+    ExecutionContext,
+    execution_scope,
+    get_current_context,
+    set_current_context,
+)
 from chuk_tool_processor.core.processor import ToolProcessor
 
-# Execution strategies
+# Execution strategies and bulkhead
+from chuk_tool_processor.execution.bulkhead import (
+    Bulkhead,
+    BulkheadConfig,
+    BulkheadFullError,
+    BulkheadLimitType,
+    BulkheadStats,
+)
 from chuk_tool_processor.execution.strategies.inprocess_strategy import InProcessStrategy
 from chuk_tool_processor.execution.strategies.subprocess_strategy import SubprocessStrategy
 from chuk_tool_processor.execution.strategies.subprocess_strategy import SubprocessStrategy as IsolatedStrategy
@@ -51,6 +66,7 @@ from chuk_tool_processor.models.tool_result import ToolResult
 from chuk_tool_processor.registry import (
     ToolInfo,
     ToolRegistryProvider,
+    create_registry,
     get_default_registry,
     initialize,
 )
@@ -82,6 +98,19 @@ __all__ = [
     # Core classes
     "ToolProcessor",
     "StreamManager",
+    # ExecutionContext
+    "ExecutionContext",
+    "ContextHeader",
+    "ContextKey",
+    "execution_scope",
+    "get_current_context",
+    "set_current_context",
+    # Bulkhead
+    "Bulkhead",
+    "BulkheadConfig",
+    "BulkheadFullError",
+    "BulkheadLimitType",
+    "BulkheadStats",
     # Models
     "ToolCall",
     "ToolResult",
@@ -89,6 +118,7 @@ __all__ = [
     "ToolInfo",
     "initialize",
     "get_default_registry",
+    "create_registry",
     "ToolRegistryProvider",
     # Decorators
     "register_tool",
