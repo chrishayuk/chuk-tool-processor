@@ -8,9 +8,12 @@ This guide covers production-grade patterns for building reliable, scalable tool
 - [Cancellation & Deadlines](#cancellation--deadlines)
 - [Per-Tool Policy Overrides](#per-tool-policy-overrides)
 - [Parallel Execution & Streaming](#parallel-execution--streaming)
+- [Return Order](#return-order-completion-vs-submission)
 - [Scoped Registries](#scoped-registries-multi-tenant-isolation)
 - [Bulkheads](#bulkheads-per-tool-concurrency-limits)
+- [Pattern-Based Bulkheads](#pattern-based-bulkheads)
 - [ExecutionContext](#executioncontext-request-tracing)
+- [SchedulerPolicy & DAG Scheduling](#schedulerpolicy--dag-scheduling)
 
 ---
 
@@ -158,6 +161,47 @@ strategy = InProcessStrategy(registry, max_concurrency=2)
 ```
 
 > **See:** `examples/parallel_execution_demo.py` for a complete demonstration.
+
+---
+
+## Return Order (Completion vs Submission)
+
+Control the order in which results are returned:
+
+```python
+from chuk_tool_processor import ToolProcessor, ReturnOrder
+
+async with ToolProcessor() as processor:
+    calls = [
+        {"tool": "slow_api", "arguments": {"query": "complex"}},    # ~500ms
+        {"tool": "medium_api", "arguments": {"query": "medium"}},   # ~200ms
+        {"tool": "fast_api", "arguments": {"query": "simple"}},     # ~50ms
+    ]
+
+    # COMPLETION order (default): Results return as tools finish
+    # Returns: fast_api, medium_api, slow_api
+    results = await processor.process(calls, return_order="completion")
+
+    # SUBMISSION order: Results return in the same order as submitted
+    # Returns: slow_api, medium_api, fast_api
+    results = await processor.process(calls, return_order="submission")
+```
+
+### When to Use Each
+
+| Order | Use Case |
+|-------|----------|
+| **completion** (default) | Streaming UIs, real-time dashboards, fastest response |
+| **submission** | Deterministic testing, ordered pipelines, debugging |
+
+### Tracking Results with call_id
+
+Each `ToolResult` includes a `call_id` field that matches the original `ToolCall.id`:
+
+```python
+for result in results:
+    print(f"call_id: {result.call_id}, tool: {result.tool}")
+```
 
 ---
 
@@ -322,6 +366,63 @@ if depth > 10:
     # Apply backpressure
     return {"error": "Service busy, try again later"}
 ```
+
+---
+
+## Pattern-Based Bulkheads
+
+Use glob patterns to group tools under shared concurrency limits:
+
+```python
+from chuk_tool_processor import Bulkhead, BulkheadConfig
+
+config = BulkheadConfig(
+    default_limit=10,
+    patterns={
+        "db.*": 3,           # All db.* tools share 3 slots
+        "mcp.notion.*": 2,   # All Notion MCP tools share 2 slots
+        "mcp.*": 5,          # Other MCP tools share 5 slots
+        "web.*": 4,          # All web tools share 4 slots
+    },
+    global_limit=50,
+)
+
+bulkhead = Bulkhead(config)
+```
+
+### Pattern Matching Rules
+
+Patterns use standard glob syntax via `fnmatch`:
+
+| Pattern | Matches | Doesn't Match |
+|---------|---------|---------------|
+| `db.*` | `db.read`, `db.write`, `db.backup` | `database.query` |
+| `mcp.notion.*` | `mcp.notion.search`, `mcp.notion.create` | `mcp.github.issues` |
+| `*_api` | `slow_api`, `fast_api` | `api_client` |
+
+### Priority Order
+
+Limits are resolved in this order:
+
+1. **Exact match** in `tool_limits` (highest priority)
+2. **First matching pattern** in `patterns`
+3. **`default_limit`** (fallback)
+
+```python
+config = BulkheadConfig(
+    default_limit=10,
+    tool_limits={"db.critical": 1},  # Exact match takes priority
+    patterns={"db.*": 3},
+)
+
+# db.critical → 1 (exact match)
+# db.read → 3 (pattern match)
+# other_tool → 10 (default)
+```
+
+### Performance
+
+Pattern matching uses an LRU cache (1024 entries) for fast lookups after the first match.
 
 ---
 
@@ -494,6 +595,130 @@ async def handle_request(tenant_id: str, user_id: str, request_num: int):
 
     return results
 ```
+
+---
+
+## SchedulerPolicy & DAG Scheduling
+
+For complex workflows with dependencies, use the `SchedulerPolicy` interface to plan execution:
+
+```python
+from chuk_tool_processor import (
+    GreedyDagScheduler,
+    SchedulingConstraints,
+    ToolCallSpec,
+    ToolMetadata,
+)
+
+scheduler = GreedyDagScheduler()
+
+# Define calls with dependencies and metadata
+calls = [
+    # Stage 1: Parallel fetches
+    ToolCallSpec(
+        call_id="fetch-users",
+        tool_name="web.fetch",
+        args={"url": "/api/users"},
+        metadata=ToolMetadata(pool="web", est_ms=300, priority=10),
+    ),
+    ToolCallSpec(
+        call_id="fetch-orders",
+        tool_name="web.fetch",
+        args={"url": "/api/orders"},
+        metadata=ToolMetadata(pool="web", est_ms=300, priority=10),
+    ),
+    # Stage 2: Transform (depends on fetches)
+    ToolCallSpec(
+        call_id="transform",
+        tool_name="compute.transform",
+        depends_on=("fetch-users", "fetch-orders"),
+        metadata=ToolMetadata(pool="compute", est_ms=500, priority=10),
+    ),
+    # Stage 3: Store (depends on transform)
+    ToolCallSpec(
+        call_id="store",
+        tool_name="db.write",
+        depends_on=("transform",),
+        metadata=ToolMetadata(pool="db", est_ms=200, priority=10),
+    ),
+    # Optional: Low-priority analytics (may be skipped under deadline)
+    ToolCallSpec(
+        call_id="analytics",
+        tool_name="analytics.log",
+        depends_on=("store",),
+        metadata=ToolMetadata(pool="analytics", est_ms=100, priority=0),
+    ),
+]
+
+# Plan execution with constraints
+constraints = SchedulingConstraints(
+    deadline_ms=1500,                         # Global deadline
+    max_cost=1.0,                             # Cost budget
+    pool_limits={"web": 2, "db": 1, "compute": 1},
+)
+
+plan = scheduler.plan(calls, constraints)
+
+# plan.stages: (('fetch-users', 'fetch-orders'), ('transform',), ('store',))
+# plan.skip: ('analytics',)  # Skipped due to deadline + low priority
+# plan.per_call_timeout_ms: {'fetch-users': 300, ...}
+```
+
+### ExecutionPlan Output
+
+The scheduler returns an `ExecutionPlan` with:
+
+| Field | Description |
+|-------|-------------|
+| `stages` | Tuple of stages, each containing call IDs to execute in parallel |
+| `per_call_timeout_ms` | Per-call timeout adjustments to meet deadline |
+| `per_call_max_retries` | Per-call retry overrides |
+| `skip` | Call IDs to skip (deadline/cost infeasible or low priority) |
+
+### ToolMetadata Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `pool` | `str` | Pool name for concurrency limits (default: "default") |
+| `weight` | `int` | Relative weight for scheduling (default: 1) |
+| `est_ms` | `int` | Estimated execution time in milliseconds |
+| `cost` | `float` | Cost units for budget tracking |
+| `priority` | `int` | Priority (higher = more important, 0 = can be skipped) |
+
+### Scheduling Features
+
+- **Topological Sort**: Respects `depends_on` for correct execution order
+- **Pool Limits**: Respects per-pool concurrency limits in each stage
+- **Deadline Awareness**: Skips low-priority calls if they would exceed deadline
+- **Cost Limits**: Skips low-priority calls if they would exceed cost budget
+- **Cascade Skipping**: If a call is skipped, its dependents are also skipped
+
+### Custom Schedulers
+
+Implement the `SchedulerPolicy` protocol for custom scheduling logic:
+
+```python
+from typing import Mapping, Sequence
+from chuk_tool_processor import (
+    ExecutionPlan,
+    SchedulingConstraints,
+    ToolCallSpec,
+)
+
+class MyCustomScheduler:
+    def plan(
+        self,
+        calls: Sequence[ToolCallSpec],
+        constraints: SchedulingConstraints,
+        context: Mapping[str, object] | None = None,
+    ) -> ExecutionPlan:
+        # Your custom logic here
+        return ExecutionPlan(
+            stages=(tuple(c.call_id for c in calls),)
+        )
+```
+
+> **See:** `examples/02_production_features/runtime_features_demo.py` for a complete demonstration.
 
 ---
 

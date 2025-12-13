@@ -1,6 +1,11 @@
 # chuk_tool_processor/mcp/stream_manager.py
 """
 StreamManager for CHUK Tool Processor - Enhanced with robust shutdown handling and headers support
+
+Supports optional middleware for:
+- Retry with exponential backoff
+- Circuit breaker pattern
+- Rate limiting
 """
 
 from __future__ import annotations
@@ -8,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 # --------------------------------------------------------------------------- #
 #  CHUK imports                                                               #
@@ -24,6 +29,9 @@ from chuk_tool_processor.mcp.transport import (
     TimeoutConfig,
 )
 
+if TYPE_CHECKING:
+    from chuk_tool_processor.mcp.middleware import MiddlewareConfig, MiddlewareStack
+
 logger = get_logger("chuk_tool_processor.mcp.stream_manager")
 
 
@@ -37,9 +45,28 @@ class StreamManager:
     - STDIO (process-based)
     - SSE (Server-Sent Events) with headers support
     - HTTP Streamable (modern replacement for SSE, spec 2025-11-25) with graceful headers handling
+
+    Supports optional middleware for production-grade tool execution:
+    - Retry with exponential backoff and deadline-aware timeouts
+    - Circuit breaker to prevent cascading failures
+    - Rate limiting (global and per-tool)
+
+    Example with middleware:
+        from chuk_tool_processor.mcp.middleware import MiddlewareConfig
+
+        config = MiddlewareConfig(
+            retry_enabled=True,
+            retry_max_retries=3,
+            circuit_breaker_enabled=True,
+        )
+        sm = StreamManager(middleware_config=config)
     """
 
-    def __init__(self, timeout_config: TimeoutConfig | None = None) -> None:
+    def __init__(
+        self,
+        timeout_config: TimeoutConfig | None = None,
+        middleware_config: MiddlewareConfig | None = None,
+    ) -> None:
         self.transports: dict[str, MCPBaseTransport] = {}
         self.server_info: list[dict[str, Any]] = []
         self.tool_to_server_map: dict[str, str] = {}
@@ -48,6 +75,10 @@ class StreamManager:
         self._lock = asyncio.Lock()
         self._closed = False  # Track if we've been closed
         self.timeout_config = timeout_config or TimeoutConfig()
+
+        # Middleware support
+        self._middleware_config = middleware_config
+        self._middleware_stack: MiddlewareStack | None = None
 
     # ------------------------------------------------------------------ #
     #  factory helpers with enhanced error handling                      #
@@ -676,13 +707,42 @@ class StreamManager:
         server_name: str | None = None,
         timeout: float | None = None,
     ) -> dict[str, Any]:
-        """Call a tool on the appropriate server with timeout support."""
+        """Call a tool on the appropriate server with timeout and optional middleware support.
+
+        When middleware is configured (retry, circuit breaker, rate limiting), tool calls
+        are executed through the middleware stack. Otherwise, direct transport execution
+        is used.
+
+        Args:
+            tool_name: Name of the tool to call
+            arguments: Tool arguments as a dictionary
+            server_name: Optional server name (auto-detected if not provided)
+            timeout: Optional timeout in seconds (used as deadline budget with middleware)
+
+        Returns:
+            dict with either result data or {"isError": True, "error": "..."} on failure
+        """
         if self._closed:
             return {
                 "isError": True,
                 "error": "StreamManager is closed",
             }
 
+        # Use middleware stack if configured
+        if self._middleware_stack is not None:
+            return await self._middleware_stack.call_tool(tool_name, arguments, timeout)
+
+        # Direct execution (no middleware)
+        return await self._direct_call_tool(tool_name, arguments, server_name, timeout)
+
+    async def _direct_call_tool(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        server_name: str | None = None,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Direct tool execution without middleware (internal use)."""
         server_name = server_name or self.get_server_for_tool(tool_name)
         if not server_name or server_name not in self.transports:
             return {
@@ -713,6 +773,47 @@ class StreamManager:
                 }
         else:
             return await transport.call_tool(tool_name, arguments)
+
+    def enable_middleware(self, config: MiddlewareConfig | None = None) -> None:
+        """Enable middleware with the given configuration.
+
+        Can be called after initialization to enable or reconfigure middleware.
+
+        Args:
+            config: Middleware configuration (uses defaults if None)
+        """
+        from chuk_tool_processor.mcp.middleware import MiddlewareConfig, MiddlewareStack
+
+        self._middleware_config = config or MiddlewareConfig()
+        self._middleware_stack = MiddlewareStack(self, self._middleware_config)
+        status = self._middleware_stack.get_status()
+        logger.info(
+            "Middleware enabled: retry=%s, circuit_breaker=%s, rate_limiting=%s",
+            status.retry is not None,
+            status.circuit_breaker is not None,
+            status.rate_limiting is not None,
+        )
+
+    def disable_middleware(self) -> None:
+        """Disable middleware, returning to direct transport execution."""
+        self._middleware_stack = None
+        self._middleware_config = None
+        logger.info("Middleware disabled")
+
+    def get_middleware_status(self) -> Any:
+        """Get middleware status for diagnostics.
+
+        Returns:
+            MiddlewareStatus model or None if middleware is not enabled
+        """
+        if self._middleware_stack is None:
+            return None
+        return self._middleware_stack.get_status()
+
+    @property
+    def middleware_enabled(self) -> bool:
+        """Check if middleware is enabled."""
+        return self._middleware_stack is not None
 
     # ------------------------------------------------------------------ #
     #  ENHANCED shutdown with robust error handling                      #

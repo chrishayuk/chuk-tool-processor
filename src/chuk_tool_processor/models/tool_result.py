@@ -38,6 +38,7 @@ class ToolResult(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Unique identifier for this result")
+    call_id: str | None = Field(default=None, description="ID of the original ToolCall (for tracking submission order)")
 
     # Core fields
     tool: str = Field(..., min_length=1, description="Name of the tool; must be non-empty")
@@ -80,6 +81,7 @@ class ToolResult(BaseModel):
         """Convert to a dictionary for serialization."""
         return {
             "id": self.id,
+            "call_id": self.call_id,
             "tool": self.tool,
             "result": self.result,
             "error": self.error,

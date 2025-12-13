@@ -139,9 +139,18 @@ results = await processor.process(json_output)
 | Feature | Description |
 |---------|-------------|
 | **Bulkheads** | Per-tool/namespace concurrency limits to prevent resource starvation |
+| **Pattern Bulkheads** | Glob patterns like `"db.*": 3` for grouped concurrency limits |
 | **Scoped Registries** | Isolated registries for multi-tenant apps and testing |
 | **ExecutionContext** | Request-scoped metadata propagation (user, tenant, tracing, deadlines) |
 | **Isolated Strategy** | Subprocess execution for untrusted code (zero crash blast radius) |
+
+### Advanced Scheduling
+
+| Feature | Description |
+|---------|-------------|
+| **Return Order** | Choose completion order (fast first) or submission order (deterministic) |
+| **SchedulerPolicy** | DAG-based scheduling with dependencies, deadlines, pool limits |
+| **GreedyDagScheduler** | Built-in scheduler with topological sort and deadline-aware skipping |
 
 ### Integration & Observability
 
@@ -179,6 +188,7 @@ async with ToolProcessor(
     bulkhead_config=BulkheadConfig(
         default_limit=10,
         tool_limits={"slow_api": 2},
+        patterns={"db.*": 3, "mcp.notion.*": 2},  # Pattern-based limits
     ),
 ) as processor:
     # Execute with request context
@@ -188,6 +198,56 @@ async with ToolProcessor(
         tenant_id="acme-corp",
     )
     results = await processor.process(llm_output, context=ctx)
+```
+
+---
+
+## Return Order & Scheduling
+
+Control how results are returned and plan complex execution graphs:
+
+```python
+from chuk_tool_processor import ToolProcessor, ReturnOrder
+
+async with ToolProcessor() as processor:
+    # Results return as tools complete (fast tools first) - default
+    results = await processor.process(calls, return_order="completion")
+
+    # Results return in submission order (deterministic)
+    results = await processor.process(calls, return_order="submission")
+```
+
+### DAG Scheduling with Dependencies
+
+```python
+from chuk_tool_processor import (
+    GreedyDagScheduler,
+    SchedulingConstraints,
+    ToolCallSpec,
+    ToolMetadata,
+)
+
+scheduler = GreedyDagScheduler()
+
+# Define calls with dependencies
+calls = [
+    ToolCallSpec(call_id="fetch", tool_name="api.fetch",
+                 metadata=ToolMetadata(pool="web", est_ms=300)),
+    ToolCallSpec(call_id="transform", tool_name="compute.transform",
+                 depends_on=("fetch",)),
+    ToolCallSpec(call_id="store", tool_name="db.write",
+                 depends_on=("transform",)),
+]
+
+# Plan execution with constraints
+constraints = SchedulingConstraints(
+    deadline_ms=5000,
+    pool_limits={"web": 2, "db": 1},
+)
+plan = scheduler.plan(calls, constraints)
+
+# plan.stages: (('fetch',), ('transform',), ('store',))
+# plan.skip: () or low-priority calls that would miss deadline
 ```
 
 ---
@@ -227,6 +287,33 @@ results = await processor.process(
 
 See [MCP_INTEGRATION.md](docs/MCP_INTEGRATION.md) for complete examples with OAuth token refresh.
 
+### MCP Middleware Stack
+
+For production deployments, wrap MCP connections with resilience middleware:
+
+```python
+from chuk_tool_processor.mcp.middleware import (
+    MiddlewareConfig,
+    MiddlewareStack,
+    RetrySettings,
+    CircuitBreakerSettings,
+    RateLimitSettings,
+)
+
+# Configure middleware layers
+config = MiddlewareConfig(
+    retry=RetrySettings(max_retries=3, base_delay=1.0),
+    circuit_breaker=CircuitBreakerSettings(failure_threshold=5),
+    rate_limiting=RateLimitSettings(enabled=True, global_limit=100),
+)
+
+# Wrap StreamManager with middleware
+middleware = MiddlewareStack(stream_manager, config=config)
+
+# Execute with automatic retry, circuit breaking, and rate limiting
+result = await middleware.call_tool("notion.search", {"query": "docs"})
+```
+
 ---
 
 ## Observability
@@ -262,7 +349,7 @@ See [OBSERVABILITY.md](docs/OBSERVABILITY.md) for complete setup guide.
 | [**GETTING_STARTED.md**](docs/GETTING_STARTED.md) | Creating tools, using the processor, ValidatedTool, StreamingTool |
 | [**CORE_CONCEPTS.md**](docs/CORE_CONCEPTS.md) | Registry, strategies, wrappers, parsers, MCP overview |
 | [**PRODUCTION_PATTERNS.md**](docs/PRODUCTION_PATTERNS.md) | Bulkheads, scoped registries, ExecutionContext, parallel execution |
-| [**MCP_INTEGRATION.md**](docs/MCP_INTEGRATION.md) | HTTP Streamable, STDIO, SSE, OAuth token refresh |
+| [**MCP_INTEGRATION.md**](docs/MCP_INTEGRATION.md) | HTTP Streamable, STDIO, SSE, OAuth, Middleware Stack |
 | [**ADVANCED_TOPICS.md**](docs/ADVANCED_TOPICS.md) | Deferred loading, code sandbox, isolated strategy, testing |
 | [**CONFIGURATION.md**](docs/CONFIGURATION.md) | All config options and environment variables |
 | [**OBSERVABILITY.md**](docs/OBSERVABILITY.md) | OpenTelemetry, Prometheus, metrics reference |
@@ -279,12 +366,16 @@ python examples/01_getting_started/hello_tool.py
 # Production patterns (bulkheads, context, scoped registries)
 python examples/02_production_features/production_patterns_demo.py
 
+# Runtime features (return order, pattern bulkheads, scheduling)
+python examples/02_production_features/runtime_features_demo.py
+
 # Observability demo
 python examples/02_production_features/observability_demo.py
 
 # MCP integration
 python examples/04_mcp_integration/stdio_echo.py
 python examples/04_mcp_integration/notion_oauth.py
+python examples/04_mcp_integration/middleware_demo.py
 ```
 
 See [examples/](examples/) for 20+ working examples.

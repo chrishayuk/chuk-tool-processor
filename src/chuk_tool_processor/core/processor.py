@@ -339,6 +339,7 @@ class ToolProcessor:
         use_cache: bool = True,  # noqa: ARG002
         request_id: str | None = None,
         context: ExecutionContext | None = None,
+        return_order: str | None = None,
     ) -> list[ToolResult]:
         """
         Process tool calls from various LLM output formats.
@@ -393,6 +394,9 @@ class ToolProcessor:
             context: Optional ExecutionContext for request-scoped data.
                 Carries user_id, tenant_id, traceparent, deadline, etc.
                 If provided, context.request_id takes precedence over request_id.
+            return_order: Order to return results in. Can be:
+                - "completion" (default): Results return as each tool completes
+                - "submission": Results return in the same order as submitted
 
         Returns:
             List of ToolResult objects. Each result contains:
@@ -514,7 +518,14 @@ class ToolProcessor:
                 # Execute tools (with context scope if provided)
                 async def _execute_with_context() -> list[ToolResult]:
                     assert self.executor is not None
-                    result: list[ToolResult] = await self.executor.execute(calls, timeout=effective_timeout)
+                    # If return_order is specified and strategy supports it, call run() directly
+                    # This bypasses the wrapper chain but preserves return_order semantics
+                    if return_order is not None and self.strategy is not None and hasattr(self.strategy, "run"):
+                        result: list[ToolResult] = await self.strategy.run(
+                            calls, timeout=effective_timeout, return_order=return_order
+                        )
+                    else:
+                        result = await self.executor.execute(calls, timeout=effective_timeout)
                     return result
 
                 if context_manager:

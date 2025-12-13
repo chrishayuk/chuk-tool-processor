@@ -42,6 +42,7 @@ from typing import Any
 
 from chuk_tool_processor.logging import get_logger, log_context_span
 from chuk_tool_processor.models.execution_strategy import ExecutionStrategy
+from chuk_tool_processor.models.return_order import ReturnOrder
 from chuk_tool_processor.models.tool_call import ToolCall
 from chuk_tool_processor.models.tool_result import ToolResult
 from chuk_tool_processor.registry.interface import ToolRegistryInterface
@@ -132,44 +133,61 @@ class InProcessStrategy(ExecutionStrategy):
         self,
         calls: list[ToolCall],
         timeout: float | None = None,
+        return_order: ReturnOrder | str = ReturnOrder.COMPLETION,
     ) -> list[ToolResult]:
         """
-        Execute tool calls concurrently and return results as they complete.
-
-        NOTE: Results are returned in COMPLETION ORDER, not submission order.
-        This allows faster tools to return immediately without waiting for slower ones.
+        Execute tool calls concurrently and return results.
 
         Args:
             calls: List of tool calls to execute
             timeout: Optional timeout for execution
+            return_order: Order to return results in:
+                - "completion" (default): Results return as each tool completes
+                - "submission": Results return in the same order as the input calls
 
         Returns:
-            List of tool results in completion order (not submission order)
+            List of tool results in the specified order
         """
         if not calls:
             return []
 
+        # Normalize return_order to enum
+        if isinstance(return_order, str):
+            return_order = ReturnOrder(return_order)
+
         # Use default_timeout if no timeout specified
         effective_timeout = timeout if timeout is not None else self.default_timeout
-        logger.debug("Executing %d calls with %ss timeout each", len(calls), effective_timeout)
+        logger.debug(
+            "Executing %d calls with %ss timeout each, return_order=%s",
+            len(calls),
+            effective_timeout,
+            return_order.value,
+        )
 
         # Create all tasks immediately so they start running in parallel
+        # Track task -> call_id mapping for submission order
+        task_to_call_id: dict[asyncio.Task, str] = {}
         tasks = []
         for call in calls:
-            task = asyncio.create_task(
-                self._execute_single_call(call, effective_timeout)  # Always pass timeout
-            )
+            task = asyncio.create_task(self._execute_single_call(call, effective_timeout))
             self._active_tasks.add(task)
             task.add_done_callback(self._active_tasks.discard)
+            task_to_call_id[task] = call.id
             tasks.append(task)
 
         async with log_context_span("inprocess_execution", {"num_calls": len(calls)}):
-            # Use as_completed to return results as they finish, not all at once
-            results = []
-            for completed_task in asyncio.as_completed(tasks):
-                result = await completed_task
-                results.append(result)
-            return results
+            if return_order == ReturnOrder.COMPLETION:
+                # Use as_completed to return results as they finish
+                results = []
+                for completed_task in asyncio.as_completed(tasks):
+                    result = await completed_task
+                    results.append(result)
+                return results
+            else:
+                # Wait for all tasks and return in submission order
+                completed_results = await asyncio.gather(*tasks, return_exceptions=False)
+                # Results are already in submission order since gather preserves order
+                return list(completed_results)
 
     # ------------------------------------------------------------------ #
     async def stream_run(
@@ -248,6 +266,7 @@ class InProcessStrategy(ExecutionStrategy):
             # Early exit if shutting down
             now = datetime.now(UTC)
             result = ToolResult(
+                call_id=call.id,
                 tool=call.tool,
                 result=None,
                 error="System is shutting down",
@@ -273,6 +292,7 @@ class InProcessStrategy(ExecutionStrategy):
                 # Tool not found
                 now = datetime.now(UTC)
                 result = ToolResult(
+                    call_id=call.id,
                     tool=call.tool,
                     result=None,
                     error=f"Tool '{call.tool}' not found in any namespace",
@@ -306,6 +326,7 @@ class InProcessStrategy(ExecutionStrategy):
             # Handle cancellation gracefully
             now = datetime.now(UTC)
             result = ToolResult(
+                call_id=call.id,
                 tool=call.tool,
                 result=None,
                 error="Execution was cancelled",
@@ -320,6 +341,7 @@ class InProcessStrategy(ExecutionStrategy):
             # Handle other errors
             now = datetime.now(UTC)
             result = ToolResult(
+                call_id=call.id,
                 tool=call.tool,
                 result=None,
                 error=f"Error setting up execution: {e}",
@@ -362,6 +384,7 @@ class InProcessStrategy(ExecutionStrategy):
                     # Create a ToolResult for each streamed item
                     now = datetime.now(UTC)
                     tool_result = ToolResult(
+                        call_id=call.id,
                         tool=call.tool,
                         result=result,
                         error=None,
@@ -375,6 +398,7 @@ class InProcessStrategy(ExecutionStrategy):
                 # Handle errors during streaming
                 now = datetime.now(UTC)
                 error_result = ToolResult(
+                    call_id=call.id,
                     tool=call.tool,
                     result=None,
                     error=f"Streaming error: {str(e)}",
@@ -397,6 +421,7 @@ class InProcessStrategy(ExecutionStrategy):
             logger.debug("%s streaming timed out after %.3fs (limit: %ss)", call.tool, actual_duration, timeout)
 
             timeout_result = ToolResult(
+                call_id=call.id,
                 tool=call.tool,
                 result=None,
                 error=f"Streaming timeout after {timeout}s",
@@ -413,6 +438,7 @@ class InProcessStrategy(ExecutionStrategy):
             logger.debug("%s streaming failed: %s", call.tool, e)
 
             error_result = ToolResult(
+                call_id=call.id,
                 tool=call.tool,
                 result=None,
                 error=f"Error during streaming: {str(e)}",
@@ -465,6 +491,7 @@ class InProcessStrategy(ExecutionStrategy):
         # Early exit if shutting down
         if self._shutting_down:
             return ToolResult(
+                call_id=call.id,
                 tool=call.tool,
                 result=None,
                 error="System is shutting down",
@@ -479,6 +506,7 @@ class InProcessStrategy(ExecutionStrategy):
             impl, resolved_namespace = await self._resolve_tool_info(call.tool, call.namespace)
             if impl is None:
                 return ToolResult(
+                    call_id=call.id,
                     tool=call.tool,
                     result=None,
                     error=f"Tool '{call.tool}' not found in any namespace",
@@ -502,6 +530,7 @@ class InProcessStrategy(ExecutionStrategy):
             except Exception as exc:
                 logger.exception("Unexpected error while executing %s", call.tool)
                 return ToolResult(
+                    call_id=call.id,
                     tool=call.tool,
                     result=None,
                     error=f"Unexpected error: {exc}",
@@ -513,6 +542,7 @@ class InProcessStrategy(ExecutionStrategy):
         except asyncio.CancelledError:
             # Handle cancellation gracefully
             return ToolResult(
+                call_id=call.id,
                 tool=call.tool,
                 result=None,
                 error="Execution was cancelled",
@@ -524,6 +554,7 @@ class InProcessStrategy(ExecutionStrategy):
         except Exception as exc:
             logger.exception("Error setting up execution for %s", call.tool)
             return ToolResult(
+                call_id=call.id,
                 tool=call.tool,
                 result=None,
                 error=f"Setup error: {exc}",
@@ -562,6 +593,7 @@ class InProcessStrategy(ExecutionStrategy):
             fn = tool.execute
         else:
             return ToolResult(
+                call_id=call.id,
                 tool=call.tool,
                 result=None,
                 error=(
@@ -585,6 +617,7 @@ class InProcessStrategy(ExecutionStrategy):
                 logger.debug("%s completed in %.3fs (limit: %ss)", call.tool, actual_duration, timeout)
 
                 return ToolResult(
+                    call_id=call.id,
                     tool=call.tool,
                     result=result_val,
                     error=None,
@@ -600,6 +633,7 @@ class InProcessStrategy(ExecutionStrategy):
                 logger.debug("%s timed out after %.3fs (limit: %ss)", call.tool, actual_duration, timeout)
 
                 return ToolResult(
+                    call_id=call.id,
                     tool=call.tool,
                     result=None,
                     error=f"Timeout after {timeout}s",
@@ -613,6 +647,7 @@ class InProcessStrategy(ExecutionStrategy):
             # Handle cancellation explicitly
             logger.debug("%s was cancelled", call.tool)
             return ToolResult(
+                call_id=call.id,
                 tool=call.tool,
                 result=None,
                 error="Execution was cancelled",
@@ -628,6 +663,7 @@ class InProcessStrategy(ExecutionStrategy):
             logger.debug("%s failed after %.3fs: %s", call.tool, actual_duration, exc)
 
             return ToolResult(
+                call_id=call.id,
                 tool=call.tool,
                 result=None,
                 error=str(exc),
