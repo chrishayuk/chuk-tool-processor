@@ -59,6 +59,7 @@ from chuk_tool_processor.mcp import (
 from chuk_tool_processor.mcp.stream_manager import StreamManager
 
 # Models (commonly used)
+from chuk_tool_processor.models.return_order import ReturnOrder
 from chuk_tool_processor.models.tool_call import ToolCall
 from chuk_tool_processor.models.tool_result import ToolResult
 
@@ -74,6 +75,16 @@ from chuk_tool_processor.registry.auto_register import register_fn_tool
 
 # Decorators for registering tools
 from chuk_tool_processor.registry.decorators import register_tool, tool
+
+# Scheduling
+from chuk_tool_processor.scheduling import (
+    ExecutionPlan,
+    GreedyDagScheduler,
+    SchedulerPolicy,
+    SchedulingConstraints,
+    ToolCallSpec,
+    ToolMetadata,
+)
 
 # Type checking imports (not available at runtime)
 if TYPE_CHECKING:
@@ -114,6 +125,14 @@ __all__ = [
     # Models
     "ToolCall",
     "ToolResult",
+    "ReturnOrder",
+    # Scheduling
+    "ToolMetadata",
+    "ToolCallSpec",
+    "SchedulingConstraints",
+    "ExecutionPlan",
+    "SchedulerPolicy",
+    "GreedyDagScheduler",
     # Registry
     "ToolInfo",
     "initialize",

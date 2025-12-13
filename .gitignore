@@ -80,3 +80,4 @@ test.db
 scratch/
 temp/
 tmp/
+.claude/

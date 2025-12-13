@@ -30,9 +30,11 @@ Example:
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from enum import Enum
+from functools import lru_cache
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -54,13 +56,28 @@ class BulkheadConfig(BaseModel):
     """
     Configuration for bulkhead concurrency limits.
 
+    Supports both exact tool names and glob patterns for flexible configuration.
+
     Attributes:
         default_limit: Default concurrency limit for tools without explicit config
         tool_limits: Per-tool concurrency limits (tool_name -> max_concurrent)
+        patterns: Pattern-based limits using glob syntax (e.g., "web.*": 10, "mcp.notion.*": 2)
         namespace_limits: Per-namespace concurrency limits (namespace -> max_concurrent)
         global_limit: Optional global limit across all tools (None = unlimited)
         acquisition_timeout: Timeout for acquiring a slot (None = wait forever)
         enable_metrics: Whether to emit metrics for bulkhead operations
+
+    Example:
+        >>> config = BulkheadConfig(
+        ...     default_limit=10,
+        ...     tool_limits={"slow_api": 2},          # Exact match
+        ...     patterns={
+        ...         "web.*": 10,                       # All web.* tools
+        ...         "db.*": 4,                         # All db.* tools
+        ...         "mcp.notion.*": 2,                 # All mcp.notion.* tools
+        ...     },
+        ...     global_limit=50,
+        ... )
     """
 
     model_config = ConfigDict(
@@ -76,6 +93,10 @@ class BulkheadConfig(BaseModel):
     tool_limits: dict[str, int] = Field(
         default_factory=dict,
         description="Per-tool concurrency limits (tool_name -> max_concurrent)",
+    )
+    patterns: dict[str, int] = Field(
+        default_factory=dict,
+        description="Pattern-based limits using glob syntax (pattern -> max_concurrent)",
     )
     namespace_limits: dict[str, int] = Field(
         default_factory=dict,
@@ -183,12 +204,58 @@ class Bulkhead:
             self.config.global_limit,
         )
 
+    def _get_limit_for_tool(self, tool: str) -> int:
+        """
+        Get the concurrency limit for a tool, checking in order:
+        1. Exact tool_limits match
+        2. Pattern match (first matching pattern wins)
+        3. Default limit
+
+        Args:
+            tool: Tool name (may include namespace prefix like "mcp.notion.search")
+
+        Returns:
+            Concurrency limit for the tool
+        """
+        # 1. Check exact match first
+        if tool in self.config.tool_limits:
+            return self.config.tool_limits[tool]
+
+        # 2. Check patterns (use cached pattern matching)
+        for pattern, limit in self.config.patterns.items():
+            if self._match_pattern(pattern, tool):
+                return limit
+
+        # 3. Fall back to default
+        return self.config.default_limit
+
+    @staticmethod
+    @lru_cache(maxsize=1024)
+    def _match_pattern(pattern: str, tool: str) -> bool:
+        """
+        Check if a tool name matches a glob pattern.
+
+        Supports:
+        - "*" matches any sequence of characters
+        - "?" matches any single character
+        - "web.*" matches "web.api", "web.cache", etc.
+        - "mcp.notion.*" matches "mcp.notion.search", "mcp.notion.create_page", etc.
+
+        Args:
+            pattern: Glob pattern (e.g., "web.*", "db.*", "mcp.notion.*")
+            tool: Tool name to match
+
+        Returns:
+            True if tool matches pattern
+        """
+        return fnmatch.fnmatch(tool, pattern)
+
     async def _get_tool_semaphore(self, tool: str) -> asyncio.Semaphore:
         """Get or create a semaphore for a specific tool."""
         if tool not in self._tool_semaphores:
             async with self._tool_locks[tool]:
                 if tool not in self._tool_semaphores:
-                    limit = self.config.tool_limits.get(tool, self.config.default_limit)
+                    limit = self._get_limit_for_tool(tool)
                     self._tool_semaphores[tool] = asyncio.Semaphore(limit)
                     logger.debug("Created tool semaphore: %s (limit=%d)", tool, limit)
         return self._tool_semaphores[tool]
@@ -376,8 +443,8 @@ class Bulkhead:
                 )
 
     def get_tool_limit(self, tool: str) -> int:
-        """Get the concurrency limit for a specific tool."""
-        return self.config.tool_limits.get(tool, self.config.default_limit)
+        """Get the concurrency limit for a specific tool (supports patterns)."""
+        return self._get_limit_for_tool(tool)
 
     def get_namespace_limit(self, namespace: str) -> int | None:
         """Get the concurrency limit for a namespace (None if not configured)."""

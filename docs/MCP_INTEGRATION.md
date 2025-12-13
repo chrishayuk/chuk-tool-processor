@@ -9,6 +9,7 @@ Connect to remote tool servers using the [Model Context Protocol](https://modelc
 - [HTTP Streamable](#http-streamable-recommended-for-cloud)
 - [STDIO](#stdio-best-for-local-tools)
 - [SSE](#sse-legacy-support)
+- [Middleware Stack](#middleware-stack)
 - [Real-World Examples](#real-world-examples)
   - [Notion Integration](#notion-integration-with-oauth)
   - [SQLite Database](#local-sqlite-database-access)
@@ -193,6 +194,170 @@ processor, manager = await setup_mcp_sse(
     namespace="atlassian",
     initialization_timeout=120.0
 )
+```
+
+---
+
+## Middleware Stack
+
+The `MiddlewareStack` provides production-grade resilience for MCP tool calls. It wraps MCP connections with configurable retry, circuit breaker, and rate limiting layers.
+
+### Architecture
+
+```
+Tool Call
+    ↓
+┌─────────────────────────────────┐
+│        Middleware Stack          │
+│  (Applied in this order)         │
+│   • Rate Limiting (outermost)    │
+│   • Circuit Breaker              │
+│   • Retry (innermost)            │
+│   • Transport                    │
+└─────────────────────────────────┘
+    ↓
+MCP Server
+```
+
+### Basic Usage
+
+```python
+from chuk_tool_processor.mcp.middleware import (
+    MiddlewareConfig,
+    MiddlewareStack,
+    RetrySettings,
+    CircuitBreakerSettings,
+    RateLimitSettings,
+)
+from chuk_tool_processor.mcp import StreamManager
+
+# Configure middleware layers
+config = MiddlewareConfig(
+    retry=RetrySettings(
+        enabled=True,
+        max_retries=3,
+        base_delay=1.0,
+        max_delay=30.0,
+        jitter=True,
+    ),
+    circuit_breaker=CircuitBreakerSettings(
+        enabled=True,
+        failure_threshold=5,
+        reset_timeout=60.0,
+    ),
+    rate_limiting=RateLimitSettings(
+        enabled=True,
+        global_limit=100,
+        period=60.0,
+    ),
+)
+
+# Create middleware stack around a StreamManager
+stream_manager = StreamManager()
+await stream_manager.initialize(servers)
+
+middleware = MiddlewareStack(stream_manager, config=config)
+
+# Execute tools through middleware
+result = await middleware.call_tool(
+    tool_name="notion.search_pages",
+    arguments={"query": "docs"},
+    timeout=30.0,
+)
+
+if result.success:
+    print(f"Result: {result.result}")
+else:
+    print(f"Error: {result.error}")
+```
+
+### Middleware Configuration
+
+#### RetrySettings
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | `bool` | `True` | Enable retry middleware |
+| `max_retries` | `int` | `3` | Maximum retry attempts |
+| `base_delay` | `float` | `1.0` | Initial delay between retries (seconds) |
+| `max_delay` | `float` | `30.0` | Maximum delay between retries |
+| `jitter` | `bool` | `True` | Add randomness to delays |
+| `retry_on_errors` | `list[str]` | Transport errors | Error patterns that trigger retry |
+| `skip_on_errors` | `list[str]` | Auth errors | Error patterns that skip retry |
+
+#### CircuitBreakerSettings
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | `bool` | `True` | Enable circuit breaker |
+| `failure_threshold` | `int` | `5` | Failures before opening circuit |
+| `success_threshold` | `int` | `2` | Successes to close circuit |
+| `reset_timeout` | `float` | `60.0` | Seconds before half-open state |
+| `half_open_max_calls` | `int` | `1` | Calls allowed in half-open state |
+
+#### RateLimitSettings
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | `bool` | `False` | Enable rate limiting |
+| `global_limit` | `int` | `100` | Max requests per period |
+| `period` | `float` | `60.0` | Time window in seconds |
+| `per_tool_limits` | `dict` | `{}` | Per-tool limits as `{tool: (limit, period)}` |
+
+### Monitoring Middleware Status
+
+```python
+# Get current middleware status
+status = middleware.get_status()
+
+# Check retry status
+if status.retry:
+    print(f"Retry enabled: max_retries={status.retry.max_retries}")
+
+# Check circuit breaker states per tool
+if status.circuit_breaker:
+    for tool, state in status.circuit_breaker.tool_states.items():
+        print(f"{tool}: state={state.state}, failures={state.failure_count}")
+
+# Check rate limiting
+if status.rate_limiting:
+    print(f"Rate limit: {status.rate_limiting.global_limit}/{status.rate_limiting.period}s")
+```
+
+### Error Classification
+
+The middleware automatically classifies errors:
+
+**Retryable Errors** (will trigger retry):
+- `Transport not initialized`
+- `connection` errors
+- `timeout` errors
+- `refused` connections
+- `reset` connections
+- `closed` connections
+
+**Non-Retryable Errors** (fail immediately):
+- `oauth` errors
+- `unauthorized` errors
+- `authentication` errors
+- `invalid_grant` errors
+- `No server found` errors
+
+### ToolExecutionResult
+
+Each middleware call returns a `ToolExecutionResult`:
+
+```python
+result = await middleware.call_tool("tool_name", {"arg": "value"})
+
+# Fields available:
+result.success       # bool: True if execution succeeded
+result.result        # Any: The tool result (if success)
+result.error         # str | None: Error message (if failed)
+result.tool_name     # str: Name of the tool called
+result.duration_ms   # float: Execution time in milliseconds
+result.attempts      # int: Number of attempts (with retries)
+result.from_cache    # bool: True if result was cached
 ```
 
 ---
