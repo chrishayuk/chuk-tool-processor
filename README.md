@@ -1,4 +1,4 @@
-# CHUK Tool Processor — Production-grade execution for LLM tool calls
+# CHUK Tool Processor — A Tool Execution Runtime for AI Systems
 
 [![PyPI](https://img.shields.io/pypi/v/chuk-tool-processor.svg)](https://pypi.org/project/chuk-tool-processor/)
 [![Python](https://img.shields.io/pypi/pyversions/chuk-tool-processor.svg)](https://pypi.org/project/chuk-tool-processor/)
@@ -11,16 +11,18 @@
 
 ---
 
-## The Missing Layer for Reliable Tool Execution
+## The Missing Runtime Layer
 
-LLMs are good at *calling* tools. The hard part is **executing** those tools reliably.
+LLMs are good at *deciding which tools to call*. The hard part is **executing** those tools reliably.
 
-**CHUK Tool Processor:**
+**CHUK Tool Processor** is a **tool execution runtime** — it doesn't plan workflows or decide which tools to call. It executes tool calls reliably, under constraints, as directed by higher-level planners (your agent, LangChain, LlamaIndex, or a custom orchestrator).
+
+**What it does:**
 - Parses tool calls from any model (Anthropic XML, OpenAI `tool_calls`, JSON)
 - Executes them with **timeouts, retries, caching, rate limits, circuit breaker, observability**
 - Runs tools locally, in **isolated subprocesses**, or **remote via MCP**
 
-Works with OpenAI, Anthropic, local models (Ollama/MLX/vLLM), and any framework (LangChain, LlamaIndex, custom).
+Works with OpenAI, Anthropic, local models (Ollama/MLX/vLLM), and any framework.
 
 ---
 
@@ -426,10 +428,30 @@ pip install chuk-tool-processor[all]
 - You want production-grade observability
 
 **Don't use this if:**
-- You want an agent framework (this is the execution layer, not the agent)
+- You want an agent framework (this is the execution runtime, not the agent)
 - You want conversation flow/memory orchestration
+- You need a planner to decide *which* tools to call
 
-> **Not a framework.** If LangChain/LlamaIndex help decide *which* tool to call, CHUK Tool Processor makes sure the tool call **actually succeeds**.
+### The Seam: Runtime vs Planner
+
+CHUK Tool Processor deliberately does not plan workflows or decide which tools to call. It executes tool calls reliably, under constraints, as directed by higher-level planners.
+
+```
+┌─────────────────────────────────────────────────────┐
+│  Your Agent / LangChain / LlamaIndex / Custom       │  ← Decides WHICH tools
+└─────────────────────────────────────────────────────┘
+                          ↓
+┌─────────────────────────────────────────────────────┐
+│            CHUK Tool Processor                      │  ← Executes tools RELIABLY
+│  (timeouts, retries, caching, rate limits, etc.)   │
+└─────────────────────────────────────────────────────┘
+                          ↓
+┌─────────────────────────────────────────────────────┐
+│          Local Tools / MCP Servers                  │  ← Does the actual work
+└─────────────────────────────────────────────────────┘
+```
+
+This separation means you can swap planners without changing execution infrastructure, and vice versa.
 
 ---
 

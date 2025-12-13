@@ -2,11 +2,25 @@
 
 This guide covers production-grade patterns for building reliable, scalable tool execution systems.
 
+## Key Defaults
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| **Return order** | `completion` | Results return as tools finish (faster first) |
+| **Parallel execution** | Enabled | Tools run concurrently by default |
+| **Caching** | Disabled | Enable via `enable_caching=True` |
+| **Bulkheads** | Disabled | Enable via `enable_bulkhead=True` |
+| **Retries** | Disabled | Enable via `enable_retries=True` |
+| **Rate limiting** | Disabled | Enable via `enable_rate_limiting=True` |
+
+---
+
 ## Table of Contents
 
-- [Idempotency & Deduplication](#idempotency--deduplication)
+- [Idempotency via Caching](#idempotency-via-caching)
 - [Cancellation & Deadlines](#cancellation--deadlines)
 - [Per-Tool Policy Overrides](#per-tool-policy-overrides)
+- [Policy Precedence](#policy-precedence)
 - [Parallel Execution & Streaming](#parallel-execution--streaming)
 - [Return Order](#return-order-completion-vs-submission)
 - [Scoped Registries](#scoped-registries-multi-tenant-isolation)
@@ -14,10 +28,11 @@ This guide covers production-grade patterns for building reliable, scalable tool
 - [Pattern-Based Bulkheads](#pattern-based-bulkheads)
 - [ExecutionContext](#executioncontext-request-tracing)
 - [SchedulerPolicy & DAG Scheduling](#schedulerpolicy--dag-scheduling)
+- [Recipes](#recipes)
 
 ---
 
-## Idempotency & Deduplication
+## Idempotency via Caching
 
 Automatically deduplicate LLM retry quirks using SHA256-based idempotency keys:
 
@@ -41,6 +56,25 @@ async with ToolProcessor(enable_caching=True, cache_ttl=300) as p:
 - Tool name + arguments are hashed to create an idempotency key
 - Identical calls within the cache TTL return cached results
 - Prevents duplicate API calls from LLM retry behavior
+
+### Safe by Default
+
+Caching is **off by default** because:
+- Some tools have side effects (`db.write`, `send_email`)
+- Arguments may contain volatile fields (timestamps, random IDs)
+
+**Recommended approach:**
+- Enable caching selectively for read-only/idempotent tools
+- Use `cache_key_fn` (future) to normalize arguments and strip volatile fields
+- For true idempotency on side-effecting systems, use idempotency keys at the destination
+
+### Persistence Options
+
+| Backend | Use Case | Status |
+|---------|----------|--------|
+| **In-memory** | Single process, development | Default |
+| **Redis** | Multi-process, production | Planned |
+| **Custom** | Implement `CacheBackend` protocol | Supported |
 
 ---
 
@@ -67,11 +101,15 @@ async def main():
 asyncio.run(main())
 ```
 
-**Features:**
-- Timeout at processor level (`default_timeout`)
-- Timeout at request level (`asyncio.timeout`)
-- Automatic cleanup on cancellation
-- Works with streaming results
+### Cancel Behaviour by Strategy
+
+| Strategy | Cancel Behaviour |
+|----------|------------------|
+| **In-process** | Cooperative `CancelledError`; coroutine yields control |
+| **Subprocess** | `SIGTERM` sent; grace period then `SIGKILL` |
+| **MCP remote** | Client stops waiting; server may continue (best-effort) |
+
+**Important:** Cancellation is **best-effort**. For subprocess and MCP strategies, the underlying operation may continue server-side even after the client cancels. Design tools to be re-entrant or use idempotency keys on side-effecting operations.
 
 ---
 
@@ -101,13 +139,22 @@ async with ToolProcessor(
     ''')
 ```
 
-**Configuration options:**
-- `default_timeout`: Default timeout for all tools
-- `tool_rate_limits`: Per-tool rate limits as `(requests, period_seconds)`
-- `global_rate_limit`: System-wide rate limit
-- `max_retries`: Maximum retry attempts for transient failures
-
 See [CONFIGURATION.md](CONFIGURATION.md) for all options.
+
+---
+
+## Policy Precedence
+
+When the same setting (e.g., `timeout_ms`, `max_retries`) is configured at multiple levels, the most specific wins:
+
+| Priority | Source | Example |
+|----------|--------|---------|
+| **1 (highest)** | Per-call override from scheduler | `per_call_timeout_ms["fetch-1"] = 500` |
+| **2** | Per-tool config | `tool_rate_limits={"slow_api": (5, 60)}` |
+| **3** | Namespace/pattern config | `patterns={"mcp.*": 5}` |
+| **4 (lowest)** | Global defaults | `default_timeout=30.0` |
+
+This is especially important for `timeout_ms` and `max_retries` when using the scheduler.
 
 ---
 
@@ -122,35 +169,40 @@ from chuk_tool_processor.models.tool_call import ToolCall
 
 # Tools with different execution times
 calls = [
-    ToolCall(tool="slow_api", arguments={"query": "complex"}),    # 500ms
-    ToolCall(tool="medium_api", arguments={"query": "medium"}),   # 200ms
-    ToolCall(tool="fast_api", arguments={"query": "simple"}),     # 50ms
+    ToolCall(id="call-1", tool="slow_api", arguments={"query": "complex"}),    # 500ms
+    ToolCall(id="call-2", tool="medium_api", arguments={"query": "medium"}),   # 200ms
+    ToolCall(id="call-3", tool="fast_api", arguments={"query": "simple"}),     # 50ms
 ]
 
 # Results return as: fast_api, medium_api, slow_api (completion order)
 results = await strategy.run(calls)
 
-# Match results back to original calls by tool name
+# Match results back to original calls by call_id (NOT tool name!)
 for result in results:
-    print(f"{result.tool}: {result.result}")
+    print(f"call_id: {result.call_id}, tool: {result.tool}")
+    # call_id: call-3, tool: fast_api
+    # call_id: call-2, tool: medium_api
+    # call_id: call-1, tool: slow_api
 ```
+
+**Important:** Always match results by `call_id`, not `tool` name. Tool names repeat all the time; `call_id` is the unique join key.
 
 ### Stream results as they arrive
 
 ```python
 async for result in strategy.stream_run(calls):
     # Process each result immediately as it completes
-    print(f"Completed: {result.tool}")
+    print(f"Completed: {result.call_id} ({result.tool})")
 ```
 
 ### Track when tools start
 
 ```python
 async def on_start(call: ToolCall):
-    print(f"Starting: {call.tool}")
+    print(f"Starting: {call.id}")
 
 async for result in strategy.stream_run(calls, on_tool_start=on_start):
-    print(f"Completed: {result.tool}")
+    print(f"Completed: {result.call_id}")
 ```
 
 ### Control concurrency
@@ -185,6 +237,16 @@ async with ToolProcessor() as processor:
     # SUBMISSION order: Results return in the same order as submitted
     # Returns: slow_api, medium_api, fast_api
     results = await processor.process(calls, return_order="submission")
+```
+
+### Return Order Options
+
+```python
+from chuk_tool_processor.models.return_order import ReturnOrder
+
+class ReturnOrder(str, Enum):
+    COMPLETION = "completion"  # Results as tools finish (default)
+    SUBMISSION = "submission"  # Results in input order
 ```
 
 ### When to Use Each
@@ -299,6 +361,7 @@ config = BulkheadConfig(
     namespace_limits={"external": 5},  # External namespace: max 5 total
     global_limit=50,               # System-wide: max 50 concurrent
     acquisition_timeout=5.0,       # Wait up to 5s for a slot
+    max_queue_depth=100,           # Max waiters before fail-fast
 )
 
 bulkhead = Bulkhead(config)
@@ -329,11 +392,26 @@ All three levels are enforced simultaneously — a request must acquire slots at
 class BulkheadConfig:
     default_limit: int = 10           # Default per-tool limit
     tool_limits: dict[str, int] = {}  # Per-tool overrides
+    patterns: dict[str, int] = {}     # Pattern-based limits (glob syntax)
     namespace_limits: dict[str, int] = {}  # Per-namespace limits
     global_limit: int | None = None   # Optional global limit
     acquisition_timeout: float | None = None  # Timeout for slot acquisition
+    max_queue_depth: int | None = None  # Max waiters (None = unlimited)
     enable_metrics: bool = True       # Emit metrics for monitoring
 ```
+
+### Queue Depth and Backpressure
+
+Without `max_queue_depth`, a saturated pool becomes "infinite latency" — requests queue forever.
+
+```python
+config = BulkheadConfig(
+    default_limit=10,
+    max_queue_depth=50,  # Fail fast if >50 requests waiting
+)
+```
+
+When `max_queue_depth` is exceeded, new requests immediately receive `BulkheadFullError`.
 
 ### Handling Bulkhead Full
 
@@ -345,7 +423,7 @@ try:
         result = await call_slow_api()
 except BulkheadFullError as e:
     print(f"Bulkhead full: {e.limit_type.value} limit ({e.limit}) exceeded")
-    # e.limit_type: TOOL, NAMESPACE, or GLOBAL
+    # e.limit_type: TOOL, NAMESPACE, GLOBAL, or QUEUE_DEPTH
     # e.timeout: How long we waited
 ```
 
@@ -405,7 +483,7 @@ Patterns use standard glob syntax via `fnmatch`:
 Limits are resolved in this order:
 
 1. **Exact match** in `tool_limits` (highest priority)
-2. **First matching pattern** in `patterns`
+2. **First matching pattern** in `patterns` (dict iteration order)
 3. **`default_limit`** (fallback)
 
 ```python
@@ -419,6 +497,8 @@ config = BulkheadConfig(
 # db.read → 3 (pattern match)
 # other_tool → 10 (default)
 ```
+
+**Note:** Patterns are evaluated in dict iteration order (insertion order in Python 3.7+). For predictable behavior, list more specific patterns before broader ones, or use explicit tool limits for critical paths.
 
 ### Performance
 
@@ -453,6 +533,15 @@ ctx = ExecutionContext.with_deadline(
 async with ToolProcessor() as processor:
     results = await processor.process(tool_calls, context=ctx)
 ```
+
+### Security Note
+
+**Do not put secrets in context.** ExecutionContext may be:
+- Logged to observability systems
+- Serialized to headers for MCP propagation
+- Included in error reports
+
+Use it for identifiers (`user_id`, `tenant_id`, `request_id`), not credentials.
 
 ### Accessing Context in Tools
 
@@ -544,60 +633,6 @@ async with execution_scope(ctx):
 
 ---
 
-## Complete Example: All Patterns Combined
-
-See `examples/02_production_features/production_patterns_demo.py` for a complete demonstration combining:
-
-- Scoped registries for tenant isolation
-- Bulkheads for concurrency control
-- ExecutionContext for request tracing
-- Caching and retries for reliability
-
-```python
-import asyncio
-from chuk_tool_processor import (
-    ToolProcessor,
-    create_registry,
-    ExecutionContext,
-    BulkheadConfig,
-)
-
-async def handle_request(tenant_id: str, user_id: str, request_num: int):
-    # 1. Get tenant-specific registry
-    registry = get_tenant_registry(tenant_id)
-
-    # 2. Configure bulkheads for this tenant
-    bulkhead_config = BulkheadConfig(
-        default_limit=10,
-        tool_limits={"external_api": 3},
-        global_limit=50,
-    )
-
-    # 3. Create processor with all features
-    processor = ToolProcessor(
-        registry=registry,
-        enable_bulkhead=True,
-        bulkhead_config=bulkhead_config,
-        enable_caching=True,
-        enable_retries=True,
-    )
-
-    # 4. Create execution context
-    ctx = ExecutionContext(
-        request_id=f"req-{request_num}",
-        user_id=user_id,
-        tenant_id=tenant_id,
-    )
-
-    # 5. Process with full production features
-    async with processor:
-        results = await processor.process(tool_calls, context=ctx)
-
-    return results
-```
-
----
-
 ## SchedulerPolicy & DAG Scheduling
 
 For complex workflows with dependencies, use the `SchedulerPolicy` interface to plan execution:
@@ -685,6 +720,33 @@ The scheduler returns an `ExecutionPlan` with:
 | `cost` | `float` | Cost units for budget tracking |
 | `priority` | `int` | Priority (higher = more important, 0 = can be skipped) |
 
+### Failure and Skip Propagation
+
+There are two types of skipping:
+
+| Type | When | Behaviour |
+|------|------|-----------|
+| **Planned skip** | Before execution | Scheduler cascades skips based on deadline/cost/priority |
+| **Runtime failure** | During execution | Dependents marked as `SKIPPED_DEPENDENCY_FAILED` |
+
+**Example: Planned skip cascade**
+```
+fetch-users → transform → store → analytics
+                                      ↑
+                              Skipped (low priority, deadline tight)
+```
+If `analytics` is skipped, no dependents exist, so no cascade.
+
+**Example: Runtime failure cascade**
+```
+fetch-users → transform → store
+      ↓            ↑
+   FAILED      SKIPPED (dependency failed)
+```
+If `fetch-users` fails at runtime, `transform` (and transitively `store`) are skipped because their dependency failed.
+
+**Note:** To allow partial execution despite failures, use `continue_on_error=True` at the executor level (not scheduler).
+
 ### Scheduling Features
 
 - **Topological Sort**: Respects `depends_on` for correct execution order
@@ -722,8 +784,157 @@ class MyCustomScheduler:
 
 ---
 
+## Recipes
+
+### SLO Recipe: 2s P95 API Endpoint
+
+Configure for a typical SaaS API with 2-second P95 latency SLO:
+
+```python
+from chuk_tool_processor import ToolProcessor, BulkheadConfig
+
+async with ToolProcessor(
+    # Timeouts: Leave headroom for retries
+    default_timeout=1.5,           # Tool timeout (retries happen within 2s budget)
+
+    # Retries: Fast retries for transient failures
+    enable_retries=True,
+    max_retries=1,                 # One retry max (fits in 2s with 1.5s timeout)
+    retry_base_delay=0.1,          # Start fast
+
+    # Rate limiting: Protect downstream services
+    enable_rate_limiting=True,
+    global_rate_limit=100,         # 100 req/min across all tools
+    tool_rate_limits={
+        "external_api": (10, 60),  # 10/min for expensive external calls
+    },
+
+    # Bulkheads: Prevent slow tools from starving fast ones
+    enable_bulkhead=True,
+    bulkhead_config=BulkheadConfig(
+        default_limit=10,
+        tool_limits={"external_api": 2},  # Limit external calls
+        acquisition_timeout=0.5,          # Fail fast if pool saturated
+        max_queue_depth=20,               # Backpressure
+    ),
+
+    # Caching: Reduce repeated calls
+    enable_caching=True,
+    cache_ttl=60,                  # 1 minute for most tools
+) as processor:
+    results = await processor.process(tool_calls)
+```
+
+### Multi-Tenant Recipe: Per-Tenant Isolation
+
+Complete isolation with per-tenant pools and limits:
+
+```python
+from chuk_tool_processor import (
+    ToolProcessor,
+    create_registry,
+    BulkheadConfig,
+    ExecutionContext,
+)
+
+def create_tenant_processor(tenant_id: str, tier: str):
+    # Tenant-specific registry (tool access by tier)
+    registry = create_registry()
+    register_tools_for_tier(registry, tier)
+
+    # Tenant-specific bulkhead with namespaced pools
+    config = BulkheadConfig(
+        default_limit=5 if tier == "free" else 20,
+        patterns={
+            f"web:{tenant_id}:*": 3 if tier == "free" else 10,
+            f"db:{tenant_id}:*": 1 if tier == "free" else 3,
+        },
+        global_limit=10 if tier == "free" else 50,
+        max_queue_depth=5 if tier == "free" else 20,
+    )
+
+    return ToolProcessor(
+        registry=registry,
+        enable_bulkhead=True,
+        bulkhead_config=config,
+        enable_rate_limiting=True,
+        global_rate_limit=30 if tier == "free" else 200,
+    )
+
+# Usage
+async def handle_request(tenant_id: str, user_id: str, tool_calls):
+    tier = await get_tenant_tier(tenant_id)
+    processor = create_tenant_processor(tenant_id, tier)
+
+    ctx = ExecutionContext(
+        request_id=f"req-{uuid4()}",
+        user_id=user_id,
+        tenant_id=tenant_id,
+    )
+
+    async with processor:
+        return await processor.process(tool_calls, context=ctx)
+```
+
+---
+
+## Complete Example: All Patterns Combined
+
+See `examples/02_production_features/production_patterns_demo.py` for a complete demonstration combining:
+
+- Scoped registries for tenant isolation
+- Bulkheads for concurrency control
+- ExecutionContext for request tracing
+- Caching and retries for reliability
+
+```python
+import asyncio
+from chuk_tool_processor import (
+    ToolProcessor,
+    create_registry,
+    ExecutionContext,
+    BulkheadConfig,
+)
+
+async def handle_request(tenant_id: str, user_id: str, request_num: int):
+    # 1. Get tenant-specific registry
+    registry = get_tenant_registry(tenant_id)
+
+    # 2. Configure bulkheads for this tenant
+    bulkhead_config = BulkheadConfig(
+        default_limit=10,
+        tool_limits={"external_api": 3},
+        global_limit=50,
+    )
+
+    # 3. Create processor with all features
+    processor = ToolProcessor(
+        registry=registry,
+        enable_bulkhead=True,
+        bulkhead_config=bulkhead_config,
+        enable_caching=True,
+        enable_retries=True,
+    )
+
+    # 4. Create execution context
+    ctx = ExecutionContext(
+        request_id=f"req-{request_num}",
+        user_id=user_id,
+        tenant_id=tenant_id,
+    )
+
+    # 5. Process with full production features
+    async with processor:
+        results = await processor.process(tool_calls, context=ctx)
+
+    return results
+```
+
+---
+
 ## Related Documentation
 
 - [CONFIGURATION.md](CONFIGURATION.md) - All configuration options
+- [MCP_INTEGRATION.md](MCP_INTEGRATION.md) - Middleware stack for resilience
 - [OBSERVABILITY.md](OBSERVABILITY.md) - Metrics and tracing
 - [ERRORS.md](ERRORS.md) - Error handling patterns
