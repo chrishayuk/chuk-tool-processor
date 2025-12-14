@@ -279,6 +279,7 @@ class CircuitBreakerExecutor:
                         tool=call.tool,
                         result=None,
                         error=str(error),
+                        error_info=error.to_error_info(),
                         start_time=now,
                         end_time=now,
                         machine="circuit_breaker",
@@ -321,10 +322,9 @@ class CircuitBreakerExecutor:
 
                 now = datetime.now(UTC)
                 results.append(
-                    ToolResult(
+                    ToolResult.create_error(
                         tool=call.tool,
-                        result=None,
-                        error=f"Circuit breaker caught exception: {str(e)}",
+                        error=e,
                         start_time=now,
                         end_time=now,
                         machine="circuit_breaker",

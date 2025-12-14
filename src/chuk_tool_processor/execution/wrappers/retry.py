@@ -15,6 +15,7 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
+from chuk_tool_processor.core.exceptions import ErrorCategory, ErrorCode, ErrorInfo
 from chuk_tool_processor.logging import get_logger
 from chuk_tool_processor.models.tool_call import ToolCall
 from chuk_tool_processor.models.tool_result import ToolResult
@@ -182,6 +183,13 @@ class RetryableToolExecutor:
                         tool=call.tool,
                         result=None,
                         error=f"Timeout after {timeout}s",
+                        error_info=ErrorInfo(
+                            code=ErrorCode.TOOL_TIMEOUT,
+                            category=ErrorCategory.TIMEOUT,
+                            message=f"Timeout after {timeout}s",
+                            retryable=True,
+                            details={"tool_name": call.tool, "timeout": timeout, "attempts": attempt},
+                        ),
                         start_time=datetime.now(UTC),
                         end_time=datetime.now(UTC),
                         machine=machine,
@@ -252,10 +260,9 @@ class RetryableToolExecutor:
                         continue
 
                     end_time = datetime.now(UTC)
-                    return ToolResult(
+                    return ToolResult.create_error(
                         tool=call.tool,
-                        result=None,
-                        error=self._wrap_error(err_str, attempt, cfg),
+                        error=exc,
                         start_time=start_time,
                         end_time=end_time,
                         machine=machine,

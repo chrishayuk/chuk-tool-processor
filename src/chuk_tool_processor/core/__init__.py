@@ -10,7 +10,12 @@ from chuk_tool_processor.core.context import (
     set_current_context,
 )
 from chuk_tool_processor.core.exceptions import (
+    # Exceptions
+    BulkheadFullError,
+    # Error taxonomy
+    ErrorCategory,
     ErrorCode,
+    ErrorInfo,
     MCPConnectionError,
     MCPError,
     MCPTimeoutError,
@@ -22,6 +27,9 @@ from chuk_tool_processor.core.exceptions import (
     ToolRateLimitedError,
     ToolTimeoutError,
     ToolValidationError,
+    # Helper functions
+    get_category_for_code,
+    is_retryable_category,
 )
 
 __all__ = [
@@ -32,8 +40,13 @@ __all__ = [
     "execution_scope",
     "get_current_context",
     "set_current_context",
-    # Errors
+    # Error taxonomy
     "ErrorCode",
+    "ErrorCategory",
+    "ErrorInfo",
+    "get_category_for_code",
+    "is_retryable_category",
+    # Exceptions
     "ToolProcessorError",
     "ToolNotFoundError",
     "ToolExecutionError",
@@ -42,6 +55,7 @@ __all__ = [
     "ParserError",
     "ToolRateLimitedError",
     "ToolCircuitOpenError",
+    "BulkheadFullError",
     "MCPError",
     "MCPConnectionError",
     "MCPTimeoutError",

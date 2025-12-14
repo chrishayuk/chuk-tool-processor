@@ -25,9 +25,12 @@ async def get_registry(provider_type: str | None = None, **kwargs: Any) -> ToolR
     Args:
         provider_type: Type of registry provider to use. Options:
             - "memory" (default): In-memory implementation
-            - "redis": Redis-backed implementation (if available)
-            - "sqlalchemy": Database-backed implementation (if available)
+            - "redis": Redis-backed implementation (requires redis package)
         **kwargs: Additional configuration for the provider.
+            For "redis":
+                - redis_url: Redis connection URL (default: redis://localhost:6379/0)
+                - key_prefix: Prefix for Redis keys (default: "chuk")
+                - local_cache_ttl: Local cache TTL in seconds (default: 60.0)
 
     Returns:
         A registry implementation.
@@ -35,6 +38,13 @@ async def get_registry(provider_type: str | None = None, **kwargs: Any) -> ToolR
     Raises:
         ImportError: If the requested provider is not available.
         ValueError: If the provider type is not recognized.
+
+    Example:
+        >>> # Memory provider (default)
+        >>> registry = await get_registry()
+        >>>
+        >>> # Redis provider
+        >>> registry = await get_registry("redis", redis_url="redis://localhost:6379/0")
     """
     # Use environment variable if not specified
     if provider_type is None:
@@ -56,11 +66,22 @@ async def get_registry(provider_type: str | None = None, **kwargs: Any) -> ToolR
             return _REGISTRY_CACHE[cache_key]
 
         # Create the appropriate provider
+        registry: ToolRegistryInterface
         if provider_type == "memory":
-            # Import here to avoid circular imports
             from chuk_tool_processor.registry.providers.memory import InMemoryToolRegistry
 
             registry = InMemoryToolRegistry()
+        elif provider_type == "redis":
+            from chuk_tool_processor.registry.providers.redis import create_redis_registry
+
+            redis_url = kwargs.get("redis_url", "redis://localhost:6379/0")
+            key_prefix = kwargs.get("key_prefix", "chuk")
+            local_cache_ttl = kwargs.get("local_cache_ttl", 60.0)
+            registry = await create_redis_registry(
+                redis_url=redis_url,
+                key_prefix=key_prefix,
+                local_cache_ttl=local_cache_ttl,
+            )
         else:
             raise ValueError(f"Unknown registry provider type: {provider_type}")
 

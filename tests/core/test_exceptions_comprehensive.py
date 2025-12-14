@@ -6,7 +6,10 @@ Comprehensive tests for exception classes and error codes.
 import pytest
 
 from chuk_tool_processor.core.exceptions import (
+    BulkheadFullError,
+    ErrorCategory,
     ErrorCode,
+    ErrorInfo,
     MCPConnectionError,
     MCPError,
     MCPTimeoutError,
@@ -353,3 +356,207 @@ class TestExceptionRaisingAndCatching:
             assert e.code == ErrorCode.TOOL_NOT_FOUND
             error_dict = e.to_dict()
             assert error_dict["code"] == "TOOL_NOT_FOUND"
+
+
+class TestToolNotFoundErrorWithTupleTools:
+    """Tests for ToolNotFoundError with tuple format tools (lines 244-250, 257, 278)."""
+
+    def test_with_tuple_format_tools(self):
+        """Test creating error with tuple format (namespace, name) tools."""
+        # Tuple format: list of (namespace, name) tuples
+        available_tools = [
+            ("default", "calculator"),
+            ("default", "calendar"),
+            ("utils", "formatter"),
+        ]
+        error = ToolNotFoundError(
+            "calcuator",  # typo to get suggestions
+            namespace="default",
+            available_tools=available_tools,
+        )
+
+        # Should find similar tools
+        assert "Did you mean" in str(error)
+        assert error.details.get("suggestions") is not None
+        assert len(error.details["suggestions"]) > 0
+
+    def test_with_tuple_format_tools_exact_match_namespace(self):
+        """Test similar tools are found within namespace."""
+        available_tools = [
+            ("default", "search_tool"),
+            ("default", "search_api"),
+            ("other", "different_tool"),
+        ]
+        error = ToolNotFoundError(
+            "search_tol",  # typo
+            namespace="default",
+            available_tools=available_tools,
+        )
+
+        # Should suggest similar tools
+        assert "suggestions" in error.details
+
+    def test_with_tuple_format_no_similar_tools(self):
+        """Test when no similar tools are found."""
+        available_tools = [
+            ("default", "completely_different"),
+        ]
+        error = ToolNotFoundError(
+            "xyz123",  # no similarity
+            namespace="default",
+            available_tools=available_tools,
+        )
+
+        # No suggestions when nothing is similar
+        assert "suggestions" not in error.details or len(error.details.get("suggestions", [])) == 0
+
+    def test_with_string_format_similar_tools(self):
+        """Test with string format tools that find similar matches."""
+        available_tools = ["calculator", "calendar", "formatter"]
+        error = ToolNotFoundError(
+            "calcuator",  # typo
+            available_tools=available_tools,
+        )
+
+        # Should find similar tools and add to message
+        assert "Did you mean" in str(error)
+        assert "suggestions" in error.details
+
+
+class TestBulkheadFullError:
+    """Tests for BulkheadFullError (lines 498-508)."""
+
+    def test_creation_basic(self):
+        """Test creating basic bulkhead full error."""
+        error = BulkheadFullError(
+            tool_name="api_tool",
+            namespace="default",
+            limit_type="tool",
+            limit=10,
+        )
+
+        assert "api_tool" in str(error)
+        assert "tool limit: 10" in str(error).lower()
+        assert error.code == ErrorCode.BULKHEAD_FULL
+        assert error.tool_name == "api_tool"
+        assert error.namespace == "default"
+        assert error.limit_type == "tool"
+        assert error.limit == 10
+
+    def test_creation_with_timeout(self):
+        """Test creating bulkhead error with timeout."""
+        error = BulkheadFullError(
+            tool_name="api_tool",
+            namespace="prod",
+            limit_type="namespace",
+            limit=50,
+            timeout=5.0,
+        )
+
+        assert "after 5" in str(error).lower()
+        assert error.timeout == 5.0
+        assert error.details["timeout"] == 5.0
+
+    def test_details_structure(self):
+        """Test that details contain all expected fields."""
+        error = BulkheadFullError(
+            tool_name="my_tool",
+            namespace="my_ns",
+            limit_type="global",
+            limit=100,
+            timeout=10.0,
+        )
+
+        assert error.details["tool_name"] == "my_tool"
+        assert error.details["namespace"] == "my_ns"
+        assert error.details["limit_type"] == "global"
+        assert error.details["limit"] == 100
+        assert error.details["timeout"] == 10.0
+
+
+class TestErrorInfoFromException:
+    """Tests for ErrorInfo.from_exception method (line 597)."""
+
+    def test_from_tool_processor_error(self):
+        """Test creating ErrorInfo from ToolProcessorError subclass."""
+        original_error = ToolNotFoundError("missing_tool")
+        error_info = ErrorInfo.from_exception(original_error)
+
+        assert error_info.code == ErrorCode.TOOL_NOT_FOUND
+        assert error_info.category == ErrorCategory.NOT_FOUND
+        assert "missing_tool" in error_info.message
+
+    def test_from_rate_limited_error(self):
+        """Test creating ErrorInfo from ToolRateLimitedError."""
+        original_error = ToolRateLimitedError("api_tool", retry_after=60.0)
+        error_info = ErrorInfo.from_exception(original_error)
+
+        assert error_info.code == ErrorCode.TOOL_RATE_LIMITED
+        assert error_info.category == ErrorCategory.RATE_LIMIT
+        assert error_info.retryable is True
+
+    def test_from_generic_exception(self):
+        """Test creating ErrorInfo from generic exception."""
+        original_error = ValueError("Something went wrong")
+        error_info = ErrorInfo.from_exception(original_error)
+
+        assert error_info.code == ErrorCode.TOOL_EXECUTION_FAILED
+        assert error_info.category == ErrorCategory.EXECUTION
+        assert error_info.message == "Something went wrong"
+        assert error_info.details["exception_type"] == "ValueError"
+
+
+class TestErrorInfoFromErrorString:
+    """Tests for ErrorInfo.from_error_string method (lines 620, 628, 636)."""
+
+    def test_rate_limit_pattern(self):
+        """Test parsing 'rate limit' error string."""
+        error_info = ErrorInfo.from_error_string(
+            "Tool hit rate limit, try again later",
+            tool_name="api_tool",
+        )
+
+        assert error_info.code == ErrorCode.TOOL_RATE_LIMITED
+        assert error_info.category == ErrorCategory.RATE_LIMIT
+        assert error_info.retryable is True
+        assert error_info.details["tool_name"] == "api_tool"
+
+    def test_circuit_open_pattern(self):
+        """Test parsing 'circuit open' error string."""
+        error_info = ErrorInfo.from_error_string(
+            "Circuit breaker is open for this service",
+            tool_name="failing_service",
+        )
+
+        assert error_info.code == ErrorCode.TOOL_CIRCUIT_OPEN
+        assert error_info.category == ErrorCategory.CIRCUIT_OPEN
+        assert error_info.retryable is True
+        assert error_info.details["tool_name"] == "failing_service"
+
+    def test_bulkhead_pattern(self):
+        """Test parsing 'bulkhead' error string."""
+        error_info = ErrorInfo.from_error_string(
+            "Bulkhead capacity exceeded",
+            tool_name="busy_tool",
+        )
+
+        assert error_info.code == ErrorCode.BULKHEAD_FULL
+        assert error_info.category == ErrorCategory.BULKHEAD_FULL
+        assert error_info.retryable is True
+
+    def test_concurrency_pattern(self):
+        """Test parsing 'concurrency' error string."""
+        error_info = ErrorInfo.from_error_string(
+            "Concurrency limit reached",
+            tool_name="limited_tool",
+        )
+
+        assert error_info.code == ErrorCode.BULKHEAD_FULL
+        assert error_info.category == ErrorCategory.BULKHEAD_FULL
+
+    def test_without_tool_name(self):
+        """Test parsing error string without tool name."""
+        error_info = ErrorInfo.from_error_string("Rate limit exceeded")
+
+        assert error_info.code == ErrorCode.TOOL_RATE_LIMITED
+        assert error_info.details == {}

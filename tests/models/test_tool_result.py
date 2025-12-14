@@ -186,3 +186,213 @@ def test_str_representation_error():
     assert "example_tool" in str_repr
     assert "error" in str_repr
     assert "Something went wrong" in str_repr
+
+
+class TestToolResultErrorInfo:
+    """Tests for structured error info handling in ToolResult."""
+
+    def test_error_info_populates_error_string(self):
+        """Test that error_info populates error string when error is None (line 109)."""
+        from chuk_tool_processor.core.exceptions import ErrorCategory, ErrorCode, ErrorInfo
+
+        error_info = ErrorInfo(
+            code=ErrorCode.TOOL_RATE_LIMITED,
+            category=ErrorCategory.RATE_LIMIT,
+            message="Rate limited",
+            retryable=True,
+            retry_after_ms=5000,
+        )
+
+        res = ToolResult(tool="test", result=None, error_info=error_info)
+
+        # error should be populated from error_info.message
+        assert res.error == "Rate limited"
+        assert res.error_info == error_info
+
+    def test_retryable_property_with_error_info(self):
+        """Test retryable property when error_info is present (lines 133-135)."""
+        from chuk_tool_processor.core.exceptions import ErrorCategory, ErrorCode, ErrorInfo
+
+        # Retryable error
+        error_info = ErrorInfo(
+            code=ErrorCode.TOOL_RATE_LIMITED,
+            category=ErrorCategory.RATE_LIMIT,
+            message="Rate limited",
+            retryable=True,
+        )
+        res = ToolResult(tool="test", result=None, error_info=error_info)
+        assert res.retryable is True
+
+        # Non-retryable error
+        error_info_not_retryable = ErrorInfo(
+            code=ErrorCode.TOOL_VALIDATION_ERROR,
+            category=ErrorCategory.VALIDATION,
+            message="Validation failed",
+            retryable=False,
+        )
+        res2 = ToolResult(tool="test", result=None, error_info=error_info_not_retryable)
+        assert res2.retryable is False
+
+    def test_retryable_property_no_error(self):
+        """Test retryable property returns True when no error (line 134)."""
+        res = ToolResult(tool="test", result="ok")
+        assert res.retryable is True
+
+    def test_retry_after_ms_property(self):
+        """Test retry_after_ms property (lines 145-147)."""
+        from chuk_tool_processor.core.exceptions import ErrorCategory, ErrorCode, ErrorInfo
+
+        # With retry_after_ms
+        error_info = ErrorInfo(
+            code=ErrorCode.TOOL_RATE_LIMITED,
+            category=ErrorCategory.RATE_LIMIT,
+            message="Rate limited",
+            retryable=True,
+            retry_after_ms=10000,
+        )
+        res = ToolResult(tool="test", result=None, error_info=error_info)
+        assert res.retry_after_ms == 10000
+
+        # Without error_info
+        res2 = ToolResult(tool="test", result="ok")
+        assert res2.retry_after_ms is None
+
+    def test_error_category_property(self):
+        """Test error_category property (lines 157-159)."""
+        from chuk_tool_processor.core.exceptions import ErrorCategory, ErrorCode, ErrorInfo
+
+        error_info = ErrorInfo(
+            code=ErrorCode.TOOL_CIRCUIT_OPEN,
+            category=ErrorCategory.CIRCUIT_OPEN,
+            message="Circuit open",
+            retryable=True,
+        )
+        res = ToolResult(tool="test", result=None, error_info=error_info)
+        assert res.error_category == ErrorCategory.CIRCUIT_OPEN
+
+        # Without error_info
+        res2 = ToolResult(tool="test", result="ok")
+        assert res2.error_category is None
+
+    def test_error_code_property(self):
+        """Test error_code property (lines 169-171)."""
+        from chuk_tool_processor.core.exceptions import ErrorCategory, ErrorCode, ErrorInfo
+
+        error_info = ErrorInfo(
+            code=ErrorCode.TOOL_TIMEOUT,
+            category=ErrorCategory.TIMEOUT,
+            message="Timeout",
+            retryable=True,
+        )
+        res = ToolResult(tool="test", result=None, error_info=error_info)
+        assert res.error_code == ErrorCode.TOOL_TIMEOUT
+
+        # Without error_info
+        res2 = ToolResult(tool="test", result="ok")
+        assert res2.error_code is None
+
+    @pytest.mark.asyncio
+    async def test_to_dict_with_error_info(self):
+        """Test to_dict includes error_info when present (line 195)."""
+        from chuk_tool_processor.core.exceptions import ErrorCategory, ErrorCode, ErrorInfo
+
+        error_info = ErrorInfo(
+            code=ErrorCode.TOOL_RATE_LIMITED,
+            category=ErrorCategory.RATE_LIMIT,
+            message="Rate limited",
+            retryable=True,
+            retry_after_ms=5000,
+        )
+        res = ToolResult(tool="test", result=None, error_info=error_info)
+
+        result_dict = await res.to_dict()
+
+        assert "error_info" in result_dict
+        assert result_dict["error_info"]["code"] == "TOOL_RATE_LIMITED"
+        assert result_dict["error_info"]["category"] == "rate_limit"
+        assert result_dict["error_info"]["retryable"] is True
+        assert result_dict["error_info"]["retry_after_ms"] == 5000
+
+    @pytest.mark.asyncio
+    async def test_from_dict_with_error_info(self):
+        """Test from_dict deserializes error_info dict (line 222)."""
+        data = {
+            "id": "result-123",
+            "tool": "my_tool",
+            "result": None,
+            "error": "Rate limited",
+            "error_info": {
+                "code": "TOOL_RATE_LIMITED",
+                "category": "rate_limit",
+                "message": "Rate limited",
+                "retryable": True,
+                "retry_after_ms": 5000,
+                "details": {},
+            },
+            "start_time": "2024-01-01T12:00:00",
+            "end_time": "2024-01-01T12:00:05",
+            "machine": "localhost",
+            "pid": 5678,
+            "cached": False,
+            "attempts": 1,
+        }
+
+        res = await ToolResult.from_dict(data)
+
+        assert res.error_info is not None
+        assert res.error_info.retryable is True
+        assert res.error_info.retry_after_ms == 5000
+
+    def test_create_error_with_string(self):
+        """Test create_error with string error (lines 267-268)."""
+        res = ToolResult.create_error(
+            tool="test_tool",
+            error="Something went wrong",
+            attempts=3,
+        )
+
+        assert res.tool == "test_tool"
+        assert res.error == "Something went wrong"
+        assert res.error_info is not None
+        assert res.attempts == 3
+        assert res.result is None
+
+    def test_create_error_with_exception(self):
+        """Test create_error with exception."""
+        from chuk_tool_processor.core.exceptions import ToolRateLimitedError
+
+        exc = ToolRateLimitedError("api_tool", retry_after=10.0)
+
+        res = ToolResult.create_error(
+            tool="api_tool",
+            error=exc,
+            call_id="call-123",
+        )
+
+        assert res.tool == "api_tool"
+        assert res.error_info is not None
+        assert res.call_id == "call-123"
+        # Error string should be populated from exception
+        assert "api_tool" in res.error
+
+    def test_create_error_with_custom_timestamps(self):
+        """Test create_error with custom start/end times."""
+        from datetime import datetime
+
+        start = datetime(2024, 1, 1, 12, 0, 0)
+        end = datetime(2024, 1, 1, 12, 0, 10)
+
+        res = ToolResult.create_error(
+            tool="test",
+            error="Failed",
+            start_time=start,
+            end_time=end,
+            machine="custom-host",
+            pid=9999,
+        )
+
+        assert res.start_time == start
+        assert res.end_time == end
+        assert res.machine == "custom-host"
+        assert res.pid == 9999
+        assert res.duration == 10.0

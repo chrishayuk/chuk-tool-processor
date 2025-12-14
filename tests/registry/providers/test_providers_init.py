@@ -226,3 +226,145 @@ async def test_cache_key_with_empty_kwargs():
     # Getting again should return same instance
     registry2 = await get_registry(provider_type="memory")
     assert registry is registry2
+
+
+@pytest.mark.asyncio
+async def test_get_registry_redis_provider():
+    """Test creating redis provider - lines 74-84."""
+    await clear_registry_cache()
+
+    from unittest.mock import AsyncMock, MagicMock
+
+    mock_registry = MagicMock()
+    mock_create = AsyncMock(return_value=mock_registry)
+
+    # Create a mock module with the function
+    mock_redis_module = MagicMock()
+    mock_redis_module.create_redis_registry = mock_create
+
+    import sys
+
+    # Insert our mock module before the import happens
+    sys.modules["chuk_tool_processor.registry.providers.redis"] = mock_redis_module
+
+    try:
+        registry = await get_registry(
+            provider_type="redis",
+            redis_url="redis://test:6379/0",
+            key_prefix="test_prefix",
+            local_cache_ttl=30.0,
+        )
+        assert registry is mock_registry
+
+        # Verify the function was called with our kwargs
+        mock_create.assert_called_once_with(
+            redis_url="redis://test:6379/0",
+            key_prefix="test_prefix",
+            local_cache_ttl=30.0,
+        )
+    finally:
+        # Clean up
+        del sys.modules["chuk_tool_processor.registry.providers.redis"]
+
+
+@pytest.mark.asyncio
+async def test_get_registry_redis_with_defaults():
+    """Test creating redis provider with default kwargs - lines 77-79."""
+    await clear_registry_cache()
+
+    from unittest.mock import AsyncMock, MagicMock
+
+    mock_registry = MagicMock()
+    mock_create = AsyncMock(return_value=mock_registry)
+
+    # Create a mock module with the function
+    mock_redis_module = MagicMock()
+    mock_redis_module.create_redis_registry = mock_create
+
+    import sys
+
+    # Insert our mock module before the import happens
+    sys.modules["chuk_tool_processor.registry.providers.redis"] = mock_redis_module
+
+    try:
+        # Call without any kwargs - should use defaults
+        registry = await get_registry(provider_type="redis")
+        assert registry is mock_registry
+
+        # Verify defaults were passed
+        mock_create.assert_called_once_with(
+            redis_url="redis://localhost:6379/0",
+            key_prefix="chuk",
+            local_cache_ttl=60.0,
+        )
+    finally:
+        # Clean up
+        del sys.modules["chuk_tool_processor.registry.providers.redis"]
+
+
+@pytest.mark.asyncio
+async def test_get_registry_double_check_cache_hit():
+    """Test double-check pattern when cache is hit after lock - line 66."""
+    await clear_registry_cache()
+
+    from chuk_tool_processor.registry.providers import _REGISTRY_CACHE, _REGISTRY_LOCKS
+
+    # Pre-populate the cache key and lock to simulate race condition
+    cache_key = f"memory:{hash(frozenset({}.items()))}"
+    _REGISTRY_LOCKS[cache_key] = asyncio.Lock()
+
+    # Pre-populate cache with a registry
+    pre_cached_registry = InMemoryToolRegistry()
+    _REGISTRY_CACHE[cache_key] = pre_cached_registry
+
+    # Now call get_registry - it should hit the first cache check (line 55-56)
+    registry = await get_registry(provider_type="memory")
+
+    # Should get the pre-cached instance
+    assert registry is pre_cached_registry
+
+
+@pytest.mark.asyncio
+async def test_get_registry_double_check_inside_lock():
+    """Test double-check pattern inside the lock - line 65-66.
+
+    This tests the scenario where another coroutine populates the cache
+    while we're waiting for the lock.
+    """
+    await clear_registry_cache()
+
+    from chuk_tool_processor.registry.providers import _REGISTRY_CACHE, _REGISTRY_LOCKS
+
+    cache_key = f"memory:{hash(frozenset({}.items()))}"
+
+    # Create a lock that we'll hold
+    lock = asyncio.Lock()
+    _REGISTRY_LOCKS[cache_key] = lock
+
+    pre_cached_registry = InMemoryToolRegistry()
+    got_result = asyncio.Event()
+
+    async def first_getter():
+        """Hold the lock and populate cache after a delay."""
+        async with lock:
+            # Simulate creating registry
+            await asyncio.sleep(0.05)
+            _REGISTRY_CACHE[cache_key] = pre_cached_registry
+            got_result.set()
+
+    async def second_getter():
+        """Wait for first getter to start, then try to get registry."""
+        # Wait a bit for first getter to acquire the lock
+        await asyncio.sleep(0.01)
+        # This should wait for lock, then hit the double-check cache
+        return await get_registry(provider_type="memory")
+
+    # Start both concurrently
+    task1 = asyncio.create_task(first_getter())
+    task2 = asyncio.create_task(second_getter())
+
+    await task1
+    result = await task2
+
+    # Second getter should have gotten the pre-cached registry
+    assert result is pre_cached_registry

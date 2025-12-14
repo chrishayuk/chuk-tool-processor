@@ -370,8 +370,8 @@ def make_pydantic_tool_compatible(cls: type, tool_name: str) -> type:
 
         cls.tool_name = property(tool_name_getter)
 
-    # Add serialization methods
-    if not hasattr(cls, "__getstate__"):
+    # Add serialization methods (check __dict__ to avoid inheriting from object)
+    if "__getstate__" not in cls.__dict__:
 
         def __getstate__(self):
             try:
@@ -389,7 +389,7 @@ def make_pydantic_tool_compatible(cls: type, tool_name: str) -> type:
 
         cls.__getstate__ = __getstate__
 
-    if not hasattr(cls, "__setstate__"):
+    if "__setstate__" not in cls.__dict__:
 
         def __setstate__(self, state):
             if isinstance(state, dict):

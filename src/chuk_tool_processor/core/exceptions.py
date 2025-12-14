@@ -1,7 +1,21 @@
 # chuk_tool_processor/exceptions.py
+"""
+Structured error taxonomy for tool execution.
+
+This module provides machine-readable error codes and structured error types
+that enable planners to make intelligent retry and fallback decisions.
+"""
+
+from __future__ import annotations
+
 from difflib import get_close_matches
 from enum import Enum
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+
+from pydantic import BaseModel, ConfigDict, Field
+
+if TYPE_CHECKING:
+    pass  # For future type hints if needed
 
 
 class ErrorCode(str, Enum):
@@ -25,6 +39,9 @@ class ErrorCode(str, Enum):
     TOOL_RATE_LIMITED = "TOOL_RATE_LIMITED"
     TOOL_CIRCUIT_OPEN = "TOOL_CIRCUIT_OPEN"
 
+    # Bulkhead errors
+    BULKHEAD_FULL = "BULKHEAD_FULL"
+
     # Parser errors
     PARSER_ERROR = "PARSER_ERROR"
     PARSER_INVALID_FORMAT = "PARSER_INVALID_FORMAT"
@@ -40,6 +57,95 @@ class ErrorCode(str, Enum):
     CONFIGURATION_ERROR = "CONFIGURATION_ERROR"
 
 
+class ErrorCategory(str, Enum):
+    """
+    High-level error categories for planner decision-making.
+
+    These categories help planners distinguish between different failure modes
+    and make appropriate decisions about retries, fallbacks, and backpressure.
+
+    Categories:
+        RATE_LIMIT: Too many requests - slow down and retry after delay
+        CIRCUIT_OPEN: Service unhealthy - use fallback or wait for recovery
+        BULKHEAD_FULL: Concurrency limit hit - backpressure signal
+        TIMEOUT: Operation took too long - may retry with longer timeout
+        VALIDATION: Bad input/output - do not retry, fix the request
+        NOT_FOUND: Tool doesn't exist - do not retry
+        EXECUTION: Tool logic failed - may retry if transient
+        CANCELLED: Operation cancelled - do not retry
+        CONNECTION: Network/transport error - may retry
+        CONFIGURATION: System misconfigured - do not retry
+    """
+
+    RATE_LIMIT = "rate_limit"
+    CIRCUIT_OPEN = "circuit_open"
+    BULKHEAD_FULL = "bulkhead_full"
+    TIMEOUT = "timeout"
+    VALIDATION = "validation"
+    NOT_FOUND = "not_found"
+    EXECUTION = "execution"
+    CANCELLED = "cancelled"
+    CONNECTION = "connection"
+    CONFIGURATION = "configuration"
+
+
+# Mapping from ErrorCode to ErrorCategory for automatic categorization
+ERROR_CODE_TO_CATEGORY: dict[ErrorCode, ErrorCategory] = {
+    ErrorCode.TOOL_NOT_FOUND: ErrorCategory.NOT_FOUND,
+    ErrorCode.TOOL_REGISTRATION_FAILED: ErrorCategory.CONFIGURATION,
+    ErrorCode.TOOL_EXECUTION_FAILED: ErrorCategory.EXECUTION,
+    ErrorCode.TOOL_TIMEOUT: ErrorCategory.TIMEOUT,
+    ErrorCode.TOOL_CANCELLED: ErrorCategory.CANCELLED,
+    ErrorCode.TOOL_VALIDATION_ERROR: ErrorCategory.VALIDATION,
+    ErrorCode.TOOL_ARGUMENT_ERROR: ErrorCategory.VALIDATION,
+    ErrorCode.TOOL_RESULT_ERROR: ErrorCategory.VALIDATION,
+    ErrorCode.TOOL_RATE_LIMITED: ErrorCategory.RATE_LIMIT,
+    ErrorCode.TOOL_CIRCUIT_OPEN: ErrorCategory.CIRCUIT_OPEN,
+    ErrorCode.BULKHEAD_FULL: ErrorCategory.BULKHEAD_FULL,
+    ErrorCode.PARSER_ERROR: ErrorCategory.VALIDATION,
+    ErrorCode.PARSER_INVALID_FORMAT: ErrorCategory.VALIDATION,
+    ErrorCode.MCP_CONNECTION_FAILED: ErrorCategory.CONNECTION,
+    ErrorCode.MCP_TRANSPORT_ERROR: ErrorCategory.CONNECTION,
+    ErrorCode.MCP_SERVER_ERROR: ErrorCategory.EXECUTION,
+    ErrorCode.MCP_TIMEOUT: ErrorCategory.TIMEOUT,
+    ErrorCode.RESOURCE_EXHAUSTED: ErrorCategory.BULKHEAD_FULL,
+    ErrorCode.CONFIGURATION_ERROR: ErrorCategory.CONFIGURATION,
+}
+
+
+# Categories that are generally retryable (after appropriate delay)
+RETRYABLE_CATEGORIES: frozenset[ErrorCategory] = frozenset(
+    {
+        ErrorCategory.RATE_LIMIT,
+        ErrorCategory.CIRCUIT_OPEN,  # Retryable after reset_timeout
+        ErrorCategory.BULKHEAD_FULL,  # Retryable after backpressure clears
+        ErrorCategory.TIMEOUT,
+        ErrorCategory.EXECUTION,
+        ErrorCategory.CONNECTION,
+    }
+)
+
+# Categories that should never be retried
+NON_RETRYABLE_CATEGORIES: frozenset[ErrorCategory] = frozenset(
+    {
+        ErrorCategory.VALIDATION,
+        ErrorCategory.NOT_FOUND,
+        ErrorCategory.CANCELLED,
+        ErrorCategory.CONFIGURATION,
+    }
+)
+
+
+def is_retryable_category(category: ErrorCategory) -> bool:
+    """Check if an error category is generally retryable."""
+    return category in RETRYABLE_CATEGORIES
+
+
+def get_category_for_code(code: ErrorCode) -> ErrorCategory:
+    """Get the error category for a given error code."""
+    return ERROR_CODE_TO_CATEGORY.get(code, ErrorCategory.EXECUTION)
+
+
 class ToolProcessorError(Exception):
     """Base exception for all tool processor errors with machine-readable codes."""
 
@@ -49,18 +155,44 @@ class ToolProcessorError(Exception):
         code: ErrorCode | None = None,
         details: dict[str, Any] | None = None,
         original_error: Exception | None = None,
+        retry_after_ms: int | None = None,
     ):
         super().__init__(message)
         self.code = code or ErrorCode.TOOL_EXECUTION_FAILED
         self.details = details or {}
         self.original_error = original_error
+        self._retry_after_ms = retry_after_ms
+
+    @property
+    def category(self) -> ErrorCategory:
+        """Get the high-level error category for this error."""
+        return get_category_for_code(self.code)
+
+    @property
+    def retryable(self) -> bool:
+        """Check if this error is generally retryable."""
+        return is_retryable_category(self.category)
+
+    @property
+    def retry_after_ms(self) -> int | None:
+        """
+        Get the suggested retry delay in milliseconds.
+
+        Returns None if no specific delay is suggested.
+        For rate limits and circuit breakers, this provides
+        a hint about when to retry.
+        """
+        return self._retry_after_ms
 
     def to_dict(self) -> dict[str, Any]:
         """Convert exception to a structured dictionary for logging/monitoring."""
         result = {
             "error": self.__class__.__name__,
             "code": self.code.value,
+            "category": self.category.value,
             "message": str(self),
+            "retryable": self.retryable,
+            "retry_after_ms": self.retry_after_ms,
             "details": self.details,
         }
         if self.original_error:
@@ -69,6 +201,22 @@ class ToolProcessorError(Exception):
                 "message": str(self.original_error),
             }
         return result
+
+    def to_error_info(self) -> ErrorInfo:
+        """
+        Convert this exception to an ErrorInfo for ToolResult.
+
+        This enables structured error information to flow through
+        the ToolResult without losing type information.
+        """
+        return ErrorInfo(
+            code=self.code,
+            category=self.category,
+            message=str(self),
+            retryable=self.retryable,
+            retry_after_ms=self.retry_after_ms,
+            details=self.details,
+        )
 
 
 class ToolNotFoundError(ToolProcessorError):
@@ -229,17 +377,30 @@ class ToolRateLimitedError(ToolProcessorError):
         tool_name: str,
         retry_after: float | None = None,
         limit: int | None = None,
+        period: float | None = None,
     ):
         self.tool_name = tool_name
         self.retry_after = retry_after
         self.limit = limit
+        self.period = period
         message = f"Tool '{tool_name}' rate limited"
         if retry_after:
             message += f" (retry after {retry_after}s)"
+
+        # Convert retry_after to milliseconds for structured error info
+        retry_after_ms = int(retry_after * 1000) if retry_after else None
+
         super().__init__(
             message,
             code=ErrorCode.TOOL_RATE_LIMITED,
-            details={"tool_name": tool_name, "retry_after": retry_after, "limit": limit},
+            details={
+                "tool_name": tool_name,
+                "retry_after": retry_after,
+                "retry_after_ms": retry_after_ms,
+                "limit": limit,
+                "period": period,
+            },
+            retry_after_ms=retry_after_ms,
         )
 
 
@@ -258,10 +419,20 @@ class ToolCircuitOpenError(ToolProcessorError):
         message = f"Tool '{tool_name}' circuit breaker is open (failures: {failure_count})"
         if reset_timeout:
             message += f" (reset in {reset_timeout}s)"
+
+        # Convert reset_timeout to milliseconds for structured error info
+        retry_after_ms = int(reset_timeout * 1000) if reset_timeout else None
+
         super().__init__(
             message,
             code=ErrorCode.TOOL_CIRCUIT_OPEN,
-            details={"tool_name": tool_name, "failure_count": failure_count, "reset_timeout": reset_timeout},
+            details={
+                "tool_name": tool_name,
+                "failure_count": failure_count,
+                "reset_timeout": reset_timeout,
+                "retry_after_ms": retry_after_ms,
+            },
+            retry_after_ms=retry_after_ms,
         )
 
 
@@ -306,3 +477,215 @@ class MCPTimeoutError(MCPError):
             server_name=server_name,
             details={"operation": operation, "timeout": timeout},
         )
+
+
+class BulkheadFullError(ToolProcessorError):
+    """
+    Raised when a bulkhead cannot acquire a slot within timeout.
+
+    This indicates backpressure - the system is at capacity for this
+    tool/namespace/global limit.
+    """
+
+    def __init__(
+        self,
+        tool_name: str,
+        namespace: str = "default",
+        limit_type: str = "tool",
+        limit: int = 0,
+        timeout: float | None = None,
+    ):
+        self.tool_name = tool_name
+        self.namespace = namespace
+        self.limit_type = limit_type
+        self.limit = limit
+        self.timeout = timeout
+
+        message = f"Bulkhead full for '{tool_name}' ({limit_type} limit: {limit})"
+        if timeout:
+            message += f" after {timeout}s timeout"
+
+        super().__init__(
+            message,
+            code=ErrorCode.BULKHEAD_FULL,
+            details={
+                "tool_name": tool_name,
+                "namespace": namespace,
+                "limit_type": limit_type,
+                "limit": limit,
+                "timeout": timeout,
+            },
+        )
+
+
+# ---------------------------------------------------------------------------
+# ErrorInfo: Structured error information for ToolResult (Pydantic model)
+# ---------------------------------------------------------------------------
+
+
+class ErrorInfo(BaseModel):
+    """
+    Structured error information for ToolResult.
+
+    This Pydantic model provides machine-readable error details that enable
+    planners to make intelligent decisions about retries, fallbacks, and
+    backpressure.
+
+    Example usage in a planner:
+
+        result = await processor.process(calls)
+        for r in result:
+            if r.error_info:
+                if r.error_info.category == ErrorCategory.RATE_LIMIT:
+                    await asyncio.sleep(r.error_info.retry_after_ms / 1000)
+                    return await retry()
+                elif r.error_info.category == ErrorCategory.CIRCUIT_OPEN:
+                    return await use_fallback_tool()
+                elif not r.error_info.retryable:
+                    return await report_permanent_failure()
+
+    Attributes:
+        code: Machine-readable error code (ErrorCode enum)
+        category: High-level error category for decision-making
+        message: Human-readable error message
+        retryable: Whether this error is generally retryable
+        retry_after_ms: Suggested delay before retry (milliseconds)
+        details: Additional structured error context
+    """
+
+    model_config = ConfigDict(
+        extra="ignore",
+        frozen=True,  # Immutable for safety
+        use_enum_values=False,  # Keep enums as enums, not strings
+    )
+
+    code: ErrorCode = Field(
+        ...,
+        description="Machine-readable error code",
+    )
+    category: ErrorCategory = Field(
+        ...,
+        description="High-level error category for planner decision-making",
+    )
+    message: str = Field(
+        ...,
+        description="Human-readable error message",
+    )
+    retryable: bool = Field(
+        default=True,
+        description="Whether this error is generally retryable",
+    )
+    retry_after_ms: int | None = Field(
+        default=None,
+        ge=0,
+        description="Suggested delay before retry in milliseconds",
+    )
+    details: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Additional structured error context",
+    )
+
+    @classmethod
+    def from_exception(cls, exc: Exception) -> ErrorInfo:
+        """
+        Create ErrorInfo from any exception.
+
+        For ToolProcessorError subclasses, extracts structured information.
+        For other exceptions, creates a generic execution error.
+        """
+        if isinstance(exc, ToolProcessorError):
+            return exc.to_error_info()
+
+        # Generic exception - wrap as execution error
+        return cls(
+            code=ErrorCode.TOOL_EXECUTION_FAILED,
+            category=ErrorCategory.EXECUTION,
+            message=str(exc),
+            retryable=True,
+            details={"exception_type": type(exc).__name__},
+        )
+
+    @classmethod
+    def from_error_string(cls, error: str, tool_name: str | None = None) -> ErrorInfo:
+        """
+        Create ErrorInfo by parsing an error string.
+
+        This is a best-effort parser for legacy error strings that attempts
+        to extract structured information. Used for backwards compatibility.
+        """
+        error_lower = error.lower()
+
+        # Detect error category from string patterns
+        if "rate limit" in error_lower:
+            return cls(
+                code=ErrorCode.TOOL_RATE_LIMITED,
+                category=ErrorCategory.RATE_LIMIT,
+                message=error,
+                retryable=True,
+                details={"tool_name": tool_name} if tool_name else {},
+            )
+        elif "circuit" in error_lower and "open" in error_lower:
+            return cls(
+                code=ErrorCode.TOOL_CIRCUIT_OPEN,
+                category=ErrorCategory.CIRCUIT_OPEN,
+                message=error,
+                retryable=True,
+                details={"tool_name": tool_name} if tool_name else {},
+            )
+        elif "bulkhead" in error_lower or "concurrency" in error_lower:
+            return cls(
+                code=ErrorCode.BULKHEAD_FULL,
+                category=ErrorCategory.BULKHEAD_FULL,
+                message=error,
+                retryable=True,
+                details={"tool_name": tool_name} if tool_name else {},
+            )
+        elif "timeout" in error_lower or "timed out" in error_lower:
+            return cls(
+                code=ErrorCode.TOOL_TIMEOUT,
+                category=ErrorCategory.TIMEOUT,
+                message=error,
+                retryable=True,
+                details={"tool_name": tool_name} if tool_name else {},
+            )
+        elif "not found" in error_lower:
+            return cls(
+                code=ErrorCode.TOOL_NOT_FOUND,
+                category=ErrorCategory.NOT_FOUND,
+                message=error,
+                retryable=False,
+                details={"tool_name": tool_name} if tool_name else {},
+            )
+        elif "validation" in error_lower or "invalid" in error_lower:
+            return cls(
+                code=ErrorCode.TOOL_VALIDATION_ERROR,
+                category=ErrorCategory.VALIDATION,
+                message=error,
+                retryable=False,
+                details={"tool_name": tool_name} if tool_name else {},
+            )
+        elif "cancel" in error_lower:
+            return cls(
+                code=ErrorCode.TOOL_CANCELLED,
+                category=ErrorCategory.CANCELLED,
+                message=error,
+                retryable=False,
+                details={"tool_name": tool_name} if tool_name else {},
+            )
+        elif "connection" in error_lower or "connect" in error_lower:
+            return cls(
+                code=ErrorCode.MCP_CONNECTION_FAILED,
+                category=ErrorCategory.CONNECTION,
+                message=error,
+                retryable=True,
+                details={"tool_name": tool_name} if tool_name else {},
+            )
+        else:
+            # Default to generic execution error
+            return cls(
+                code=ErrorCode.TOOL_EXECUTION_FAILED,
+                category=ErrorCategory.EXECUTION,
+                message=error,
+                retryable=True,
+                details={"tool_name": tool_name} if tool_name else {},
+            )

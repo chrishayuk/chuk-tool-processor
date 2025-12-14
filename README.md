@@ -150,6 +150,7 @@ results = await processor.process(json_output)
 | **Rate Limiting** | Global and per-tool rate limits with sliding windows |
 | **Caching** | Result caching with TTL and SHA256-based idempotency keys |
 | **Circuit Breakers** | Prevent cascading failures with automatic recovery |
+| **Structured Errors** | Machine-readable error categories with retry hints for planners |
 
 ### Multi-Tenant & Isolation
 
@@ -160,6 +161,7 @@ results = await processor.process(json_output)
 | **Scoped Registries** | Isolated registries for multi-tenant apps and testing |
 | **ExecutionContext** | Request-scoped metadata propagation (user, tenant, tracing, deadlines) |
 | **Isolated Strategy** | Subprocess execution for untrusted code (zero crash blast radius) |
+| **Redis Registry** | Distributed tool registry for multi-process/multi-machine deployments |
 
 ### Advanced Scheduling
 
@@ -333,6 +335,41 @@ result = await middleware.call_tool("notion.search", {"query": "docs"})
 
 ---
 
+## Redis Registry (Distributed Deployments)
+
+For multi-process or multi-machine deployments, use the Redis-backed registry:
+
+```python
+from chuk_tool_processor import ToolProcessor
+from chuk_tool_processor.registry.providers.redis import create_redis_registry
+
+# Create distributed registry
+registry = await create_redis_registry(
+    redis_url="redis://localhost:6379/0",
+    key_prefix="myapp",  # Isolate keys per application/tenant
+)
+
+# Register tools (metadata shared across all processes)
+await registry.register_tool(Calculator, name="math.calculator")
+
+# Use with ToolProcessor
+async with ToolProcessor(registry=registry) as processor:
+    results = await processor.process(llm_output)
+```
+
+**Key features:**
+- Shared tool metadata across processes (each process registers the same tools locally)
+- Multi-tenant isolation via key prefixes
+- Deferred tool loading with Redis persistence
+- Automatic namespace tracking
+
+**Installation:**
+```bash
+pip install redis[hiredis]  # or: uv add redis[hiredis]
+```
+
+---
+
 ## Observability
 
 One-line setup for production monitoring:
@@ -356,6 +393,30 @@ setup_observability(
 - Zero code changes to your tools
 
 See [OBSERVABILITY.md](docs/OBSERVABILITY.md) for complete setup guide.
+
+---
+
+## Structured Error Handling
+
+Errors include machine-readable categories and retry hints for planner decision-making:
+
+```python
+from chuk_tool_processor.core.exceptions import ErrorCategory
+
+results = await processor.process(llm_output)
+for result in results:
+    if result.error_info:
+        match result.error_info.category:
+            case ErrorCategory.RATE_LIMIT:
+                await asyncio.sleep(result.retry_after_ms / 1000)
+                return await retry()
+            case ErrorCategory.CIRCUIT_OPEN:
+                return await use_fallback_tool()
+            case _ if not result.retryable:
+                return await report_permanent_failure()
+```
+
+See [ERRORS.md](docs/ERRORS.md) for complete error taxonomy.
 
 ---
 
@@ -388,6 +449,12 @@ python examples/02_production_features/production_patterns_demo.py
 
 # Runtime features (return order, pattern bulkheads, scheduling)
 python examples/02_production_features/runtime_features_demo.py
+
+# Structured error handling for planners
+python examples/02_production_features/structured_errors_demo.py
+
+# Redis registry for distributed deployments
+python examples/02_production_features/redis_registry_demo.py
 
 # Observability demo
 python examples/02_production_features/observability_demo.py
@@ -425,6 +492,9 @@ pip install chuk-tool-processor[observability]
 
 # With MCP support
 pip install chuk-tool-processor[mcp]
+
+# With Redis registry (distributed deployments)
+pip install chuk-tool-processor[redis]
 
 # With fast JSON (2-3x faster with orjson)
 pip install chuk-tool-processor[fast-json]

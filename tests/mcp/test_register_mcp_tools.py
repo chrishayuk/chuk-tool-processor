@@ -603,3 +603,308 @@ class TestUpdateMCPToolsStreamManager:
 
         # Should handle None tool gracefully
         assert count == 0
+
+
+class TestRegisterMCPToolsDeferredLoading:
+    """Tests for deferred loading functionality in register_mcp_tools."""
+
+    def _patch_registry(self, mock_registry):
+        """Convenience wrapper for patching registry."""
+        return patch(
+            "chuk_tool_processor.mcp.register_mcp_tools.ToolRegistryProvider.get_registry",
+            new=AsyncMock(return_value=mock_registry),
+        )
+
+    @pytest.fixture
+    def mock_registry_with_stream_manager_support(self):
+        """Mock registry that supports set_stream_manager."""
+        reg = Mock(spec=ToolRegistryInterface)
+        reg.register_tool = AsyncMock()
+        reg.registered_tools = []
+        reg.set_stream_manager = Mock()  # Add this method
+
+        async def track_registration(tool, name=None, namespace="default", metadata=None):
+            reg.registered_tools.append({"tool": tool, "name": name, "namespace": namespace, "metadata": metadata})
+
+        reg.register_tool.side_effect = track_registration
+        return reg
+
+    @pytest.fixture
+    def mock_stream_manager_with_tools(self):
+        """Mock stream manager with sample tools for deferred testing."""
+        mgr = Mock(spec=StreamManager)
+        mgr.get_all_tools = Mock(
+            return_value=[
+                {
+                    "name": "tool_a",
+                    "description": "First tool for testing deferred loading",
+                    "inputSchema": {"type": "object"},
+                },
+                {
+                    "name": "tool_b",
+                    "description": "Second tool that should be deferred",
+                    "inputSchema": {"type": "object"},
+                },
+                {
+                    "name": "tool_c",
+                    "description": "Third tool for search keywords",
+                    "inputSchema": {"type": "object"},
+                },
+            ]
+        )
+        return mgr
+
+    @pytest.mark.asyncio
+    async def test_registry_set_stream_manager_called(self, mock_registry_with_stream_manager_support):
+        """Test that set_stream_manager is called when registry supports it (line 70)."""
+        mgr = Mock(spec=StreamManager)
+        mgr.get_all_tools = Mock(return_value=[{"name": "test_tool", "description": "Test"}])
+
+        with self._patch_registry(mock_registry_with_stream_manager_support):
+            await register_mcp_tools(mgr, namespace="test_ns")
+
+        # Verify set_stream_manager was called
+        mock_registry_with_stream_manager_support.set_stream_manager.assert_called_once_with("test_ns", mgr)
+
+    @pytest.mark.asyncio
+    async def test_defer_loading_all_tools(
+        self, mock_registry_with_stream_manager_support, mock_stream_manager_with_tools
+    ):
+        """Test defer_loading=True defers all tools (lines 87, 98-102, 114, 122)."""
+        with self._patch_registry(mock_registry_with_stream_manager_support):
+            registered = await register_mcp_tools(
+                mock_stream_manager_with_tools,
+                namespace="deferred_ns",
+                defer_loading=True,
+            )
+
+        assert len(registered) == 3
+
+        # All tools should be deferred
+        for reg in mock_registry_with_stream_manager_support.registered_tools:
+            assert reg["metadata"]["defer_loading"] is True
+            # Should have search_keywords
+            assert "search_keywords" in reg["metadata"]
+            # Should have mcp_factory_params
+            assert "mcp_factory_params" in reg["metadata"]
+
+    @pytest.mark.asyncio
+    async def test_defer_loading_with_defer_all_except(
+        self, mock_registry_with_stream_manager_support, mock_stream_manager_with_tools
+    ):
+        """Test defer_loading=True with defer_all_except list (line 87)."""
+        with self._patch_registry(mock_registry_with_stream_manager_support):
+            registered = await register_mcp_tools(
+                mock_stream_manager_with_tools,
+                namespace="except_ns",
+                defer_loading=True,
+                defer_all_except=["tool_a"],  # tool_a should NOT be deferred
+            )
+
+        assert len(registered) == 3
+
+        registrations = mock_registry_with_stream_manager_support.registered_tools
+
+        # tool_a should NOT be deferred
+        tool_a_reg = next(r for r in registrations if r["name"] == "tool_a")
+        assert tool_a_reg["metadata"]["defer_loading"] is False
+
+        # tool_b and tool_c should be deferred
+        tool_b_reg = next(r for r in registrations if r["name"] == "tool_b")
+        assert tool_b_reg["metadata"]["defer_loading"] is True
+        assert "mcp_factory_params" in tool_b_reg["metadata"]
+
+        tool_c_reg = next(r for r in registrations if r["name"] == "tool_c")
+        assert tool_c_reg["metadata"]["defer_loading"] is True
+
+    @pytest.mark.asyncio
+    async def test_defer_only_specific_tools(
+        self, mock_registry_with_stream_manager_support, mock_stream_manager_with_tools
+    ):
+        """Test defer_only list to defer specific tools (line 90)."""
+        with self._patch_registry(mock_registry_with_stream_manager_support):
+            registered = await register_mcp_tools(
+                mock_stream_manager_with_tools,
+                namespace="defer_only_ns",
+                defer_loading=False,  # Default is not deferred
+                defer_only=["tool_b", "tool_c"],  # Only defer these
+            )
+
+        assert len(registered) == 3
+
+        registrations = mock_registry_with_stream_manager_support.registered_tools
+
+        # tool_a should NOT be deferred
+        tool_a_reg = next(r for r in registrations if r["name"] == "tool_a")
+        assert tool_a_reg["metadata"]["defer_loading"] is False
+        assert "mcp_factory_params" not in tool_a_reg["metadata"]
+
+        # tool_b and tool_c should be deferred
+        tool_b_reg = next(r for r in registrations if r["name"] == "tool_b")
+        assert tool_b_reg["metadata"]["defer_loading"] is True
+        assert "mcp_factory_params" in tool_b_reg["metadata"]
+
+        tool_c_reg = next(r for r in registrations if r["name"] == "tool_c")
+        assert tool_c_reg["metadata"]["defer_loading"] is True
+
+    @pytest.mark.asyncio
+    async def test_custom_search_keywords_function(self, mock_registry_with_stream_manager_support):
+        """Test custom search_keywords_fn (line 95)."""
+        mgr = Mock(spec=StreamManager)
+        mgr.get_all_tools = Mock(
+            return_value=[
+                {"name": "search_tool", "description": "A tool for searching", "inputSchema": {}},
+            ]
+        )
+
+        def custom_keywords_fn(tool_name, tool_def):
+            return ["custom", "keyword", tool_name.upper()]
+
+        with self._patch_registry(mock_registry_with_stream_manager_support):
+            await register_mcp_tools(
+                mgr,
+                namespace="custom_kw_ns",
+                defer_loading=True,
+                search_keywords_fn=custom_keywords_fn,
+            )
+
+        reg = mock_registry_with_stream_manager_support.registered_tools[0]
+        assert reg["metadata"]["search_keywords"] == ["custom", "keyword", "SEARCH_TOOL"]
+
+    @pytest.mark.asyncio
+    async def test_default_search_keywords_generation(self, mock_registry_with_stream_manager_support):
+        """Test default search keywords from name and description (lines 98-102)."""
+        mgr = Mock(spec=StreamManager)
+        mgr.get_all_tools = Mock(
+            return_value=[
+                {
+                    "name": "weather_checker",
+                    "description": "Get current weather forecast for any location worldwide",
+                    "inputSchema": {},
+                },
+            ]
+        )
+
+        with self._patch_registry(mock_registry_with_stream_manager_support):
+            await register_mcp_tools(
+                mgr,
+                namespace="default_kw_ns",
+                defer_loading=True,
+            )
+
+        reg = mock_registry_with_stream_manager_support.registered_tools[0]
+        keywords = reg["metadata"]["search_keywords"]
+
+        # Should contain tool name
+        assert "weather_checker" in keywords
+
+        # Should contain words from description longer than 3 chars
+        assert "current" in keywords
+        assert "weather" in keywords
+        assert "forecast" in keywords
+        assert "location" in keywords
+        assert "worldwide" in keywords
+
+        # Short words should not be included
+        assert "get" not in keywords
+        assert "for" not in keywords
+        assert "any" not in keywords
+
+    @pytest.mark.asyncio
+    async def test_search_keywords_limited_to_10(self, mock_registry_with_stream_manager_support):
+        """Test that search keywords are limited to 10 (line 114)."""
+        mgr = Mock(spec=StreamManager)
+        mgr.get_all_tools = Mock(
+            return_value=[
+                {
+                    "name": "verbose_tool",
+                    "description": "word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15",
+                    "inputSchema": {},
+                },
+            ]
+        )
+
+        with self._patch_registry(mock_registry_with_stream_manager_support):
+            await register_mcp_tools(
+                mgr,
+                namespace="limited_kw_ns",
+                defer_loading=True,
+            )
+
+        reg = mock_registry_with_stream_manager_support.registered_tools[0]
+        keywords = reg["metadata"]["search_keywords"]
+
+        # Should be limited to 10
+        assert len(keywords) <= 10
+
+    @pytest.mark.asyncio
+    async def test_icon_in_tool_definition(self, mock_registry_with_stream_manager_support):
+        """Test that icon field is preserved in metadata (line 118)."""
+        mgr = Mock(spec=StreamManager)
+        mgr.get_all_tools = Mock(
+            return_value=[
+                {
+                    "name": "icon_tool",
+                    "description": "Tool with an icon",
+                    "inputSchema": {},
+                    "icon": "https://example.com/icon.png",
+                },
+            ]
+        )
+
+        with self._patch_registry(mock_registry_with_stream_manager_support):
+            await register_mcp_tools(mgr, namespace="icon_ns")
+
+        reg = mock_registry_with_stream_manager_support.registered_tools[0]
+        assert reg["metadata"]["icon"] == "https://example.com/icon.png"
+
+    @pytest.mark.asyncio
+    async def test_mcp_factory_params_structure(self, mock_registry_with_stream_manager_support):
+        """Test MCPToolFactoryParams is correctly stored (line 122)."""
+        from chuk_tool_processor.mcp.mcp_tool import RecoveryConfig
+        from chuk_tool_processor.registry.metadata import MCPToolFactoryParams
+
+        mgr = Mock(spec=StreamManager)
+        mgr.get_all_tools = Mock(return_value=[{"name": "factory_tool", "description": "Test", "inputSchema": {}}])
+
+        custom_recovery = RecoveryConfig(max_retries=5, initial_backoff=2.0)
+
+        with self._patch_registry(mock_registry_with_stream_manager_support):
+            await register_mcp_tools(
+                mgr,
+                namespace="factory_ns",
+                defer_loading=True,
+                default_timeout=45.0,
+                enable_resilience=False,
+                recovery_config=custom_recovery,
+            )
+
+        reg = mock_registry_with_stream_manager_support.registered_tools[0]
+        factory_params = reg["metadata"]["mcp_factory_params"]
+
+        # Verify it's the correct type
+        assert isinstance(factory_params, MCPToolFactoryParams)
+
+        # Verify all params are correctly stored
+        assert factory_params.tool_name == "factory_tool"
+        assert factory_params.namespace == "factory_ns"
+        assert factory_params.default_timeout == 45.0
+        assert factory_params.enable_resilience is False
+        assert factory_params.recovery_config == custom_recovery
+
+    @pytest.mark.asyncio
+    async def test_tool_without_description_uses_default(self, mock_registry_with_stream_manager_support):
+        """Test that tools without description get a default one."""
+        mgr = Mock(spec=StreamManager)
+        mgr.get_all_tools = Mock(
+            return_value=[
+                {"name": "no_desc_tool", "inputSchema": {}},  # No description
+            ]
+        )
+
+        with self._patch_registry(mock_registry_with_stream_manager_support):
+            await register_mcp_tools(mgr, namespace="no_desc_ns")
+
+        reg = mock_registry_with_stream_manager_support.registered_tools[0]
+        # Should have default description
+        assert reg["metadata"]["description"] == "MCP tool • no_desc_tool"

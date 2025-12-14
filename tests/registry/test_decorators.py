@@ -2040,29 +2040,25 @@ class TestUncoveredLines:
         instance = enhanced()
         assert instance.tool_name == "no_init_regular"
 
-    def test_make_pydantic_compatible_line_312_326_unreachable(self):
-        """Lines 312-326 are UNREACHABLE: hasattr(cls, '__getstate__') always returns True.
+    def test_make_pydantic_compatible_adds_serialization_methods(self):
+        """Test that make_pydantic_tool_compatible adds __getstate__ and __setstate__.
 
-        All classes inherit __getstate__ from object, so the condition on line 310:
-            if not hasattr(cls, "__getstate__"):
-
-        is always False, making lines 312-326 dead code. This is a bug in the source code.
-        The condition should probably be:
-            if "__getstate__" not in cls.__dict__:
-
-        Since this is unreachable code, we cannot test it and should not count it toward coverage.
+        After the fix to use `'__getstate__' not in cls.__dict__` instead of
+        `not hasattr(cls, '__getstate__')`, the function now properly adds
+        serialization methods to classes.
         """
 
-        # Verify that hasattr always returns True for __getstate__
+        # Verify that hasattr always returns True for __getstate__ (inherited from object)
         class EmptyClass:
             pass
 
         assert hasattr(EmptyClass, "__getstate__")  # Inherited from object
         assert "__getstate__" not in EmptyClass.__dict__  # But not in __dict__
 
-        # The function won't add __getstate__ because hasattr returns True
+        # After the fix, the function should add __getstate__ since it's not in __dict__
         compatible = make_pydantic_tool_compatible(EmptyClass, "test")
-        assert "__getstate__" not in compatible.__dict__  # Still not in __dict__
+        assert "__getstate__" in compatible.__dict__  # Now in __dict__
+        assert "__setstate__" in compatible.__dict__  # Also added
 
     def test_all_missing_lines_comprehensive(self):
         """Comprehensive test to ensure all testable missing lines are covered."""
@@ -2142,4 +2138,179 @@ class TestUncoveredLines:
         enhanced6 = _add_subprocess_serialization_support(NoInitRegular, "no_init2")
         assert "__init__" in enhanced6.__dict__  # Lines 216-218
 
-        # Note: Lines 312-326 are unreachable code (see test_make_pydantic_compatible_line_312_326_unreachable)
+    def test_make_pydantic_compatible_getstate_setstate(self):
+        """Test make_pydantic_tool_compatible adds __getstate__ and __setstate__ (lines 376-404)."""
+        from chuk_tool_processor.registry.decorators import make_pydantic_tool_compatible
+
+        # Create a fresh class without __getstate__ or __setstate__ in __dict__
+        class FreshPydantic(BaseModel):
+            value: str = "test"
+
+        # Verify __getstate__ is not in __dict__ (it's inherited from object)
+        assert "__getstate__" not in FreshPydantic.__dict__
+        assert "__setstate__" not in FreshPydantic.__dict__
+
+        # Apply the function
+        compatible = make_pydantic_tool_compatible(FreshPydantic, "compat_test")
+
+        # Now __getstate__ and __setstate__ should be in __dict__
+        assert "__getstate__" in compatible.__dict__
+        assert "__setstate__" in compatible.__dict__
+
+        # Test the __getstate__ method
+        instance = compatible(value="hello")
+        state = instance.__getstate__()
+        assert "tool_name" in state
+        assert state["tool_name"] == "compat_test"
+
+        # Test the __setstate__ method
+        instance2 = compatible(value="world")
+        instance2.__setstate__({"tool_name": "restored", "value": "restored_value"})
+        assert instance2.__class__._tool_name == "restored"
+
+    def test_make_pydantic_compatible_getstate_with_dict_method(self):
+        """Test __getstate__ when model has dict method but not model_dump (Pydantic v1 compatibility)."""
+        from chuk_tool_processor.registry.decorators import make_pydantic_tool_compatible
+
+        # Create a class that has dict() but not model_dump()
+        class PydanticV1Like:
+            model_fields = {}
+
+            def __init__(self):
+                self.data = "test"
+
+            def dict(self):
+                return {"data": self.data, "source": "dict_method"}
+
+        compatible = make_pydantic_tool_compatible(PydanticV1Like, "v1_compat")
+        instance = compatible()
+
+        # __getstate__ should use dict() method
+        state = instance.__getstate__()
+        assert state.get("source") == "dict_method"
+        assert state["tool_name"] == "v1_compat"
+
+    def test_make_pydantic_compatible_getstate_fallback(self):
+        """Test __getstate__ fallback to __dict__ when no serialization method exists."""
+        from chuk_tool_processor.registry.decorators import make_pydantic_tool_compatible
+
+        # Create a class without model_dump or dict methods
+        class PlainClass:
+            def __init__(self):
+                self.plain_data = "plain"
+
+        compatible = make_pydantic_tool_compatible(PlainClass, "plain_compat")
+        instance = compatible()
+
+        # __getstate__ should fall back to __dict__.copy()
+        state = instance.__getstate__()
+        assert state.get("plain_data") == "plain"
+        assert state["tool_name"] == "plain_compat"
+
+    def test_make_pydantic_compatible_getstate_exception_fallback(self):
+        """Test __getstate__ falls back to __dict__ when model_dump raises exception."""
+        from chuk_tool_processor.registry.decorators import make_pydantic_tool_compatible
+
+        # Create a class where model_dump raises exception
+        class ExceptionClass:
+            def __init__(self):
+                self.exc_data = "exception_data"
+
+            def model_dump(self):
+                raise ValueError("Intentional error")
+
+        compatible = make_pydantic_tool_compatible(ExceptionClass, "exc_compat")
+        instance = compatible()
+
+        # __getstate__ should catch exception and use __dict__
+        state = instance.__getstate__()
+        assert state.get("exc_data") == "exception_data"
+        assert state["tool_name"] == "exc_compat"
+
+    def test_register_tool_dotted_name_extracts_namespace(self):
+        """Test register_tool with dotted name extracts namespace (lines 308-310)."""
+        from chuk_tool_processor.registry.decorators import (
+            _REGISTRATION_INFO,
+            register_tool,
+        )
+
+        # Clear previous registrations to get clean state
+        initial_count = len(_REGISTRATION_INFO)
+
+        @register_tool(name="myns.my_tool")
+        class DottedNameTool:
+            async def execute(self):
+                return "result"
+
+        # Find our registration
+        found = False
+        for cls, name, namespace, _metadata in _REGISTRATION_INFO[initial_count:]:
+            if cls.__name__ == "DottedNameTool":
+                assert name == "my_tool"
+                assert namespace == "myns"
+                found = True
+                break
+
+        assert found, "DottedNameTool registration not found"
+
+    def test_register_tool_with_search_keywords(self):
+        """Test register_tool with search_keywords (line 319)."""
+        from chuk_tool_processor.registry.decorators import (
+            _REGISTRATION_INFO,
+            register_tool,
+        )
+
+        initial_count = len(_REGISTRATION_INFO)
+
+        @register_tool(name="search_tool", search_keywords=["search", "find", "query"])
+        class SearchKeywordTool:
+            async def execute(self):
+                return "result"
+
+        # Find our registration and check metadata
+        for cls, _name, _namespace, metadata in _REGISTRATION_INFO[initial_count:]:
+            if cls.__name__ == "SearchKeywordTool":
+                assert metadata.get("search_keywords") == ["search", "find", "query"]
+                break
+
+    def test_register_tool_with_allowed_callers(self):
+        """Test register_tool with allowed_callers (line 321)."""
+        from chuk_tool_processor.registry.decorators import (
+            _REGISTRATION_INFO,
+            register_tool,
+        )
+
+        initial_count = len(_REGISTRATION_INFO)
+
+        @register_tool(name="caller_tool", allowed_callers=["claude", "programmatic"])
+        class CallerTool:
+            async def execute(self):
+                return "result"
+
+        # Find our registration and check metadata
+        for cls, _name, _namespace, metadata in _REGISTRATION_INFO[initial_count:]:
+            if cls.__name__ == "CallerTool":
+                assert metadata.get("allowed_callers") == ["claude", "programmatic"]
+                break
+
+    def test_register_tool_with_defer_loading_import_path(self):
+        """Test register_tool with defer_loading creates import_path (lines 325-327)."""
+        from chuk_tool_processor.registry.decorators import (
+            _REGISTRATION_INFO,
+            register_tool,
+        )
+
+        initial_count = len(_REGISTRATION_INFO)
+
+        @register_tool(name="deferred_tool", defer_loading=True)
+        class DeferredTool:
+            async def execute(self):
+                return "result"
+
+        # Find our registration and check import_path
+        for cls, _name, _namespace, metadata in _REGISTRATION_INFO[initial_count:]:
+            if cls.__name__ == "DeferredTool":
+                assert metadata.get("defer_loading") is True
+                assert "import_path" in metadata
+                assert metadata["import_path"].endswith("DeferredTool")
+                break

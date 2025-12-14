@@ -4,13 +4,71 @@ Complete reference for all error types and codes in CHUK Tool Processor.
 
 ## Overview
 
-CHUK Tool Processor uses **machine-readable error codes** for all errors. This allows integrators to branch logic reliably based on error type, making error handling predictable and testable.
+CHUK Tool Processor uses **machine-readable error codes** and **structured error categories** for all errors. This allows planners to make intelligent decisions about retries, fallbacks, and backpressure.
 
 All errors inherit from `ToolProcessorError` and include:
-- `code`: Machine-readable error code (enum)
+- `code`: Machine-readable error code (ErrorCode enum)
+- `category`: High-level error category (ErrorCategory enum)
 - `message`: Human-readable error message
+- `retryable`: Whether this error is generally retryable
+- `retry_after_ms`: Suggested delay before retry (milliseconds)
 - `details`: Additional structured error context
 - `to_dict()`: Method for serialization (logging, monitoring)
+- `to_error_info()`: Convert to `ErrorInfo` for ToolResult
+
+---
+
+## Structured Error Handling for Planners
+
+The `ToolResult` model includes structured error information via the `error_info` field:
+
+```python
+from chuk_tool_processor.core.exceptions import ErrorCategory
+
+results = await processor.process(calls)
+for result in results:
+    if result.error_info:
+        match result.error_info.category:
+            case ErrorCategory.RATE_LIMIT:
+                # Slow down and retry after delay
+                await asyncio.sleep(result.retry_after_ms / 1000)
+                return await retry()
+
+            case ErrorCategory.CIRCUIT_OPEN:
+                # Service unhealthy - use fallback
+                return await use_fallback_tool()
+
+            case ErrorCategory.BULKHEAD_FULL:
+                # System at capacity - backpressure
+                return await queue_for_later()
+
+            case ErrorCategory.TIMEOUT:
+                # Retry with longer timeout
+                return await retry(timeout=result.error_info.details.get("timeout", 30) * 2)
+
+            case _ if not result.retryable:
+                # Permanent failure - don't retry
+                return await report_permanent_failure()
+```
+
+---
+
+## Error Categories
+
+High-level categories for planner decision-making:
+
+| Category | Description | Retryable | Action |
+|----------|-------------|-----------|--------|
+| `RATE_LIMIT` | Too many requests | ✅ Yes (after delay) | Wait for `retry_after_ms`, then retry |
+| `CIRCUIT_OPEN` | Service unhealthy | ✅ Yes (after delay) | Use fallback or wait for recovery |
+| `BULKHEAD_FULL` | Concurrency limit hit | ✅ Yes (after delay) | Backpressure signal, queue work |
+| `TIMEOUT` | Operation took too long | ✅ Yes | Retry, possibly with longer timeout |
+| `EXECUTION` | Tool logic failed | ✅ Yes (if transient) | Retry if error is transient |
+| `CONNECTION` | Network/transport error | ✅ Yes | Retry with backoff |
+| `VALIDATION` | Bad input/output | ❌ No | Fix the request, don't retry |
+| `NOT_FOUND` | Tool doesn't exist | ❌ No | Check tool name, don't retry |
+| `CANCELLED` | Operation cancelled | ❌ No | Don't retry |
+| `CONFIGURATION` | System misconfigured | ❌ No | Fix configuration |
 
 ---
 
@@ -45,6 +103,7 @@ All errors inherit from `ToolProcessorError` and include:
 |------------|----------------|----------------|
 | `TOOL_RATE_LIMITED` | `ToolRateLimitedError` | Tool call rate limit exceeded |
 | `TOOL_CIRCUIT_OPEN` | `ToolCircuitOpenError` | Circuit breaker is open (too many failures) |
+| `BULKHEAD_FULL` | `BulkheadFullError` | Concurrency limit exceeded |
 
 ### Parser Errors
 
@@ -157,6 +216,59 @@ for result in results:
             print(f"Failed after {result.attempts} attempts")
     else:
         print(f"Tool '{result.tool}' succeeded: {result.result}")
+```
+
+---
+
+## ErrorInfo Model Reference
+
+The `ErrorInfo` Pydantic model provides structured error information in `ToolResult`:
+
+```python
+from chuk_tool_processor.core.exceptions import ErrorInfo, ErrorCode, ErrorCategory
+
+class ErrorInfo(BaseModel):
+    """Structured error information for ToolResult."""
+
+    code: ErrorCode          # Machine-readable error code
+    category: ErrorCategory  # High-level category for decisions
+    message: str             # Human-readable error message
+    retryable: bool          # Whether error is generally retryable
+    retry_after_ms: int | None  # Suggested retry delay (milliseconds)
+    details: dict[str, Any]  # Additional context
+```
+
+### Creating ErrorInfo
+
+```python
+# From an exception
+from chuk_tool_processor.core.exceptions import ErrorInfo, ToolCircuitOpenError
+
+error = ToolCircuitOpenError("api_tool", failure_count=5, reset_timeout=30.0)
+info = error.to_error_info()
+# or
+info = ErrorInfo.from_exception(error)
+
+# From an error string (backwards compatibility)
+info = ErrorInfo.from_error_string("Rate limit exceeded", tool_name="api_tool")
+```
+
+### Accessing in ToolResult
+
+```python
+result = await processor.process(calls)
+for r in result:
+    # Convenience properties
+    if not r.is_success:
+        print(f"Category: {r.error_category}")
+        print(f"Code: {r.error_code}")
+        print(f"Retryable: {r.retryable}")
+        print(f"Retry after: {r.retry_after_ms}ms")
+
+    # Full error_info access
+    if r.error_info:
+        print(f"Details: {r.error_info.details}")
+        print(f"Full dump: {r.error_info.model_dump()}")
 ```
 
 ---
