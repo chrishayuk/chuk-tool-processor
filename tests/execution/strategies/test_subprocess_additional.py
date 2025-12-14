@@ -552,3 +552,141 @@ async def test_shutdown_race_condition():
     await strategy.shutdown()
 
     assert strategy._shutting_down
+
+
+# ============================================================================
+# Tests for warm pool feature (lines 176, 186-188, 236-246, 705-729)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_warm_pool_parameter():
+    """Test warm_pool parameter pre-warms all workers."""
+    registry = Mock()
+    strategy = SubprocessStrategy(registry, max_workers=4, warm_pool=True)
+
+    assert strategy._warm_pool is True
+
+    # Clean up without initializing pool
+    strategy._shutting_down = True
+
+
+@pytest.mark.asyncio
+async def test_warm_pool_disabled_default():
+    """Test warm_pool is disabled by default."""
+    registry = Mock()
+    strategy = SubprocessStrategy(registry, max_workers=4)
+
+    assert strategy._warm_pool is False
+
+    # Clean up without initializing pool
+    strategy._shutting_down = True
+
+
+@pytest.mark.asyncio
+async def test_is_pool_ready_property():
+    """Test is_pool_ready property."""
+    registry = Mock()
+    strategy = SubprocessStrategy(registry)
+
+    # Pool not ready initially
+    assert strategy.is_pool_ready is False
+
+    # Mock pool
+    strategy._process_pool = Mock()
+    assert strategy.is_pool_ready is True
+
+    # Clean up
+    strategy._process_pool = None
+    strategy._shutting_down = True
+
+
+@pytest.mark.asyncio
+async def test_explicit_warm_method():
+    """Test explicit warm() method pre-warms all workers."""
+    registry = Mock()
+    strategy = SubprocessStrategy(registry, max_workers=2)
+
+    # Initially warm_pool is False
+    assert strategy._warm_pool is False
+
+    call_count = 0
+
+    async def mock_ensure_pool():
+        nonlocal call_count
+        call_count += 1
+        strategy._process_pool = Mock()
+
+    strategy._ensure_pool = mock_ensure_pool
+
+    # Call warm() method
+    await strategy.warm()
+
+    # Should have called _ensure_pool with _warm_pool temporarily True
+    assert call_count == 1
+
+    # warm_pool should be restored to original value
+    assert strategy._warm_pool is False
+
+    # Clean up
+    strategy._process_pool = None
+    strategy._shutting_down = True
+
+
+@pytest.mark.asyncio
+async def test_ensure_pool_warm_all_workers():
+    """Test _ensure_pool pre-warms all workers when warm_pool=True."""
+    registry = Mock()
+    strategy = SubprocessStrategy(registry, max_workers=3, warm_pool=True)
+
+    call_count = 0
+
+    # Track how many times the executor is called
+    async def count_calls(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return "ok"
+
+    with (
+        patch("concurrent.futures.ProcessPoolExecutor") as mock_pool_class,
+        patch("asyncio.get_running_loop") as mock_loop,
+    ):
+        mock_pool = Mock()
+        mock_pool_class.return_value = mock_pool
+        mock_loop.return_value.run_in_executor = count_calls
+
+        await strategy._ensure_pool()
+
+        # Should have made max_workers calls (3)
+        assert call_count == 3
+
+    strategy._shutting_down = True
+
+
+@pytest.mark.asyncio
+async def test_ensure_pool_single_test_without_warm():
+    """Test _ensure_pool only tests single worker when warm_pool=False."""
+    registry = Mock()
+    strategy = SubprocessStrategy(registry, max_workers=3, warm_pool=False)
+
+    call_count = 0
+
+    async def count_calls(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return "ok"
+
+    with (
+        patch("concurrent.futures.ProcessPoolExecutor") as mock_pool_class,
+        patch("asyncio.get_running_loop") as mock_loop,
+    ):
+        mock_pool = Mock()
+        mock_pool_class.return_value = mock_pool
+        mock_loop.return_value.run_in_executor = count_calls
+
+        await strategy._ensure_pool()
+
+        # Should have made only 1 call (single test)
+        assert call_count == 1
+
+    strategy._shutting_down = True

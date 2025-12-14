@@ -136,34 +136,191 @@ manager.timeout_config = timeout_config
 
 ## Environment Variables
 
+### Core Configuration
+
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CHUK_TOOL_REGISTRY_PROVIDER` | `memory` | Registry backend (`memory` only currently) |
-| `CHUK_DEFAULT_TIMEOUT` | `30.0` | Default timeout for tool execution (seconds) |
+| `CHUK_DEFAULT_TIMEOUT` | `10.0` | Default timeout for tool execution (seconds) |
+| `CHUK_MAX_CONCURRENCY` | `None` | Maximum concurrent executions (None = unlimited) |
 | `CHUK_LOG_LEVEL` | `INFO` | Logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
 | `CHUK_STRUCTURED_LOGGING` | `true` | Enable JSON logging (`true`/`false`) |
+
+### Backend Selection
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CHUK_REGISTRY_BACKEND` | `memory` | Registry backend (`memory` or `redis`) |
+| `CHUK_RESILIENCE_BACKEND` | `memory` | Resilience backend (`memory`, `redis`, or `auto`) |
+| `CHUK_REDIS_URL` | `redis://localhost:6379/0` | Redis connection URL |
+| `CHUK_REDIS_KEY_PREFIX` | `chuk` | Key prefix for Redis (multi-tenant isolation) |
+
+### Circuit Breaker
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CHUK_CIRCUIT_BREAKER_ENABLED` | `false` | Enable circuit breaker (`true`/`false`) |
+| `CHUK_CIRCUIT_BREAKER_FAILURE_THRESHOLD` | `5` | Failures before circuit opens |
+| `CHUK_CIRCUIT_BREAKER_SUCCESS_THRESHOLD` | `2` | Successes in half-open to close |
+| `CHUK_CIRCUIT_BREAKER_RESET_TIMEOUT` | `60.0` | Seconds before trying half-open |
+| `CHUK_CIRCUIT_BREAKER_FAILURE_WINDOW` | `60.0` | Sliding window for counting failures (Redis only) |
+
+### Rate Limiting
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CHUK_RATE_LIMIT_ENABLED` | `false` | Enable rate limiting (`true`/`false`) |
+| `CHUK_RATE_LIMIT_GLOBAL` | `None` | Global limit (requests per period) |
+| `CHUK_RATE_LIMIT_PERIOD` | `60.0` | Rate limit period in seconds |
+| `CHUK_RATE_LIMIT_TOOLS` | `""` | Per-tool limits: `"tool1:10:60,tool2:5:30"` |
+
+### Caching
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CHUK_CACHE_ENABLED` | `true` | Enable result caching (`true`/`false`) |
+| `CHUK_CACHE_TTL` | `300` | Cache time-to-live in seconds |
+
+### Retries
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CHUK_RETRY_ENABLED` | `true` | Enable automatic retries (`true`/`false`) |
+| `CHUK_RETRY_MAX` | `3` | Maximum retry attempts |
+| `CHUK_RETRY_BASE_DELAY` | `1.0` | Initial retry delay in seconds |
+| `CHUK_RETRY_MAX_DELAY` | `60.0` | Maximum retry delay in seconds |
+
+### MCP & Observability
+
+| Variable | Default | Description |
+|----------|---------|-------------|
 | `MCP_BEARER_TOKEN` | - | Bearer token for MCP SSE authentication |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4317` | OpenTelemetry collector endpoint |
 | `OTEL_SERVICE_NAME` | `chuk-tool-processor` | Service name for traces/metrics |
 | `OTEL_TRACES_SAMPLER` | `always_on` | Trace sampling strategy |
 | `OTEL_TRACES_SAMPLER_ARG` | - | Sampler argument (e.g., `0.1` for 10% sampling) |
 
-### Example: Setting Environment Variables
+### Example: Local Development
 
 ```bash
-# Logging
+# In-memory backends (default)
 export CHUK_LOG_LEVEL=DEBUG
-export CHUK_STRUCTURED_LOGGING=true
+export CHUK_DEFAULT_TIMEOUT=30.0
+export CHUK_CACHE_ENABLED=true
+export CHUK_RETRY_ENABLED=true
+```
 
-# Timeouts
-export CHUK_DEFAULT_TIMEOUT=60.0
+### Example: Production with Redis
 
-# OpenTelemetry
+```bash
+# Enable Redis for distributed deployments
+export CHUK_REGISTRY_BACKEND=redis
+export CHUK_RESILIENCE_BACKEND=redis
+export CHUK_REDIS_URL=redis://redis-cluster:6379/0
+export CHUK_REDIS_KEY_PREFIX=myapp
+
+# Enable resilience features
+export CHUK_CIRCUIT_BREAKER_ENABLED=true
+export CHUK_CIRCUIT_BREAKER_FAILURE_THRESHOLD=5
+export CHUK_RATE_LIMIT_ENABLED=true
+export CHUK_RATE_LIMIT_GLOBAL=100
+export CHUK_RATE_LIMIT_TOOLS="expensive_api:10:60,slow_api:5:30"
+
+# Observability
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
 export OTEL_SERVICE_NAME=production-api
-export OTEL_TRACES_SAMPLER=traceidratio
-export OTEL_TRACES_SAMPLER_ARG=0.1
 ```
+
+---
+
+## ProcessorConfig (Programmatic Configuration)
+
+The `ProcessorConfig` class provides a unified way to configure the processor, loading from environment variables or programmatically.
+
+### Loading from Environment
+
+```python
+from chuk_tool_processor import ProcessorConfig
+
+# Load all configuration from environment variables
+config = ProcessorConfig.from_env()
+
+# Create a fully-configured processor
+processor = await config.create_processor()
+
+async with processor:
+    results = await processor.process(llm_output)
+```
+
+### Programmatic Configuration
+
+```python
+from chuk_tool_processor import ProcessorConfig, RegistryConfig, BackendType
+from chuk_tool_processor.config import (
+    CircuitBreakerConfig,
+    RateLimitConfig,
+    CacheConfig,
+    RetryConfig,
+)
+
+config = ProcessorConfig(
+    # Backend selection
+    registry=RegistryConfig(backend=BackendType.REDIS),
+    resilience_backend=BackendType.REDIS,
+    redis_url="redis://localhost:6379/0",
+    redis_key_prefix="myapp",
+
+    # Execution
+    default_timeout=30.0,
+    max_concurrency=20,
+
+    # Circuit breaker
+    circuit_breaker=CircuitBreakerConfig(
+        enabled=True,
+        failure_threshold=5,
+        success_threshold=2,
+        reset_timeout=60.0,
+        failure_window=60.0,
+    ),
+
+    # Rate limiting
+    rate_limit=RateLimitConfig(
+        enabled=True,
+        global_limit=100,
+        global_period=60.0,
+        tool_limits={
+            "expensive_api": (10, 60.0),
+            "slow_api": (5, 30.0),
+        },
+    ),
+
+    # Caching
+    cache=CacheConfig(enabled=True, ttl=300),
+
+    # Retries
+    retry=RetryConfig(enabled=True, max_retries=3),
+)
+
+processor = await config.create_processor()
+```
+
+### Configuration Methods
+
+| Method | Description |
+|--------|-------------|
+| `ProcessorConfig.from_env()` | Load configuration from environment variables |
+| `config.create_processor()` | Create a fully-configured ToolProcessor |
+| `config.create_registry()` | Create just the registry |
+| `config.to_processor_kwargs()` | Get kwargs for ToolProcessor (in-memory only) |
+| `config.uses_redis()` | Check if resilience features use Redis |
+| `config.registry_uses_redis()` | Check if registry uses Redis |
+
+### BackendType Options
+
+| Value | Description |
+|-------|-------------|
+| `BackendType.MEMORY` | In-memory backend (single instance) |
+| `BackendType.REDIS` | Redis-backed backend (distributed) |
+| `BackendType.AUTO` | Auto-detect (prefers Redis if available) |
 
 ---
 

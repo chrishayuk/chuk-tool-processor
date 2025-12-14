@@ -74,8 +74,151 @@ Caching is **off by default** because:
 | Backend | Use Case | Status |
 |---------|----------|--------|
 | **In-memory** | Single process, development | Default |
-| **Redis** | Multi-process, production | Planned |
+| **Redis** | Multi-process, production | Supported (caching planned) |
 | **Custom** | Implement `CacheBackend` protocol | Supported |
+
+---
+
+## Distributed Rate Limiting & Circuit Breakers
+
+For multi-instance deployments, use Redis-backed rate limiting and circuit breakers:
+
+```python
+from chuk_tool_processor.execution.wrappers import (
+    create_production_executor,
+    WrapperBackend,
+    CircuitBreakerSettings,
+    RateLimiterSettings,
+)
+from chuk_tool_processor.execution.strategies import InProcessStrategy
+
+# Create your base strategy
+strategy = InProcessStrategy(registry)
+
+# Wrap with distributed resilience features
+executor = await create_production_executor(
+    strategy,
+    # Use Redis for distributed state
+    circuit_breaker_backend=WrapperBackend.REDIS,
+    rate_limiter_backend=WrapperBackend.REDIS,
+    redis_url="redis://localhost:6379/0",
+
+    # Circuit breaker settings
+    circuit_breaker_settings=CircuitBreakerSettings(
+        failure_threshold=5,      # Open after 5 failures
+        success_threshold=2,      # Close after 2 successes in half-open
+        reset_timeout=60.0,       # Try half-open after 60s
+        failure_window=60.0,      # Count failures in sliding window
+    ),
+
+    # Rate limiter settings
+    rate_limiter_settings=RateLimiterSettings(
+        global_limit=100,         # 100 requests/minute globally
+        global_period=60.0,
+        tool_limits={
+            "expensive_api": (10, 60.0),  # 10 requests/minute
+        },
+    ),
+)
+
+# Use the wrapped executor
+results = await executor.execute(calls)
+```
+
+### Backend Options
+
+| Backend | Description | Use Case |
+|---------|-------------|----------|
+| `WrapperBackend.MEMORY` | In-memory state | Single instance, development |
+| `WrapperBackend.REDIS` | Redis-backed state | Multi-instance, production |
+| `WrapperBackend.AUTO` | Auto-detect (prefers Redis) | Flexible deployments |
+
+### Using Backends Directly
+
+For fine-grained control, use the Redis implementations directly:
+
+```python
+from chuk_tool_processor.execution.wrappers import (
+    RedisRateLimiter,
+    RedisCircuitBreaker,
+    RedisCircuitBreakerConfig,
+    RateLimitedToolExecutor,
+    RedisCircuitBreakerExecutor,
+)
+
+# Create Redis rate limiter
+from redis.asyncio import Redis
+redis = Redis.from_url("redis://localhost:6379/0")
+
+rate_limiter = RedisRateLimiter(
+    redis,
+    global_limit=100,
+    global_period=60.0,
+    tool_limits={"slow_api": (5, 60.0)},
+    key_prefix="myapp:ratelimit",  # Custom prefix for isolation
+)
+
+# Create Redis circuit breaker
+circuit_breaker = RedisCircuitBreaker(
+    redis,
+    default_config=RedisCircuitBreakerConfig(
+        failure_threshold=5,
+        reset_timeout=60.0,
+        failure_window=60.0,  # Sliding window for failures
+    ),
+    key_prefix="myapp:circuitbreaker",
+)
+
+# Wrap your executor
+rate_limited = RateLimitedToolExecutor(strategy, rate_limiter)
+protected = RedisCircuitBreakerExecutor(rate_limited, circuit_breaker)
+
+# Use the protected executor
+results = await protected.execute(calls)
+```
+
+### Redis Key Patterns
+
+The Redis implementations use these key patterns:
+
+| Component | Key Pattern | Data Structure |
+|-----------|-------------|----------------|
+| Rate Limiter (global) | `{prefix}:global` | Sorted Set (timestamps) |
+| Rate Limiter (tool) | `{prefix}:tool:{name}` | Sorted Set (timestamps) |
+| Circuit Breaker (state) | `{prefix}:{tool}:state` | Hash |
+| Circuit Breaker (failures) | `{prefix}:{tool}:failures` | Sorted Set (timestamps) |
+
+### Monitoring Circuit Breaker State
+
+```python
+# Get state for a specific tool
+state = await circuit_breaker.get_state("my_tool")
+print(f"State: {state['state']}")  # closed, open, or half_open
+print(f"Failures: {state['failure_count']}")
+print(f"Time until half-open: {state['time_until_half_open']}")
+
+# Get all states
+all_states = await circuit_breaker.get_all_states()
+for tool, state in all_states.items():
+    if state['state'] == 'open':
+        print(f"Circuit OPEN for {tool}!")
+
+# Reset a circuit
+await circuit_breaker.reset("my_tool")
+```
+
+### Monitoring Rate Limiter Usage
+
+```python
+# Get usage for a tool
+usage = await rate_limiter.get_usage("expensive_api")
+print(f"Used: {usage['expensive_api']['used']}/{usage['expensive_api']['limit']}")
+print(f"Remaining: {usage['expensive_api']['remaining']}")
+
+# Reset rate limits
+await rate_limiter.reset("expensive_api")  # Reset specific tool
+await rate_limiter.reset(None)  # Reset all
+```
 
 ---
 
@@ -111,6 +254,116 @@ asyncio.run(main())
 | **MCP remote** | Client stops waiting; server may continue (best-effort) |
 
 **Important:** Cancellation is **best-effort**. For subprocess and MCP strategies, the underlying operation may continue server-side even after the client cancels. Design tools to be re-entrant or use idempotency keys on side-effecting operations.
+
+### Cancellation Propagation Details
+
+#### In-Process Strategy
+
+When a task is cancelled:
+
+1. `asyncio.CancelledError` is raised in the executing coroutine
+2. The tool's `execute()` method should yield control periodically (via `await`)
+3. The error is caught at the strategy level
+4. A `ToolResult` with `error="Execution was cancelled"` is returned
+5. No exception propagates to the caller
+
+```python
+# Tools that yield control can be cancelled cleanly
+class CancellableTool:
+    async def execute(self, **kwargs) -> dict:
+        for i in range(100):
+            await asyncio.sleep(0.1)  # Yield point - can be cancelled here
+            # Do work...
+        return {"result": "done"}
+```
+
+#### Subprocess Strategy
+
+The subprocess strategy implements a multi-stage cancellation:
+
+1. **Initial handling**: `asyncio.CancelledError` is caught immediately
+2. **Graceful return**: Returns error result instead of raising exception
+3. **Active task tracking**: All running tasks tracked in `_active_tasks` set
+4. **Shutdown sequence**:
+   - Set `_shutting_down = True` to prevent new submissions
+   - Cancel all active tasks with small delays to prevent event loop overload
+   - Wait up to 2 seconds for graceful completion
+   - Shutdown process pool with 1 second timeout
+
+```python
+# Cancellation flow in subprocess strategy
+async def _execute_single_call(self, call, timeout):
+    try:
+        # ... execution logic ...
+    except asyncio.CancelledError:
+        # Return result instead of propagating exception
+        return ToolResult(
+            tool=call.tool,
+            result=None,
+            error="Execution was cancelled",
+            ...
+        )
+```
+
+**Worker Process Isolation**: Worker processes have `SIGINT` ignored (`_init_worker()`), so they don't respond to keyboard interrupts directly. The main process controls worker lifecycle.
+
+#### Warm Pool and Cancellation
+
+When using warm subprocess pools:
+
+```python
+strategy = SubprocessStrategy(
+    registry,
+    max_workers=4,
+    warm_pool=True,  # Pre-warm workers on first use
+)
+
+# Or explicitly warm
+await strategy.warm()
+```
+
+Warm pools don't affect cancellation behavior - workers are still managed by the process pool executor. However, shutdown is cleaner because all workers are in a known state.
+
+### Graceful Shutdown
+
+The subprocess strategy implements graceful shutdown:
+
+```python
+# Automatic shutdown on signals (SIGTERM, SIGINT)
+strategy = SubprocessStrategy(registry)  # Registers signal handlers
+
+# Manual shutdown
+await strategy.shutdown()
+```
+
+Shutdown sequence:
+1. Mark strategy as shutting down (prevents new submissions)
+2. Cancel all active async tasks
+3. Wait for tasks to complete (2 second timeout)
+4. Shutdown process pool executor (1 second timeout)
+
+### Best Practices for Cancellation
+
+1. **Design tools to be interruptible**: Include regular `await` points
+2. **Use idempotency keys**: For side-effecting operations that may be retried
+3. **Set appropriate timeouts**: Use `default_timeout` at strategy level
+4. **Handle partial results**: Check `result.error` for cancellation messages
+5. **Consider the wrapper stack**: Cancellation flows through rate limiters, circuit breakers, etc.
+
+```python
+# Example: Handling cancellation in results
+results = await strategy.run(calls)
+for result in results:
+    if result.error and "cancelled" in result.error.lower():
+        # Handle cancellation case
+        logger.info(f"Tool {result.tool} was cancelled")
+    elif result.error:
+        # Handle other errors
+        logger.error(f"Tool {result.tool} failed: {result.error}")
+    else:
+        # Process successful result
+        process_result(result.result)
+```
 
 ---
 

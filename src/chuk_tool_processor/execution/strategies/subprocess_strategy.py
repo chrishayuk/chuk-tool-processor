@@ -173,6 +173,7 @@ class SubprocessStrategy(ExecutionStrategy):
         max_workers: int = 4,
         default_timeout: float | None = None,
         worker_init_timeout: float = 5.0,
+        warm_pool: bool = False,
     ) -> None:
         """
         Initialize the subprocess execution strategy.
@@ -182,11 +183,15 @@ class SubprocessStrategy(ExecutionStrategy):
             max_workers: Maximum number of worker processes
             default_timeout: Default timeout for tool execution
             worker_init_timeout: Timeout for worker process initialization
+            warm_pool: If True, pre-warm all workers in the pool on first use.
+                      This reduces latency for the first batch of calls by
+                      ensuring all worker processes are already spawned.
         """
         self.registry = registry
         self.max_workers = max_workers
         self.default_timeout = default_timeout or 30.0  # Always have a default
         self.worker_init_timeout = worker_init_timeout
+        self._warm_pool = warm_pool
 
         # Process pool (initialized lazily)
         self._process_pool: concurrent.futures.ProcessPoolExecutor | None = None
@@ -228,11 +233,25 @@ class SubprocessStrategy(ExecutionStrategy):
             # Test the pool with a simple task
             loop = asyncio.get_running_loop()
             try:
-                # Use a module-level function instead of a lambda
-                await asyncio.wait_for(
-                    loop.run_in_executor(self._process_pool, _pool_test_func), timeout=self.worker_init_timeout
-                )
-                logger.debug("Process pool initialized with %d workers", self.max_workers)
+                if self._warm_pool:
+                    # Pre-warm all workers by submitting max_workers tasks concurrently
+                    # This ensures all worker processes are spawned and ready
+                    warm_tasks = [
+                        asyncio.wait_for(
+                            loop.run_in_executor(self._process_pool, _pool_test_func),
+                            timeout=self.worker_init_timeout,
+                        )
+                        for _ in range(self.max_workers)
+                    ]
+                    await asyncio.gather(*warm_tasks)
+                    logger.debug("Process pool pre-warmed with %d workers", self.max_workers)
+                else:
+                    # Just test with a single task (original behavior)
+                    await asyncio.wait_for(
+                        loop.run_in_executor(self._process_pool, _pool_test_func),
+                        timeout=self.worker_init_timeout,
+                    )
+                    logger.debug("Process pool initialized with %d workers", self.max_workers)
             except Exception as e:
                 # Clean up on initialization error
                 self._process_pool.shutdown(wait=False)
@@ -682,6 +701,32 @@ class SubprocessStrategy(ExecutionStrategy):
     def supports_streaming(self) -> bool:
         """Check if this strategy supports streaming execution."""
         return True
+
+    @property
+    def is_pool_ready(self) -> bool:
+        """Check if the process pool has been initialized."""
+        return self._process_pool is not None
+
+    async def warm(self) -> None:
+        """
+        Explicitly pre-warm the subprocess pool.
+
+        This method can be called during application startup to ensure
+        all worker processes are spawned before any tool calls arrive.
+        This eliminates cold-start latency for the first batch of calls.
+
+        Example:
+            strategy = SubprocessStrategy(registry, max_workers=4)
+            await strategy.warm()  # Pre-warm all 4 workers
+            # Now ready for low-latency tool execution
+        """
+        # Temporarily enable warm_pool for this call
+        original_warm = self._warm_pool
+        self._warm_pool = True
+        try:
+            await self._ensure_pool()
+        finally:
+            self._warm_pool = original_warm
 
     async def _signal_handler(self, sig: int) -> None:
         """Handle termination signals."""

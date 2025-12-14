@@ -26,6 +26,14 @@ from typing import TYPE_CHECKING
 __version__ = "0.9.7"
 
 # Core processor and context
+# Configuration
+from chuk_tool_processor.config import (
+    BackendType,
+    ProcessorConfig,
+    RegistryConfig,
+    ResilienceBackend,
+    create_executor,
+)
 from chuk_tool_processor.core.context import (
     ContextHeader,
     ContextKey,
@@ -151,6 +159,12 @@ __all__ = [
     "setup_mcp_stdio",
     "setup_mcp_sse",
     "setup_mcp_http_streamable",
+    # Configuration
+    "BackendType",
+    "ProcessorConfig",
+    "RegistryConfig",
+    "ResilienceBackend",
+    "create_executor",
 ]
 
 # Type checking exports (documentation only)

@@ -335,38 +335,65 @@ result = await middleware.call_tool("notion.search", {"query": "docs"})
 
 ---
 
-## Redis Registry (Distributed Deployments)
+## Distributed Deployments (Redis)
 
-For multi-process or multi-machine deployments, use the Redis-backed registry:
+For multi-process or multi-machine deployments, configure Redis backends via environment variables:
+
+```bash
+# Enable Redis for everything
+export CHUK_REGISTRY_BACKEND=redis
+export CHUK_RESILIENCE_BACKEND=redis
+export CHUK_REDIS_URL=redis://localhost:6379/0
+
+# Enable resilience features
+export CHUK_CIRCUIT_BREAKER_ENABLED=true
+export CHUK_RATE_LIMIT_ENABLED=true
+export CHUK_RATE_LIMIT_GLOBAL=100
+```
 
 ```python
-from chuk_tool_processor import ToolProcessor
-from chuk_tool_processor.registry.providers.redis import create_redis_registry
+from chuk_tool_processor import ProcessorConfig
 
-# Create distributed registry
-registry = await create_redis_registry(
-    redis_url="redis://localhost:6379/0",
-    key_prefix="myapp",  # Isolate keys per application/tenant
-)
+# Load from environment and create fully-configured processor
+config = ProcessorConfig.from_env()
+processor = await config.create_processor()
 
-# Register tools (metadata shared across all processes)
-await registry.register_tool(Calculator, name="math.calculator")
-
-# Use with ToolProcessor
-async with ToolProcessor(registry=registry) as processor:
+async with processor:
     results = await processor.process(llm_output)
 ```
 
+Or configure programmatically:
+
+```python
+from chuk_tool_processor import ProcessorConfig, RegistryConfig, BackendType
+from chuk_tool_processor.config import CircuitBreakerConfig, RateLimitConfig
+
+config = ProcessorConfig(
+    # Registry and resilience use Redis
+    registry=RegistryConfig(backend=BackendType.REDIS),
+    resilience_backend=BackendType.REDIS,
+    redis_url="redis://localhost:6379/0",
+
+    # Enable features
+    circuit_breaker=CircuitBreakerConfig(enabled=True, failure_threshold=5),
+    rate_limit=RateLimitConfig(enabled=True, global_limit=100),
+)
+
+processor = await config.create_processor()
+```
+
 **Key features:**
-- Shared tool metadata across processes (each process registers the same tools locally)
-- Multi-tenant isolation via key prefixes
-- Deferred tool loading with Redis persistence
-- Automatic namespace tracking
+- **Distributed registry**: Tool metadata shared across processes
+- **Distributed circuit breaker**: Failure counts shared (prevents cascading failures across instances)
+- **Distributed rate limiting**: Global limits enforced across all instances
+- **Multi-tenant isolation**: Key prefixes isolate data per tenant
 
 **Installation:**
 ```bash
-pip install redis[hiredis]  # or: uv add redis[hiredis]
+pip install chuk-tool-processor[redis]  # or: uv add chuk-tool-processor[redis]
 ```
+
+See [examples/02_production_features/distributed_config_demo.py](examples/02_production_features/distributed_config_demo.py) for a complete example.
 
 ---
 
@@ -455,6 +482,9 @@ python examples/02_production_features/structured_errors_demo.py
 
 # Redis registry for distributed deployments
 python examples/02_production_features/redis_registry_demo.py
+
+# Distributed configuration (Redis registry + resilience)
+python examples/02_production_features/distributed_config_demo.py
 
 # Observability demo
 python examples/02_production_features/observability_demo.py
