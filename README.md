@@ -80,24 +80,39 @@ uv pip install chuk-tool-processor
 
 ```python
 import asyncio
-from chuk_tool_processor import ToolProcessor, tool
+from chuk_tool_processor import ToolProcessor, create_registry
 
-@tool(name="calculator")
 class Calculator:
     async def execute(self, operation: str, a: float, b: float) -> dict:
         ops = {"add": a + b, "multiply": a * b, "subtract": a - b}
         return {"result": ops.get(operation, 0)}
 
 async def main():
-    async with ToolProcessor(enable_caching=True, enable_retries=True) as p:
+    registry = create_registry()
+    await registry.register_tool(Calculator, name="math.calculator")  # Dotted name → namespace="math"
+
+    async with ToolProcessor(registry=registry, enable_caching=True, enable_retries=True) as p:
         # Works with OpenAI, Anthropic, or JSON formats
-        result = await p.process('<tool name="calculator" args=\'{"operation": "multiply", "a": 15, "b": 23}\'/>')
+        result = await p.process('<tool name="math.calculator" args=\'{"operation": "multiply", "a": 15, "b": 23}\'/>')
         print(result[0].result)  # {'result': 345}
 
 asyncio.run(main())
 ```
 
 **That's it.** You now have production-ready tool execution with timeouts, retries, and caching.
+
+### Dotted Names for Namespacing
+
+Dotted names are auto-parsed into namespace and tool name:
+
+```python
+# These are equivalent:
+await registry.register_tool(FetchUser, name="web.fetch_user")           # Auto-parsed
+await registry.register_tool(FetchUser, name="fetch_user", namespace="web")  # Explicit
+
+# Call using the full dotted name
+result = await processor.process([{"tool": "web.fetch_user", "arguments": {"user_id": "123"}}])
+```
 
 ### Works with Any LLM Format
 
@@ -364,6 +379,9 @@ See [OBSERVABILITY.md](docs/OBSERVABILITY.md) for complete setup guide.
 ```bash
 # Getting started
 python examples/01_getting_started/hello_tool.py
+
+# Hero demo: 8 tools, 5-second deadline, 3 pools (DAG + bulkheads + context)
+python examples/02_production_features/hero_runtime_demo.py
 
 # Production patterns (bulkheads, context, scoped registries)
 python examples/02_production_features/production_patterns_demo.py

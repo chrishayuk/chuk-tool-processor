@@ -29,6 +29,7 @@ from chuk_tool_processor.scheduling.policy import SchedulerPolicy
 from chuk_tool_processor.scheduling.types import (
     ExecutionPlan,
     SchedulingConstraints,
+    SkipReason,
     ToolCallSpec,
     ToolMetadata,
 )
@@ -39,6 +40,7 @@ __all__ = [
     "ToolCallSpec",
     "SchedulingConstraints",
     "ExecutionPlan",
+    "SkipReason",
     # Protocol
     "SchedulerPolicy",
     # Implementations

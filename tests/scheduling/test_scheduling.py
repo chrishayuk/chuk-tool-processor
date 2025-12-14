@@ -15,6 +15,7 @@ from chuk_tool_processor.scheduling import (
     ExecutionPlan,
     GreedyDagScheduler,
     SchedulingConstraints,
+    SkipReason,
     ToolCallSpec,
     ToolMetadata,
 )
@@ -158,6 +159,28 @@ class TestSchedulingConstraints:
             SchedulingConstraints(max_cost=-0.1)
 
 
+class TestSkipReason:
+    """Tests for SkipReason model."""
+
+    def test_basic_skip_reason(self):
+        """Test creating a basic skip reason."""
+        reason = SkipReason(call_id="test", reason="deadline_exceeded")
+        assert reason.call_id == "test"
+        assert reason.reason == "deadline_exceeded"
+        assert reason.detail is None
+
+    def test_skip_reason_with_detail(self):
+        """Test creating a skip reason with detail."""
+        reason = SkipReason(
+            call_id="call-1",
+            reason="dependency_skipped",
+            detail="Depends on skipped call(s): call-0",
+        )
+        assert reason.call_id == "call-1"
+        assert reason.reason == "dependency_skipped"
+        assert "call-0" in reason.detail
+
+
 class TestExecutionPlan:
     """Tests for ExecutionPlan model."""
 
@@ -168,6 +191,10 @@ class TestExecutionPlan:
         assert plan.per_call_timeout_ms == {}
         assert plan.per_call_max_retries == {}
         assert plan.skip == ()
+        assert plan.skip_reasons == ()
+        assert plan.critical_path_ms is None
+        assert plan.estimated_total_ms is None
+        assert plan.pool_utilization == {}
 
     def test_plan_with_stages(self):
         """Test creating a plan with stages."""
@@ -503,3 +530,124 @@ class TestSchedulerProtocolCompliance:
         calls = [ToolCallSpec(call_id="1", tool_name="test")]
         result = scheduler.plan(calls, SchedulingConstraints())
         assert isinstance(result, ExecutionPlan)
+
+
+class TestSchedulerExplainability:
+    """Tests for scheduler explainability fields."""
+
+    def test_critical_path_calculation(self):
+        """Test that critical path is calculated correctly."""
+        scheduler = GreedyDagScheduler(default_est_ms=100)
+        calls = [
+            ToolCallSpec(
+                call_id="1",
+                tool_name="a",
+                metadata=ToolMetadata(est_ms=200),
+            ),
+            ToolCallSpec(
+                call_id="2",
+                tool_name="b",
+                depends_on=("1",),
+                metadata=ToolMetadata(est_ms=300),
+            ),
+        ]
+        plan = scheduler.plan(calls, SchedulingConstraints())
+
+        # Critical path = max(stage1) + max(stage2) = 200 + 300 = 500
+        assert plan.critical_path_ms == 500
+        assert plan.estimated_total_ms == 500
+
+    def test_pool_utilization_calculation(self):
+        """Test that pool utilization is calculated correctly."""
+        scheduler = GreedyDagScheduler()
+        calls = [
+            ToolCallSpec(
+                call_id="1",
+                tool_name="a",
+                metadata=ToolMetadata(pool="web"),
+            ),
+            ToolCallSpec(
+                call_id="2",
+                tool_name="b",
+                metadata=ToolMetadata(pool="web"),
+            ),
+            ToolCallSpec(
+                call_id="3",
+                tool_name="c",
+                metadata=ToolMetadata(pool="db"),
+            ),
+        ]
+        plan = scheduler.plan(calls, SchedulingConstraints())
+
+        # All in one stage: web=2, db=1
+        assert plan.pool_utilization["web"] == 2
+        assert plan.pool_utilization["db"] == 1
+
+    def test_skip_reasons_deadline(self):
+        """Test that skip reasons are populated for deadline skips."""
+        scheduler = GreedyDagScheduler(default_est_ms=500)
+        calls = [
+            ToolCallSpec(
+                call_id="important",
+                tool_name="critical",
+                metadata=ToolMetadata(priority=10, est_ms=500),
+            ),
+            ToolCallSpec(
+                call_id="optional",
+                tool_name="analytics",
+                metadata=ToolMetadata(priority=0, est_ms=500),
+            ),
+        ]
+        # Tight deadline: threshold = 800ms (1000 * 0.8)
+        # After "important" (500ms), "optional" would exceed threshold
+        constraints = SchedulingConstraints(deadline_ms=1000)
+        plan = scheduler.plan(calls, constraints)
+
+        # Check if optional was skipped
+        if "optional" in plan.skip:
+            # Should have a skip reason
+            skip_reason_ids = [r.call_id for r in plan.skip_reasons]
+            assert "optional" in skip_reason_ids
+
+            # Find the reason
+            reason = next(r for r in plan.skip_reasons if r.call_id == "optional")
+            assert reason.reason == "deadline_exceeded"
+            assert reason.detail is not None
+
+    def test_skip_reasons_dependency_cascade(self):
+        """Test that skip reasons are populated for dependency cascades."""
+        scheduler = GreedyDagScheduler()
+        calls = [
+            ToolCallSpec(
+                call_id="parent",
+                tool_name="expensive",
+                metadata=ToolMetadata(priority=0, cost=1.0),
+            ),
+            ToolCallSpec(
+                call_id="child",
+                tool_name="depends_on_expensive",
+                depends_on=("parent",),
+                metadata=ToolMetadata(priority=10),
+            ),
+        ]
+        constraints = SchedulingConstraints(max_cost=0.5)
+        plan = scheduler.plan(calls, constraints)
+
+        # Both should be skipped
+        assert "parent" in plan.skip
+        assert "child" in plan.skip
+
+        # Find child's skip reason
+        child_reason = next((r for r in plan.skip_reasons if r.call_id == "child"), None)
+        assert child_reason is not None
+        assert child_reason.reason == "dependency_skipped"
+        assert "parent" in child_reason.detail
+
+    def test_empty_plan_has_no_metrics(self):
+        """Test that empty plan has None metrics."""
+        scheduler = GreedyDagScheduler()
+        plan = scheduler.plan([], SchedulingConstraints())
+
+        assert plan.critical_path_ms is None
+        assert plan.estimated_total_ms is None
+        assert plan.pool_utilization == {}

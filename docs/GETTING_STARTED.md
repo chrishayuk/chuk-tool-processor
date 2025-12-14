@@ -6,6 +6,7 @@ This guide walks you through creating tools and using the processor.
 
 - [Creating Tools](#creating-tools)
   - [Simple Class-Based Tools](#simple-class-based-tools)
+  - [Dotted Names for Namespacing](#dotted-names-for-namespacing)
   - [Function-Based Tools](#function-based-tools)
   - [ValidatedTool (Pydantic)](#validatedtool-pydantic-type-safety)
   - [StreamingTool](#streamingtool-real-time-results)
@@ -30,13 +31,40 @@ CHUK Tool Processor supports multiple patterns for defining tools.
 The simplest way to create a tool:
 
 ```python
-from chuk_tool_processor import tool
+from chuk_tool_processor import create_registry
 
-@tool(name="calculator")
 class Calculator:
     async def execute(self, operation: str, a: float, b: float) -> dict:
         ops = {"add": a + b, "multiply": a * b, "subtract": a - b}
         return {"result": ops.get(operation, 0)}
+
+# Register with dotted name (auto-parsed to namespace="math", name="calculator")
+registry = create_registry()
+await registry.register_tool(Calculator, name="math.calculator")
+```
+
+### Dotted Names for Namespacing
+
+Dotted names are auto-parsed into namespace and tool name:
+
+```python
+# These are equivalent:
+await registry.register_tool(MyTool, name="web.fetch_user")           # Auto-parsed
+await registry.register_tool(MyTool, name="fetch_user", namespace="web")  # Explicit
+```
+
+**Benefits:**
+- **Logical grouping**: `web.*`, `db.*`, `compute.*`
+- **Pattern-based limits**: Configure bulkheads like `"db.*": 3` for all database tools
+- **Namespace isolation**: Scoped registries per tenant or environment
+
+The `@tool` decorator also supports dotted names:
+
+```python
+@tool(name="web.fetch_user")  # Parsed to namespace="web", name="fetch_user"
+class FetchUserTool:
+    async def execute(self, user_id: str) -> dict:
+        return {"user_id": user_id}
 ```
 
 ### Function-Based Tools
@@ -66,7 +94,7 @@ from chuk_tool_processor import tool
 from chuk_tool_processor.models import ValidatedTool
 from pydantic import BaseModel, Field
 
-@tool(name="weather")
+@tool(name="api.weather")  # Dotted name: namespace="api", name="weather"
 class WeatherTool(ValidatedTool):
     class Arguments(BaseModel):
         location: str = Field(..., description="City name")
@@ -109,7 +137,7 @@ from chuk_tool_processor import tool
 from chuk_tool_processor.models import StreamingTool
 from pydantic import BaseModel
 
-@tool(name="file_processor")
+@tool(name="io.file_processor")  # Dotted name: namespace="io", name="file_processor"
 class FileProcessor(StreamingTool):
     class Arguments(BaseModel):
         file_path: str

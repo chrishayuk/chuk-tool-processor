@@ -23,6 +23,7 @@ This guide covers production-grade patterns for building reliable, scalable tool
 - [Policy Precedence](#policy-precedence)
 - [Parallel Execution & Streaming](#parallel-execution--streaming)
 - [Return Order](#return-order-completion-vs-submission)
+- [Dotted Names for Namespacing](#dotted-names-for-namespacing)
 - [Scoped Registries](#scoped-registries-multi-tenant-isolation)
 - [Bulkheads](#bulkheads-per-tool-concurrency-limits)
 - [Pattern-Based Bulkheads](#pattern-based-bulkheads)
@@ -267,6 +268,52 @@ for result in results:
 
 ---
 
+## Dotted Names for Namespacing
+
+Dotted names are auto-parsed into namespace and tool name for cleaner registration:
+
+```python
+from chuk_tool_processor import create_registry
+
+registry = create_registry()
+
+# Dotted names auto-extract namespace
+await registry.register_tool(FetchUser, name="web.fetch_user")      # namespace="web", name="fetch_user"
+await registry.register_tool(WriteDB, name="db.write")              # namespace="db", name="write"
+await registry.register_tool(SearchAPI, name="api.search")          # namespace="api", name="search"
+
+# Explicit namespace (these are equivalent)
+await registry.register_tool(FetchUser, name="fetch_user", namespace="web")
+
+# Call using the full dotted name
+result = await processor.process([{"tool": "web.fetch_user", "arguments": {"user_id": "123"}}])
+```
+
+### When Explicit Namespace Takes Precedence
+
+If you provide both a dotted name and an explicit namespace (other than `"default"`), the explicit namespace wins:
+
+```python
+# Explicit namespace overrides dotted parsing
+await registry.register_tool(MyTool, name="a.b", namespace="custom")
+# → namespace="custom", name="a.b"
+```
+
+### Decorator Support
+
+The `@tool` decorator also supports dotted names:
+
+```python
+from chuk_tool_processor import tool
+
+@tool(name="web.fetch_user")  # Parsed to namespace="web", name="fetch_user"
+class FetchUserTool:
+    async def execute(self, user_id: str) -> dict:
+        return {"user_id": user_id}
+```
+
+---
+
 ## Scoped Registries (Multi-Tenant Isolation)
 
 Create isolated tool registries for multi-tenant apps, testing, or plugin systems:
@@ -278,10 +325,10 @@ from chuk_tool_processor import ToolProcessor, create_registry
 tenant_a_registry = create_registry()
 tenant_b_registry = create_registry()
 
-# Register different tools per tenant
-await tenant_a_registry.register_tool(BasicTool, name="basic")
-await tenant_b_registry.register_tool(BasicTool, name="basic")
-await tenant_b_registry.register_tool(PremiumTool, name="premium")  # Only tenant B
+# Register different tools per tenant (using dotted names)
+await tenant_a_registry.register_tool(BasicTool, name="core.basic")
+await tenant_b_registry.register_tool(BasicTool, name="core.basic")
+await tenant_b_registry.register_tool(PremiumTool, name="premium.advanced")  # Only tenant B
 
 # Create processors with isolated registries
 processor_a = ToolProcessor(registry=tenant_a_registry)
@@ -289,7 +336,7 @@ processor_b = ToolProcessor(registry=tenant_b_registry)
 
 # Tenant A cannot access premium tools
 tools_a = await processor_a.list_tools()  # ['basic']
-tools_b = await processor_b.list_tools()  # ['basic', 'premium']
+tools_b = await processor_b.list_tools()  # ['basic', 'advanced']
 ```
 
 ### Use Cases

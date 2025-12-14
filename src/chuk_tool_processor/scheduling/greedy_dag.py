@@ -21,6 +21,7 @@ from chuk_tool_processor.logging import get_logger
 from chuk_tool_processor.scheduling.types import (
     ExecutionPlan,
     SchedulingConstraints,
+    SkipReason,
     ToolCallSpec,
 )
 
@@ -104,7 +105,7 @@ class GreedyDagScheduler:
             return ExecutionPlan(skip=tuple(call_ids))
 
         # Step 2: Determine which calls to skip (deadline/cost constraints)
-        skip_ids = self._determine_skips(sorted_ids, call_map, constraints)
+        skip_ids, skip_reasons = self._determine_skips(sorted_ids, call_map, constraints)
         scheduled_ids = [cid for cid in sorted_ids if cid not in skip_ids]
 
         # Step 3: Build stages respecting pool limits
@@ -115,17 +116,26 @@ class GreedyDagScheduler:
         if constraints.deadline_ms is not None:
             per_call_timeout_ms = self._calculate_timeouts(stages, call_map, constraints)
 
+        # Step 5: Calculate explainability metrics
+        critical_path_ms, estimated_total_ms = self._calculate_critical_path(stages, call_map)
+        pool_utilization = self._calculate_pool_utilization(stages, call_map)
+
         logger.debug(
-            "Plan created: %d stages, %d scheduled, %d skipped",
+            "Plan created: %d stages, %d scheduled, %d skipped, critical_path=%dms",
             len(stages),
             len(scheduled_ids),
             len(skip_ids),
+            critical_path_ms or 0,
         )
 
         return ExecutionPlan(
             stages=tuple(tuple(stage) for stage in stages),
             per_call_timeout_ms=per_call_timeout_ms,
             skip=tuple(skip_ids),
+            skip_reasons=tuple(skip_reasons),
+            critical_path_ms=critical_path_ms,
+            estimated_total_ms=estimated_total_ms,
+            pool_utilization=pool_utilization,
         )
 
     def _topological_sort(
@@ -192,7 +202,7 @@ class GreedyDagScheduler:
         sorted_ids: list[str],
         call_map: dict[str, ToolCallSpec],
         constraints: SchedulingConstraints,
-    ) -> set[str]:
+    ) -> tuple[set[str], list[SkipReason]]:
         """
         Determine which calls to skip based on deadline and cost constraints.
 
@@ -205,12 +215,13 @@ class GreedyDagScheduler:
             constraints: Scheduling constraints
 
         Returns:
-            Set of call_ids to skip
+            Tuple of (set of call_ids to skip, list of skip reasons)
         """
         skip_ids: set[str] = set()
+        skip_reasons: list[SkipReason] = []
 
         if constraints.deadline_ms is None and constraints.max_cost is None:
-            return skip_ids
+            return skip_ids, skip_reasons
 
         # Track cumulative time and cost
         cumulative_time_ms = constraints.now_ms
@@ -227,9 +238,17 @@ class GreedyDagScheduler:
             cost = call.metadata.cost or 0.0
 
             # Check if dependencies are skipped
-            if any(dep in skip_ids for dep in call.depends_on):
+            skipped_deps = [dep for dep in call.depends_on if dep in skip_ids]
+            if skipped_deps:
                 logger.debug("Skipping %s because dependency is skipped", call_id)
                 skip_ids.add(call_id)
+                skip_reasons.append(
+                    SkipReason(
+                        call_id=call_id,
+                        reason="dependency_skipped",
+                        detail=f"Depends on skipped call(s): {', '.join(skipped_deps)}",
+                    )
+                )
                 continue
 
             # Check deadline constraint - skip low-priority calls that would exceed threshold
@@ -246,6 +265,13 @@ class GreedyDagScheduler:
                     deadline_threshold,
                 )
                 skip_ids.add(call_id)
+                skip_reasons.append(
+                    SkipReason(
+                        call_id=call_id,
+                        reason="deadline_exceeded",
+                        detail=f"Estimated completion {cumulative_time_ms + est_ms}ms > threshold {deadline_threshold}ms",
+                    )
+                )
                 continue
 
             # Check cost constraint - skip low-priority calls that would exceed cost limit
@@ -262,13 +288,20 @@ class GreedyDagScheduler:
                     constraints.max_cost,
                 )
                 skip_ids.add(call_id)
+                skip_reasons.append(
+                    SkipReason(
+                        call_id=call_id,
+                        reason="cost_exceeded",
+                        detail=f"Cumulative cost {cumulative_cost + cost:.2f} > limit {constraints.max_cost:.2f}",
+                    )
+                )
                 continue
 
             # Call is scheduled
             cumulative_time_ms += est_ms
             cumulative_cost += cost
 
-        return skip_ids
+        return skip_ids, skip_reasons
 
     def _build_stages(
         self,
@@ -381,3 +414,60 @@ class GreedyDagScheduler:
             remaining_budget -= stage_timeout
 
         return per_call_timeout_ms
+
+    def _calculate_critical_path(
+        self,
+        stages: list[list[str]],
+        call_map: dict[str, ToolCallSpec],
+    ) -> tuple[int | None, int | None]:
+        """
+        Calculate critical path and estimated total execution time.
+
+        Critical path = sum of max est_ms per stage (worst-case serial path).
+        Estimated total = same as critical path when executing stages sequentially.
+
+        Args:
+            stages: Execution stages
+            call_map: Map of call_id -> ToolCallSpec
+
+        Returns:
+            Tuple of (critical_path_ms, estimated_total_ms)
+        """
+        if not stages:
+            return None, None
+
+        critical_path_ms = 0
+        for stage in stages:
+            if stage:
+                max_stage_ms = max(call_map[cid].metadata.est_ms or self.default_est_ms for cid in stage)
+                critical_path_ms += max_stage_ms
+
+        return critical_path_ms, critical_path_ms
+
+    def _calculate_pool_utilization(
+        self,
+        stages: list[list[str]],
+        call_map: dict[str, ToolCallSpec],
+    ) -> dict[str, int]:
+        """
+        Calculate per-pool max concurrent calls across all stages.
+
+        Args:
+            stages: Execution stages
+            call_map: Map of call_id -> ToolCallSpec
+
+        Returns:
+            Map of pool -> max concurrent calls in any stage
+        """
+        pool_max: dict[str, int] = defaultdict(int)
+
+        for stage in stages:
+            pool_counts: dict[str, int] = defaultdict(int)
+            for call_id in stage:
+                pool = call_map[call_id].metadata.pool
+                pool_counts[pool] += 1
+
+            for pool, count in pool_counts.items():
+                pool_max[pool] = max(pool_max[pool], count)
+
+        return dict(pool_max)

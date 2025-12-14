@@ -55,14 +55,32 @@ class InMemoryToolRegistry(ToolRegistryInterface):
         namespace: str = "default",
         metadata: dict[str, Any] | None = None,
     ) -> None:
-        """Register a tool in the registry asynchronously."""
+        """
+        Register a tool in the registry asynchronously.
+
+        Supports dotted names for automatic namespace extraction:
+        - name="web.fetch_user" -> namespace="web", name="fetch_user"
+        - name="fetch_user", namespace="web" -> namespace="web", name="fetch_user"
+        - name="fetch_user" -> namespace="default", name="fetch_user"
+
+        The explicit namespace parameter takes precedence over a dotted name
+        only if namespace is not "default".
+        """
         async with self._lock:
+            # Determine the actual name and namespace
+            key = name or getattr(tool, "__name__", None) or repr(tool)
+
+            # Auto-parse dotted names: "web.fetch_user" -> namespace="web", name="fetch_user"
+            # Only parse if namespace is still the default and name contains a dot
+            if "." in key and namespace == "default":
+                parts = key.split(".", 1)
+                namespace = parts[0]
+                key = parts[1]
+
             # ensure namespace buckets
             self._tools.setdefault(namespace, {})
             self._metadata.setdefault(namespace, {})
             self._deferred_metadata.setdefault(namespace, {})
-
-            key = name or getattr(tool, "__name__", None) or repr(tool)
 
             # build metadata -------------------------------------------------
             is_async = inspect.iscoroutinefunction(getattr(tool, "execute", None))
