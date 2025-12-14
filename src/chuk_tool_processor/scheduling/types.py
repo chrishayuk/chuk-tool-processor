@@ -140,6 +140,16 @@ class SchedulingConstraints(BaseModel):
     )
 
 
+class SkipReason(BaseModel):
+    """Reason why a call was skipped."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    call_id: str = Field(..., description="The call that was skipped")
+    reason: str = Field(..., description="Why it was skipped")
+    detail: str | None = Field(default=None, description="Additional detail")
+
+
 class ExecutionPlan(BaseModel):
     """
     The output of a scheduler: an execution plan.
@@ -148,12 +158,17 @@ class ExecutionPlan(BaseModel):
     - Stages: ordered batches of calls that can run concurrently
     - Per-call overrides: timeout/retry adjustments decided by the scheduler
     - Skip list: calls that should be skipped (infeasible or low priority)
+    - Explainability: critical path, pool utilization, skip reasons
 
     Attributes:
         stages: List of stages, each containing call_ids that can run concurrently
         per_call_timeout_ms: Per-call timeout overrides (call_id -> timeout_ms)
         per_call_max_retries: Per-call retry overrides (call_id -> max_retries)
         skip: Call IDs to skip (deadline/cost infeasible or low priority)
+        skip_reasons: Detailed reasons for each skipped call
+        critical_path_ms: Estimated critical path duration in milliseconds
+        estimated_total_ms: Estimated total execution time
+        pool_utilization: Per-pool estimated utilization (pool -> concurrent calls)
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -173,6 +188,25 @@ class ExecutionPlan(BaseModel):
     skip: tuple[str, ...] = Field(
         default=(),
         description="Call IDs to skip (deadline/cost infeasible or low priority)",
+    )
+    # Explainability fields
+    skip_reasons: tuple[SkipReason, ...] = Field(
+        default=(),
+        description="Detailed reasons for each skipped call",
+    )
+    critical_path_ms: int | None = Field(
+        default=None,
+        ge=0,
+        description="Estimated critical path duration in milliseconds",
+    )
+    estimated_total_ms: int | None = Field(
+        default=None,
+        ge=0,
+        description="Estimated total execution time in milliseconds",
+    )
+    pool_utilization: dict[str, int] = Field(
+        default_factory=dict,
+        description="Per-pool max concurrent calls in plan",
     )
 
     @property

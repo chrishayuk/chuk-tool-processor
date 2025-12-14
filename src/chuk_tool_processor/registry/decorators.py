@@ -249,8 +249,15 @@ def register_tool(
     This decorator automatically adds subprocess serialization support,
     making tools compatible with both InProcessStrategy and SubprocessStrategy.
 
+    Supports dotted names for automatic namespace extraction:
+    - name="web.fetch_user" -> namespace="web", name="fetch_user"
+    - name="fetch_user", namespace="web" -> namespace="web", name="fetch_user"
+    - name="fetch_user" -> namespace="default", name="fetch_user"
+
     Args:
         name: Optional tool name. If not provided, uses the class name.
+              Supports dotted names like "namespace.tool_name" which will
+              auto-extract the namespace (unless explicit namespace is provided).
         namespace: Namespace for the tool (default: "default").
         defer_loading: If True, tool is loaded on-demand rather than eagerly (default: False).
         search_keywords: Keywords for tool discovery when using defer_loading.
@@ -262,6 +269,12 @@ def register_tool(
         ... class Calculator:
         ...     async def execute(self, a: int, b: int) -> int:
         ...         return a + b
+
+        >>> # Dotted name auto-extracts namespace
+        >>> @register_tool(name="web.fetch_user")
+        ... class FetchUser:
+        ...     async def execute(self, user_id: str) -> dict:
+        ...         return {"user_id": user_id}
 
         >>> @register_tool(
         ...     namespace="data",
@@ -286,8 +299,15 @@ def register_tool(
         if hasattr(cls, "execute") and not inspect.iscoroutinefunction(cls.execute):
             raise TypeError(f"Tool {cls.__name__} must have an async execute method")
 
-        # Determine the tool name
+        # Determine the tool name and namespace
+        # Support dotted names: @tool(name="web.fetch_user") -> namespace="web", name="fetch_user"
         tool_name = name or cls.__name__
+        actual_namespace = namespace
+
+        if "." in tool_name and namespace == "default":
+            parts = tool_name.split(".", 1)
+            actual_namespace = parts[0]
+            tool_name = parts[1]
 
         # FIXED: Add subprocess serialization support with Pydantic handling
         enhanced_cls = _add_subprocess_serialization_support(cls, tool_name)
@@ -306,10 +326,12 @@ def register_tool(
             class_name = cls.__name__
             complete_metadata["import_path"] = f"{module_name}.{class_name}"
 
-        # Create registration function
+        # Create registration function (use actual_namespace for proper namespace resolution)
         async def do_register():
             registry = await ToolRegistryProvider.get_registry()
-            await registry.register_tool(enhanced_cls, name=tool_name, namespace=namespace, metadata=complete_metadata)
+            await registry.register_tool(
+                enhanced_cls, name=tool_name, namespace=actual_namespace, metadata=complete_metadata
+            )
 
         _PENDING_REGISTRATIONS.append(do_register)
         _REGISTERED_CLASSES.add(enhanced_cls)
@@ -317,12 +339,12 @@ def register_tool(
         # Add class attribute for identification
         enhanced_cls._tool_registration_info = {
             "name": tool_name,
-            "namespace": namespace,
+            "namespace": actual_namespace,
             "metadata": complete_metadata,
         }
 
         # Store for test resets
-        _REGISTRATION_INFO.append((enhanced_cls, tool_name, namespace, complete_metadata))
+        _REGISTRATION_INFO.append((enhanced_cls, tool_name, actual_namespace, complete_metadata))
 
         return enhanced_cls
 
@@ -457,8 +479,13 @@ def tool(
     This is a shorter, more intuitive name for the register_tool decorator.
     Use whichever you prefer - they're identical in functionality.
 
+    Supports dotted names for automatic namespace extraction:
+    - name="web.fetch_user" -> namespace="web", name="fetch_user"
+    - name="fetch_user", namespace="web" -> namespace="web", name="fetch_user"
+
     Args:
         name: Optional tool name. If not provided, uses the class name.
+              Supports dotted names like "namespace.tool_name" for auto namespace extraction.
         namespace: Namespace for the tool (default: "default").
         defer_loading: If True, tool is loaded on-demand rather than eagerly.
         search_keywords: Keywords for tool discovery when using defer_loading.
@@ -466,14 +493,14 @@ def tool(
         **metadata: Additional metadata for the tool.
 
     Example:
-        >>> # Short and clean
+        >>> # Short and clean with dotted names
+        >>> @tool(name="web.fetch_user")
+        ... class FetchUserTool:
+        ...     async def execute(self, user_id: str) -> dict:
+        ...         return {"user_id": user_id}
+
+        >>> # Or with explicit namespace
         >>> @tool(name="add", namespace="math")
-        ... class AddTool:
-        ...     async def execute(self, a: int, b: int) -> int:
-        ...         return a + b
-        >>>
-        >>> # Equivalent to:
-        >>> @register_tool(name="add", namespace="math")
         ... class AddTool:
         ...     async def execute(self, a: int, b: int) -> int:
         ...         return a + b
