@@ -3,12 +3,12 @@
 
 import pytest
 
-from chuk_tool_processor.guards.base import GuardVerdict
 from chuk_tool_processor.guards.assumption_trace import (
     AssumptionTraceGuard,
     AssumptionTraceGuardConfig,
     inventory_sigma_constraints,
 )
+from chuk_tool_processor.guards.base import GuardVerdict
 
 
 class TestAssumptionTraceGuard:
@@ -155,7 +155,7 @@ class TestAssumptionExtraction:
         """Test extracts σ_daily from text."""
         text = "I'll assume CV=0.3, so σ_daily = 11.1 units/day"
 
-        extracted = guard.extract_assumptions(text)
+        guard.extract_assumptions(text)
 
         # Should extract σ_daily = 11.1
         sigma = guard.get_assumptions().get("sigma_daily")

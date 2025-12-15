@@ -16,7 +16,7 @@ under tool pressure.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -238,8 +238,7 @@ class AssumptionTraceGuard(BaseGuard):
             messages = []
             for v in violations:
                 messages.append(
-                    f"ASSUMPTION_VIOLATION: {v.message} "
-                    f"(expected {v.expected_value}, got {v.actual_value})"
+                    f"ASSUMPTION_VIOLATION: {v.message} (expected {v.expected_value}, got {v.actual_value})"
                 )
 
             reason = "; ".join(messages)
@@ -276,7 +275,7 @@ class AssumptionTraceGuard(BaseGuard):
     def _check_constraints(
         self,
         tool_call: ToolCall,
-        context: str | None,
+        context: str | None,  # noqa: ARG002
     ) -> list[TraceViolation]:
         """Check tool call against configured constraints.
 
@@ -361,8 +360,8 @@ class AssumptionTraceGuard(BaseGuard):
 
     def check_output(
         self,
-        tool_name: str,
-        arguments: dict[str, Any],
+        tool_name: str,  # noqa: ARG002
+        arguments: dict[str, Any],  # noqa: ARG002
         result: Any,
     ) -> GuardResult:
         """Record tool output and check for consistency.
@@ -403,10 +402,7 @@ class AssumptionTraceGuard(BaseGuard):
     def get_status(self) -> dict[str, Any]:
         """Get current guard status."""
         return {
-            "assumptions": {
-                name: {"value": a.value, "source": a.source_text}
-                for name, a in self._assumptions.items()
-            },
+            "assumptions": {name: {"value": a.value, "source": a.source_text} for name, a in self._assumptions.items()},
             "trace_length": len(self._tool_trace),
             "violations": len(self._violations),
             "current_context": self._current_context,

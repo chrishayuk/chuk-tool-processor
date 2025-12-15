@@ -24,6 +24,14 @@ Composition:
 - GuardChain: Composes multiple guards in sequence
 """
 
+from chuk_tool_processor.guards.assumption_trace import (
+    Assumption,
+    AssumptionTraceGuard,
+    AssumptionTraceGuardConfig,
+    ToolCall,
+    TraceViolation,
+    inventory_sigma_constraints,
+)
 from chuk_tool_processor.guards.base import (
     BaseGuard,
     Guard,
@@ -92,14 +100,6 @@ from chuk_tool_processor.guards.retry_safety import (
     RetrySafetyConfig,
     RetrySafetyGuard,
     RetryState,
-)
-from chuk_tool_processor.guards.assumption_trace import (
-    Assumption,
-    AssumptionTraceGuard,
-    AssumptionTraceGuardConfig,
-    ToolCall,
-    TraceViolation,
-    inventory_sigma_constraints,
 )
 from chuk_tool_processor.guards.runaway import (
     RunawayGuard,
