@@ -31,6 +31,7 @@ uv run python examples/01_getting_started/hello_tool.py
 |---------|-------------|
 | **[wrappers_demo.py](02_production_features/wrappers_demo.py)** | Caching, retries, rate limits, circuit breakers |
 | **[observability_demo.py](02_production_features/observability_demo.py)** | OpenTelemetry + Prometheus integration |
+| **[guards_demo.py](../guards_demo.py)** | Runtime guards: validation, security, resource limits |
 
 ---
 
@@ -176,6 +177,7 @@ async with ToolProcessor(
 For complete documentation, see:
 - **[../README.md](../README.md)** - Main documentation
 - **[../docs/CONFIGURATION.md](../docs/CONFIGURATION.md)** - All configuration options
+- **[../docs/GUARDS.md](../docs/GUARDS.md)** - Runtime guards for safety & validation
 - **[../docs/OBSERVABILITY.md](../docs/OBSERVABILITY.md)** - Metrics & tracing
 - **[../docs/ERRORS.md](../docs/ERRORS.md)** - Error codes & handling
 - **[../docs/MCP.md](../docs/MCP.md)** - MCP integration guide

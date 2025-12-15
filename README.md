@@ -171,6 +171,22 @@ results = await processor.process(json_output)
 | **SchedulerPolicy** | DAG-based scheduling with dependencies, deadlines, pool limits |
 | **GreedyDagScheduler** | Built-in scheduler with topological sort and deadline-aware skipping |
 
+### Runtime Guards (Constitution Layer)
+
+| Guard | Description |
+|-------|-------------|
+| **SchemaStrictnessGuard** | Validates arguments against JSON schemas, optional type coercion |
+| **SensitiveDataGuard** | Detects and blocks/redacts secrets (API keys, JWTs, private keys) |
+| **NetworkPolicyGuard** | SSRF defense — blocks private IPs, metadata endpoints, enforces HTTPS |
+| **SideEffectGuard** | Labels tools as read_only/write/destructive, enforces policies |
+| **ConcurrencyGuard** | Limits simultaneous in-flight calls (global, per-tool, per-namespace) |
+| **TimeoutBudgetGuard** | Enforces wall-clock time budgets with soft/hard limits |
+| **OutputSizeGuard** | Prevents pathological payloads from blowing up context |
+| **RetrySafetyGuard** | Guards retry behavior (backoff, idempotency keys, non-retryable errors) |
+| **ProvenanceGuard** | Tracks output attribution and lineage |
+| **PlanShapeGuard** | Detects pathological patterns (fan-out explosions, long chains) |
+| **SaturationGuard** | Detects degenerate statistical outputs (extreme Z-scores, saturated CDFs) |
+
 ### Integration & Observability
 
 | Feature | Description |
@@ -397,6 +413,48 @@ See [examples/02_production_features/distributed_config_demo.py](examples/02_pro
 
 ---
 
+## Runtime Guards
+
+Protect your tool execution with composable guards that enforce safety policies:
+
+```python
+from chuk_tool_processor.guards import (
+    GuardChain,
+    SchemaStrictnessGuard,
+    SensitiveDataGuard,
+    NetworkPolicyGuard,
+    ConcurrencyGuard,
+)
+
+# Create individual guards
+schema_guard = SchemaStrictnessGuard(get_schema=my_schema_getter)
+sensitive_guard = SensitiveDataGuard()  # Detects API keys, JWTs, etc.
+network_guard = NetworkPolicyGuard(block_private_ips=True)
+concurrency_guard = ConcurrencyGuard(global_max=50, per_tool_max={"heavy_api": 2})
+
+# Compose into a chain
+chain = GuardChain([schema_guard, sensitive_guard, network_guard, concurrency_guard])
+
+# Check before execution
+result = await chain.check_all_async("api.fetch", {"url": "https://example.com"})
+if result.blocked:
+    print(f"Blocked by {result.stopped_at}: {result.reason}")
+```
+
+**Key Guards:**
+- **SchemaStrictnessGuard** — Validate args against JSON schemas, auto-coerce types
+- **SensitiveDataGuard** — Block or redact secrets (API keys, JWTs, private keys)
+- **NetworkPolicyGuard** — SSRF defense (block localhost, private IPs, metadata endpoints)
+- **SideEffectGuard** — Enforce read-only mode, block destructive ops in production
+- **ConcurrencyGuard** — Limit in-flight calls globally, per-tool, or per-namespace
+- **TimeoutBudgetGuard** — Enforce wall-clock budgets with soft/hard limits
+- **OutputSizeGuard** — Prevent pathological payloads (size, depth, array length)
+- **SaturationGuard** — Detect degenerate statistical outputs (extreme Z-scores, saturated CDFs)
+
+See [GUARDS.md](docs/GUARDS.md) for complete documentation and examples.
+
+---
+
 ## Observability
 
 One-line setup for production monitoring:
@@ -454,6 +512,7 @@ See [ERRORS.md](docs/ERRORS.md) for complete error taxonomy.
 | [**GETTING_STARTED.md**](docs/GETTING_STARTED.md) | Creating tools, using the processor, ValidatedTool, StreamingTool |
 | [**CORE_CONCEPTS.md**](docs/CORE_CONCEPTS.md) | Registry, strategies, wrappers, parsers, MCP overview |
 | [**PRODUCTION_PATTERNS.md**](docs/PRODUCTION_PATTERNS.md) | Bulkheads, scoped registries, ExecutionContext, parallel execution |
+| [**GUARDS.md**](docs/GUARDS.md) | Runtime guards for safety, validation, and resource management |
 | [**MCP_INTEGRATION.md**](docs/MCP_INTEGRATION.md) | HTTP Streamable, STDIO, SSE, OAuth, Middleware Stack |
 | [**ADVANCED_TOPICS.md**](docs/ADVANCED_TOPICS.md) | Deferred loading, code sandbox, isolated strategy, testing |
 | [**CONFIGURATION.md**](docs/CONFIGURATION.md) | All config options and environment variables |
@@ -479,6 +538,9 @@ python examples/02_production_features/runtime_features_demo.py
 
 # Structured error handling for planners
 python examples/02_production_features/structured_errors_demo.py
+
+# Runtime guards (validation, security, resource limits)
+python examples/guards_demo.py
 
 # Redis registry for distributed deployments
 python examples/02_production_features/redis_registry_demo.py
