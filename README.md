@@ -187,6 +187,16 @@ results = await processor.process(json_output)
 | **PlanShapeGuard** | Detects pathological patterns (fan-out explosions, long chains) |
 | **SaturationGuard** | Detects degenerate statistical outputs (extreme Z-scores, saturated CDFs) |
 
+### Dynamic Tool Discovery
+
+| Feature | Description |
+|---------|-------------|
+| **Intelligent Search** | Natural language queries find tools ("gaussian" → "normal_cdf") |
+| **Synonym Expansion** | Built-in synonyms for math, statistics, file ops, networking |
+| **Fuzzy Matching** | Typo tolerance ("multipley" finds "multiply") |
+| **Session Boosting** | Recently used tools rank higher in search results |
+| **Dynamic Provider** | Base class for LLM-driven tool discovery and execution |
+
 ### Integration & Observability
 
 | Feature | Description |
@@ -455,6 +465,53 @@ See [GUARDS.md](docs/GUARDS.md) for complete documentation and examples.
 
 ---
 
+## Dynamic Tool Discovery
+
+When you have hundreds of tools, LLMs can't load all schemas upfront. The discovery module provides intelligent search and on-demand tool loading:
+
+```python
+from chuk_tool_processor.discovery import ToolSearchEngine, BaseDynamicToolProvider
+
+# Create a search engine for your tools
+engine = ToolSearchEngine()
+engine.set_tools(my_tools)
+
+# Natural language search with synonym expansion
+results = engine.search("gaussian distribution")  # Finds "normal_cdf"
+results = engine.search("find the average")       # Finds "calculate_mean"
+results = engine.search("multipley")              # Finds "multiply" (typo tolerance)
+
+# Session boosting - recently used tools rank higher
+engine.record_tool_use("calculate_mean", success=True)
+engine.advance_turn()
+results = engine.search("calculate")  # "calculate_mean" now boosted
+```
+
+**Dynamic Provider Pattern** — give LLMs meta-tools for discovery:
+
+```python
+class MyToolProvider(BaseDynamicToolProvider):
+    async def get_all_tools(self) -> list[Tool]:
+        return self._tools
+
+    async def execute_tool(self, name: str, args: dict) -> dict:
+        return await self._tools[name].execute(**args)
+
+provider = MyToolProvider()
+
+# LLM gets 4 meta-tools: list_tools, search_tools, get_tool_schema, call_tool
+tools_for_llm = provider.get_dynamic_tools()
+
+# LLM workflow: search → get schema → call
+results = await provider.search_tools("calculate average")
+schema = await provider.get_tool_schema("calculate_mean")
+result = await provider.call_tool("calculate_mean", {"values": [1, 2, 3]})
+```
+
+See [DISCOVERY.md](docs/DISCOVERY.md) for complete documentation.
+
+---
+
 ## Observability
 
 One-line setup for production monitoring:
@@ -512,6 +569,7 @@ See [ERRORS.md](docs/ERRORS.md) for complete error taxonomy.
 | [**GETTING_STARTED.md**](docs/GETTING_STARTED.md) | Creating tools, using the processor, ValidatedTool, StreamingTool |
 | [**CORE_CONCEPTS.md**](docs/CORE_CONCEPTS.md) | Registry, strategies, wrappers, parsers, MCP overview |
 | [**PRODUCTION_PATTERNS.md**](docs/PRODUCTION_PATTERNS.md) | Bulkheads, scoped registries, ExecutionContext, parallel execution |
+| [**DISCOVERY.md**](docs/DISCOVERY.md) | Dynamic tool discovery, intelligent search, synonym expansion |
 | [**GUARDS.md**](docs/GUARDS.md) | Runtime guards for safety, validation, and resource management |
 | [**MCP_INTEGRATION.md**](docs/MCP_INTEGRATION.md) | HTTP Streamable, STDIO, SSE, OAuth, Middleware Stack |
 | [**ADVANCED_TOPICS.md**](docs/ADVANCED_TOPICS.md) | Deferred loading, code sandbox, isolated strategy, testing |
@@ -526,6 +584,9 @@ See [ERRORS.md](docs/ERRORS.md) for complete error taxonomy.
 ```bash
 # Getting started
 python examples/01_getting_started/hello_tool.py
+
+# Dynamic tool discovery (search, synonyms, fuzzy matching)
+python examples/07_discovery/dynamic_tools_demo.py
 
 # Hero demo: 8 tools, 5-second deadline, 3 pools (DAG + bulkheads + context)
 python examples/02_production_features/hero_runtime_demo.py

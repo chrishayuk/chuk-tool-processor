@@ -44,6 +44,20 @@ from chuk_tool_processor.core.context import (
 )
 from chuk_tool_processor.core.processor import ToolProcessor
 
+# Discovery (tool search and dynamic providers)
+from chuk_tool_processor.discovery import (
+    BaseDynamicToolProvider,
+    DynamicToolName,
+    SearchableTool,
+    SearchResult,
+    SessionToolStats,
+    ToolSearchEngine,
+    find_tool_by_alias,
+    find_tool_exact,
+    get_search_engine,
+    search_tools,
+)
+
 # Execution strategies and bulkhead
 from chuk_tool_processor.execution.bulkhead import (
     Bulkhead,
@@ -312,6 +326,17 @@ __all__ = [
     "PlanShapeState",
     "PlanShapeViolation",
     "PlanShapeViolationType",
+    # Discovery
+    "BaseDynamicToolProvider",
+    "DynamicToolName",
+    "ToolSearchEngine",
+    "SearchResult",
+    "SearchableTool",
+    "SessionToolStats",
+    "get_search_engine",
+    "search_tools",
+    "find_tool_exact",
+    "find_tool_by_alias",
 ]
 
 # Type checking exports (documentation only)
