@@ -160,3 +160,69 @@ class TestSaturationGuard:
         """Test handles namespaced tool names."""
         result = guard.check("stats.normal_cdf", {"x": 55, "mean": 0, "std": 1})
         assert result.verdict == GuardVerdict.WARN
+
+    def test_output_check_string_result(self, guard):
+        """Test output check handles string numeric results."""
+        result = guard.check_output("normal_cdf", {}, "0.975")
+        assert result.verdict == GuardVerdict.ALLOW
+
+    def test_output_check_string_non_numeric(self, guard):
+        """Test output check handles non-numeric strings gracefully."""
+        result = guard.check_output("normal_cdf", {}, "not a number")
+        assert result.verdict == GuardVerdict.ALLOW
+
+    def test_output_check_none_result(self, guard):
+        """Test output check handles None result."""
+        result = guard.check_output("normal_cdf", {}, None)
+        assert result.verdict == GuardVerdict.ALLOW
+
+    def test_output_check_list_result(self, guard):
+        """Test output check handles list result (returns None from extract)."""
+        result = guard.check_output("normal_cdf", {}, [1.0, 2.0, 3.0])
+        assert result.verdict == GuardVerdict.ALLOW
+
+    def test_extracts_numeric_from_dict_value_key(self, guard):
+        """Test extracts numeric from dict with 'value' key."""
+        guard.check_output("normal_cdf", {}, {"value": 1.0})
+        assert guard._consecutive_degenerate == 1
+
+    def test_extracts_numeric_from_dict_output_key(self, guard):
+        """Test extracts numeric from dict with 'output' key."""
+        guard.check_output("normal_cdf", {}, {"output": 1.0})
+        assert guard._consecutive_degenerate == 1
+
+    def test_extracts_numeric_from_nested_dict(self, guard):
+        """Test extracts numeric from nested dict."""
+        guard.check_output("normal_cdf", {}, {"result": {"value": 1.0}})
+        assert guard._consecutive_degenerate == 1
+
+    def test_extracts_numeric_from_int(self, guard):
+        """Test extracts numeric from int value."""
+        guard.check_output("normal_cdf", {}, 1)
+        assert guard._consecutive_degenerate == 1
+
+    def test_output_check_dotted_tool_names(self, guard):
+        """Test output check handles namespaced tool names."""
+        # First two degenerate outputs from namespaced tool
+        guard.check_output("stats.normal_cdf", {}, 1.0)
+        guard.check_output("stats.normal_cdf", {}, 1.0)
+
+        # Third should warn
+        result = guard.check_output("stats.normal_cdf", {}, 1.0)
+        assert result.verdict == GuardVerdict.WARN
+        assert "DEGENERATE_OUTPUT" in result.reason
+
+    def test_output_check_degenerate_zero(self, guard):
+        """Test output check detects 0.0 as degenerate."""
+        guard.check_output("normal_cdf", {}, 0.0)
+        guard.check_output("normal_cdf", {}, 0.0)
+        result = guard.check_output("normal_cdf", {}, 0.0)
+        assert result.verdict == GuardVerdict.WARN
+
+    def test_default_config(self):
+        """Test default config initialization."""
+        guard = SaturationGuard()
+        assert guard.config.cdf_tools == set()
+        assert guard.config.z_threshold == 8.0
+        assert guard.config.block_on_extreme is False
+        assert guard.config.degenerate_values == set()
