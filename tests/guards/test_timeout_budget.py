@@ -63,12 +63,12 @@ class TestTimeoutBudgetGuard:
         """Test soft limit triggers warning."""
         guard = TimeoutBudgetGuard(
             config=TimeoutBudgetConfig(
-                per_turn_budget_ms=100,  # 100ms
-                soft_budget_ratio=0.3,  # 30ms soft limit
+                per_turn_budget_ms=1000,  # 1 second (generous hard limit)
+                soft_budget_ratio=0.05,  # 50ms soft limit
             )
         )
         guard.start_turn()
-        time.sleep(0.05)  # 50ms - past soft limit but under hard
+        time.sleep(0.1)  # 100ms - past soft limit but well under hard
         result = guard.check("tool", {})
         assert result.verdict == GuardVerdict.WARN
         assert guard.is_degraded()
