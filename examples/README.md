@@ -96,6 +96,41 @@ results = await processor.process('<tool name="notion.search_pages" args=\'{"que
 
 ---
 
+### 07 → Dynamic Tool Discovery
+
+**Let LLMs discover and execute tools on-demand:**
+
+| Example | Description |
+|---------|-------------|
+| **[dynamic_tools_demo.py](07_discovery/dynamic_tools_demo.py)** | Intelligent search, synonym expansion, fuzzy matching, session boosting |
+
+The discovery module bridges the gap between how LLMs describe tools and how tools are named in code:
+
+```python
+from chuk_tool_processor.discovery import ToolSearchEngine, BaseDynamicToolProvider
+
+# Search finds tools using natural language
+engine = ToolSearchEngine()
+engine.set_tools(my_tools)
+
+# "gaussian" finds "normal_cdf", "average" finds "calculate_mean"
+results = engine.search("gaussian distribution cdf")
+
+# Dynamic provider gives LLMs 4 meta-tools:
+# list_tools, search_tools, get_tool_schema, call_tool
+class MyProvider(BaseDynamicToolProvider):
+    async def get_all_tools(self): ...
+    async def execute_tool(self, name, args): ...
+```
+
+**Key features:**
+- **Synonym expansion**: "gaussian" → "normal", "cdf" → "cumulative"
+- **Fuzzy matching**: "multipley" finds "multiply" (typo tolerance)
+- **Session boosting**: Recently used tools rank higher
+- **Alias resolution**: "normalCdf" and "normal_cdf" both work
+
+---
+
 ## 🚀 Advanced Examples
 
 **For specialized integrations and advanced patterns:**
@@ -177,6 +212,7 @@ async with ToolProcessor(
 For complete documentation, see:
 - **[../README.md](../README.md)** - Main documentation
 - **[../docs/CONFIGURATION.md](../docs/CONFIGURATION.md)** - All configuration options
+- **[../docs/DISCOVERY.md](../docs/DISCOVERY.md)** - Dynamic tool discovery & search
 - **[../docs/GUARDS.md](../docs/GUARDS.md)** - Runtime guards for safety & validation
 - **[../docs/OBSERVABILITY.md](../docs/OBSERVABILITY.md)** - Metrics & tracing
 - **[../docs/ERRORS.md](../docs/ERRORS.md)** - Error codes & handling
