@@ -53,6 +53,10 @@ from chuk_tool_processor.guards.concurrency import (
     ConcurrencyLimitExceeded,
     ConcurrencyState,
 )
+from chuk_tool_processor.guards.contract_guard import (
+    ContractAwareGuardChain,
+    ContractGuard,
+)
 from chuk_tool_processor.guards.models import (
     EnforcementLevel,
     ToolClassification,
@@ -236,4 +240,7 @@ __all__ = [
     "ToolCall",
     "TraceViolation",
     "inventory_sigma_constraints",
+    # Contract guard
+    "ContractGuard",
+    "ContractAwareGuardChain",
 ]

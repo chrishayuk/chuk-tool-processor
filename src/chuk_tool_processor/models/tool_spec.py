@@ -6,6 +6,7 @@ This module provides a unified way to describe tools with their:
 - Input/output schemas (JSON Schema)
 - Versioning information
 - Capabilities (streaming, cancellable, idempotent, etc.)
+- Contracts (pre/post conditions, cost hints)
 - Export to various formats (OpenAI, MCP, Anthropic)
 """
 
@@ -14,9 +15,12 @@ from __future__ import annotations
 import inspect
 from collections.abc import Callable
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
+
+if TYPE_CHECKING:
+    from chuk_tool_processor.models.tool_contract import ToolContract
 
 
 class ToolCapability(str, Enum):
@@ -101,6 +105,13 @@ class ToolSpec(BaseModel):
         description="Allowed callers: ['claude', 'programmatic']. None = all allowed.",
     )
 
+    # Contract (pre/post conditions, cost hints)
+    # Uses string annotation for forward reference - resolved at runtime
+    contract: ToolContract | None = Field(
+        default=None,
+        description="Tool contract with preconditions, postconditions, and execution hints",
+    )
+
     # ------------------------------------------------------------------ #
     # Capability checks
     # ------------------------------------------------------------------ #
@@ -119,6 +130,60 @@ class ToolSpec(BaseModel):
     def is_cacheable(self) -> bool:
         """Check if results can be cached."""
         return self.has_capability(ToolCapability.CACHEABLE)
+
+    # ------------------------------------------------------------------ #
+    # Contract-based properties
+    # ------------------------------------------------------------------ #
+    @property
+    def is_deterministic(self) -> bool:
+        """Check if tool is deterministic (from contract)."""
+        if self.contract is None:
+            return False
+        from chuk_tool_processor.models.tool_contract import Determinism
+
+        return bool(self.contract.determinism == Determinism.PURE)
+
+    @property
+    def is_safe_to_retry(self) -> bool:
+        """Check if tool is safe to retry (idempotent or no side effects)."""
+        if self.has_capability(ToolCapability.IDEMPOTENT):
+            return True
+        if self.contract is not None:
+            return bool(self.contract.is_safe_to_retry)
+        return False
+
+    @property
+    def cost_hint(self) -> int:
+        """Get cost hint from contract (default 1)."""
+        if self.contract is None:
+            return 1
+        return int(self.contract.cost_hint)
+
+    def validate_arguments(self, arguments: dict[str, Any]) -> list[str]:
+        """
+        Validate arguments against contract preconditions.
+
+        Returns:
+            List of violation messages (empty if valid)
+        """
+        if self.contract is None:
+            return []
+
+        violations = self.contract.check_preconditions(arguments)
+        return [v.message for v in violations]
+
+    def validate_result(self, arguments: dict[str, Any], result: Any) -> list[str]:
+        """
+        Validate result against contract postconditions.
+
+        Returns:
+            List of violation messages (empty if valid)
+        """
+        if self.contract is None:
+            return []
+
+        violations = self.contract.check_postconditions(arguments, result)
+        return [v.message for v in violations]
 
     # ------------------------------------------------------------------ #
     # Export formats
@@ -384,3 +449,17 @@ def tool_spec(
         return cls
 
     return decorator
+
+
+# ------------------------------------------------------------------ #
+# Forward reference resolution for ToolContract
+# ------------------------------------------------------------------ #
+def _rebuild_tool_spec() -> None:
+    """Rebuild ToolSpec model to resolve forward references."""
+    from chuk_tool_processor.models.tool_contract import ToolContract
+
+    ToolSpec.model_rebuild(_types_namespace={"ToolContract": ToolContract})
+
+
+# Call rebuild at module load time
+_rebuild_tool_spec()

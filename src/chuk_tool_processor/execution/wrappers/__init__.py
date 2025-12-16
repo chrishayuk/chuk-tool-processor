@@ -24,6 +24,10 @@ from chuk_tool_processor.execution.wrappers.factory import (
     create_production_executor,
     create_rate_limiter,
 )
+from chuk_tool_processor.execution.wrappers.observable import (
+    ObservableExecutor,
+    TracingExecutorMixin,
+)
 from chuk_tool_processor.execution.wrappers.rate_limiting import (
     RateLimitedToolExecutor,
     RateLimiter,
@@ -88,6 +92,9 @@ __all__ = [
     "create_circuit_breaker",
     "create_rate_limiter",
     "create_production_executor",
+    # Observable execution
+    "ObservableExecutor",
+    "TracingExecutorMixin",
 ]
 
 # Add Redis exports if available
