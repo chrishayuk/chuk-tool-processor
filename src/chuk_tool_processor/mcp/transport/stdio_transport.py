@@ -635,7 +635,12 @@ class StdioTransport(MCPBaseTransport):
         try:
             response = await asyncio.wait_for(send_resources_read(*self._streams, uri), timeout=self.default_timeout)
             self._consecutive_failures = 0  # Reset on success
-            return response if isinstance(response, dict) else {}
+            if isinstance(response, dict):
+                return response
+            # send_resources_read returns a pydantic ReadResourceResult model
+            if hasattr(response, "model_dump"):
+                return response.model_dump()
+            return {}
         except TimeoutError:
             logger.error("Read resource timed out")
             self._consecutive_failures += 1

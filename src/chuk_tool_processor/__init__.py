@@ -20,10 +20,11 @@ Quick Start:
     >>> asyncio.run(main())
 """
 
+from importlib.metadata import version as _pkg_version
 from typing import TYPE_CHECKING
 
-# Version
-__version__ = "0.9.7"
+# Version — single source of truth is pyproject.toml
+__version__ = _pkg_version("chuk-tool-processor")
 
 # Core processor and context
 # Configuration
