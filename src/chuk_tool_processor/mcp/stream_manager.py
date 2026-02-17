@@ -677,6 +677,47 @@ class StreamManager:
         await asyncio.gather(*(_one(n, t) for n, t in self.transports.items()), return_exceptions=True)
         return out
 
+    async def read_resource(self, uri: str, server_name: str | None = None) -> dict[str, Any]:
+        """Read a specific resource by URI.
+
+        Args:
+            uri: Resource URI to read (e.g. ui://tool/app.html)
+            server_name: Optional server name to target. If None, tries all.
+
+        Returns:
+            Resource content dict from the server, or empty dict on error.
+        """
+        if self._closed:
+            return {}
+
+        # If a specific server is requested, try just that one
+        if server_name and server_name in self.transports:
+            transport = self.transports[server_name]
+            if hasattr(transport, "read_resource"):
+                try:
+                    return await asyncio.wait_for(
+                        transport.read_resource(uri),
+                        timeout=self.timeout_config.operation,
+                    )
+                except Exception as exc:
+                    logger.debug("resources/read failed for %s: %s", server_name, exc)
+                    return {}
+
+        # Try all transports until one succeeds
+        for name, transport in self.transports.items():
+            if not hasattr(transport, "read_resource"):
+                continue
+            try:
+                result = await asyncio.wait_for(
+                    transport.read_resource(uri),
+                    timeout=self.timeout_config.operation,
+                )
+                if result:
+                    return result
+            except Exception as exc:
+                logger.debug("resources/read failed for %s: %s", name, exc)
+        return {}
+
     async def list_prompts(self) -> list[dict[str, Any]]:
         if self._closed:
             return []

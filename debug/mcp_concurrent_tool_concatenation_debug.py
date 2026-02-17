@@ -8,7 +8,7 @@ MCP tool calls without JSON concatenation or parsing issues.
 This proves the issue seen in mcp-cli is a client-side streaming parser bug,
 not a tool processor problem.
 
-Uses Chris Hay's extensive MCP server configuration (25+ servers) to create
+Uses an extensive MCP server configuration (25+ servers) to create
 a realistic test environment that matches real-world usage.
 
 Expected: All tools work perfectly in parallel without JSON corruption.
@@ -66,7 +66,7 @@ from chuk_tool_processor.registry.provider import ToolRegistryProvider
 logger = get_logger("mcp-concurrent-demo")
 
 # ─── configuration ─────────────────────────────────────────────────────────
-CONFIG_FILE = Path.home() / "chris-source/chuk-ai/chuk-tool-processor/server_config.json"
+CONFIG_FILE = Path(__file__).resolve().parent.parent / "server_config.json"
 NAMESPACE = "mcp_demo"
 
 # Test server selection - choosing reliable, fast servers for demonstration

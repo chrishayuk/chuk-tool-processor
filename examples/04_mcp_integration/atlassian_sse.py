@@ -8,8 +8,8 @@ This script demonstrates:
 3. Proper initialization_timeout handling for slow servers
 
 Usage:
-    cd /Users/chrishay/chris-source/chuk-ai/chuk-tool-processor
-    uv run python examples/atlassian_sse.py
+    cd chuk-tool-processor
+    uv run python examples/04_mcp_integration/atlassian_sse.py
 """
 
 import asyncio

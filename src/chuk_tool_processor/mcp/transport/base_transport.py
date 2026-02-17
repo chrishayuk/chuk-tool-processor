@@ -98,6 +98,18 @@ class MCPBaseTransport(ABC):
         """
         raise NotImplementedError
 
+    async def read_resource(self, uri: str) -> dict[str, Any]:
+        """
+        Read a specific resource by URI.
+
+        Args:
+            uri: Resource URI to read.
+
+        Returns:
+            Dictionary containing resource content or empty dict if not supported.
+        """
+        raise NotImplementedError
+
     @abstractmethod
     async def list_prompts(self) -> dict[str, Any]:
         """

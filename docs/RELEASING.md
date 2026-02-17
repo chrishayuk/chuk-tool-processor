@@ -72,7 +72,7 @@ Once you push the tag, GitHub Actions will automatically:
 
 After the workflows complete:
 
-1. Check the [GitHub Releases page](https://github.com/chrishayuk/chuk-tool-processor/releases) for the new release
+1. Check the GitHub Releases page for the new release
 2. Verify the package on [PyPI](https://pypi.org/project/chuk-tool-processor/)
 3. Test installation: `pip install chuk-tool-processor==X.Y.Z`
 
@@ -82,11 +82,11 @@ If you need to manually trigger a release:
 
 ### Manual GitHub Release
 
-Go to the [Actions tab](https://github.com/chrishayuk/chuk-tool-processor/actions/workflows/release.yml) and click "Run workflow", then enter the tag name (e.g., `v0.9.3`).
+Go to the Actions tab in GitHub and click "Run workflow" on `release.yml`, then enter the tag name (e.g., `v0.9.3`).
 
 ### Manual PyPI Publish
 
-Go to the [Actions tab](https://github.com/chrishayuk/chuk-tool-processor/actions/workflows/publish.yml) and click "Run workflow". You can optionally skip tests (not recommended).
+Go to the Actions tab in GitHub and click "Run workflow" on `publish.yml`. You can optionally skip tests (not recommended).
 
 ## Troubleshooting
 
@@ -109,7 +109,7 @@ If the tag doesn't match `pyproject.toml`, the release workflow will fail. Updat
 
 If publishing fails:
 
-1. Check the [workflow logs](https://github.com/chrishayuk/chuk-tool-processor/actions/workflows/publish.yml)
+1. Check the workflow logs for `publish.yml` in GitHub Actions
 2. Verify the PyPI environment is configured in GitHub repository settings
 3. Ensure PyPI trusted publishing is set up correctly
 
@@ -141,7 +141,6 @@ If you need to set this up for a new project:
 
 1. Go to PyPI project settings
 2. Add a trusted publisher with:
-   - Owner: `chrishayuk`
    - Repository: `chuk-tool-processor`
    - Workflow: `publish.yml`
    - Environment: `pypi`

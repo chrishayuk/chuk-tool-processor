@@ -13,7 +13,7 @@ Prerequisites:
     uvx chuk-mcp-math-server
 
 Usage:
-    PYTHONPATH=/Users/christopherhay/chris-source/chuk-ai/chuk-tool-processor/src python examples/advanced_tool_use_math_server.py
+    uv run python examples/advanced_tool_use_math_server.py
 """
 
 import asyncio

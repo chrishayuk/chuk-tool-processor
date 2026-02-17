@@ -8,8 +8,8 @@ Prerequisites:
     chuk-mcp-echo server (installed automatically via uvx)
 
 Usage:
-    cd /Users/chrishay/chris-source/chuk-ai/chuk-tool-processor
-    uv run python examples/stdio_echo.py
+    cd chuk-tool-processor
+    uv run python examples/04_mcp_integration/stdio_echo.py
 """
 
 import asyncio

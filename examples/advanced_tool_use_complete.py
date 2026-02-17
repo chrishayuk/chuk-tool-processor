@@ -14,7 +14,7 @@ This example shows how to:
 - Mark tools for programmatic execution
 
 Usage:
-    PYTHONPATH=/Users/christopherhay/chris-source/chuk-ai/chuk-tool-processor/src python examples/advanced_tool_use_complete.py
+    uv run python examples/advanced_tool_use_complete.py
 """
 
 import asyncio
