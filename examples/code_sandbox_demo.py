@@ -12,7 +12,7 @@ The sandbox:
 - Works with any LLM that can generate Python code
 
 Usage:
-    PYTHONPATH=/Users/christopherhay/chris-source/chuk-ai/chuk-tool-processor/src python examples/code_sandbox_demo.py
+    uv run python examples/code_sandbox_demo.py
 """
 
 import asyncio

@@ -8,8 +8,8 @@ This script:
 3. Proves OAuth headers are preserved and not overwritten
 
 Usage:
-    cd /Users/chrishay/chris-source/chuk-ai/chuk-tool-processor
-    uv run python examples/test_notion_oauth.py
+    cd chuk-tool-processor
+    uv run python examples/04_mcp_integration/notion_oauth.py
 """
 
 import asyncio

@@ -2,7 +2,7 @@
 
 [![PyPI](https://img.shields.io/pypi/v/chuk-tool-processor.svg)](https://pypi.org/project/chuk-tool-processor/)
 [![Python](https://img.shields.io/pypi/pyversions/chuk-tool-processor.svg)](https://pypi.org/project/chuk-tool-processor/)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Type Checked](https://img.shields.io/badge/type%20checked-PEP%20561-blue.svg)](https://www.python.org/dev/peps/pep-0561/)
 [![Wheels](https://img.shields.io/badge/wheels-macOS%20%7C%20Linux%20%7C%20Windows-blue.svg)](https://pypi.org/project/chuk-tool-processor/)
 [![OpenTelemetry](https://img.shields.io/badge/observability-OpenTelemetry%20%7C%20Prometheus-blue.svg)](docs/OBSERVABILITY.md)
@@ -702,7 +702,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
 ```bash
 # Development setup
-git clone https://github.com/chrishayuk/chuk-tool-processor.git
+git clone <repository-url>
 cd chuk-tool-processor
 uv pip install -e ".[dev]"
 
@@ -714,11 +714,11 @@ make check
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+Apache 2.0 License - see [LICENSE](LICENSE) for details.
 
 ---
 
 ## Related Projects
 
-- [chuk-mcp](https://github.com/chrishayuk/chuk-mcp) - Low-level MCP protocol client
+- [chuk-mcp](https://pypi.org/project/chuk-mcp/) - Low-level MCP protocol client
 - [Model Context Protocol](https://modelcontextprotocol.io) - MCP specification

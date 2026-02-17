@@ -396,7 +396,6 @@ Set up tokenless publishing with PyPI:
    - Navigate to "Publishing" section
    - Click "Add a new publisher"
    - Fill in:
-     - **Owner**: `chrishayuk` (your GitHub username/org)
      - **Repository**: `chuk-tool-processor`
      - **Workflow name**: `publish.yml`
      - **Environment name**: `pypi`

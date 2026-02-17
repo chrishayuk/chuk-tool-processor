@@ -33,7 +33,7 @@ CHUK Tool Processor supports three MCP transport mechanisms:
  └──────────────┴────────────────────┘
 ```
 
-**Relationship with [chuk-mcp](https://github.com/chrishayuk/chuk-mcp):**
+**Relationship with [chuk-mcp](https://pypi.org/project/chuk-mcp/):**
 - `chuk-mcp` is a low-level MCP protocol client (handles transports, protocol negotiation)
 - `chuk-tool-processor` wraps `chuk-mcp` to integrate external tools into your execution pipeline
 - You can use local tools, remote MCP tools, or both in the same processor

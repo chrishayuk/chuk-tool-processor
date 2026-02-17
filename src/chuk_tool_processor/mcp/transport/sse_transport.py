@@ -641,6 +641,21 @@ class SSETransport(MCPBaseTransport):
             logger.debug("Error listing resources: %s", e)
             return {}
 
+    async def read_resource(self, uri: str) -> dict[str, Any]:
+        """Read a specific resource by URI."""
+        if not self._initialized:
+            return {}
+
+        try:
+            response = await self._send_request("resources/read", {"uri": uri}, timeout=self.timeout_config.operation)
+            if "error" in response:
+                logger.debug("Resource read failed: %s", response["error"])
+                return {}
+            return response.get("result", {})
+        except Exception as e:
+            logger.debug("Error reading resource: %s", e)
+            return {}
+
     async def list_prompts(self) -> dict[str, Any]:
         """List available prompts from the server."""
         if not self._initialized:
@@ -654,6 +669,25 @@ class SSETransport(MCPBaseTransport):
             return response.get("result", {})
         except Exception as e:
             logger.debug("Error listing prompts: %s", e)
+            return {}
+
+    async def get_prompt(self, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Get a specific prompt by name."""
+        if not self._initialized:
+            return {}
+
+        try:
+            response = await self._send_request(
+                "prompts/get",
+                {"name": name, "arguments": arguments or {}},
+                timeout=self.timeout_config.operation,
+            )
+            if "error" in response:
+                logger.debug("Prompt get failed: %s", response["error"])
+                return {}
+            return response.get("result", {})
+        except Exception as e:
+            logger.debug("Error getting prompt: %s", e)
             return {}
 
     async def close(self) -> None:

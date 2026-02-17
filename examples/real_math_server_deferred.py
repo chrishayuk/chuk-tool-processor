@@ -14,7 +14,7 @@ Prerequisites:
     uvx chuk-mcp-math-server
 
 Usage:
-    PYTHONPATH=/Users/christopherhay/chris-source/chuk-ai/chuk-tool-processor/src python examples/real_math_server_deferred.py
+    uv run python examples/real_math_server_deferred.py
 """
 
 import asyncio
