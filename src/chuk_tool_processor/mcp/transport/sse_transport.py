@@ -648,10 +648,14 @@ class SSETransport(MCPBaseTransport):
 
         try:
             response = await self._send_request("resources/read", {"uri": uri}, timeout=self.timeout_config.operation)
-            if "error" in response:
-                logger.debug("Resource read failed: %s", response["error"])
-                return {}
-            return response.get("result", {})
+            if isinstance(response, dict):
+                if "error" in response:
+                    logger.debug("Resource read failed: %s", response["error"])
+                    return {}
+                return response.get("result", {})
+            if hasattr(response, "model_dump"):
+                return response.model_dump()
+            return {}
         except Exception as e:
             logger.debug("Error reading resource: %s", e)
             return {}
