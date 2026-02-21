@@ -1,0 +1,81 @@
+{
+  "strategy_type": "SubprocessStrategy",
+  "summary": {
+    "total_tests": 5,
+    "passed_tests": 0,
+    "failed_tests": 5,
+    "overall_success_rate": 0,
+    "total_operations": 0,
+    "total_errors": 0,
+    "total_recoveries": 0,
+    "process_crashes": 0,
+    "serialization_errors": 0,
+    "pool_recoveries": 0,
+    "resilience_grade": "needs_improvement"
+  },
+  "test_results": [
+    {
+      "test_name": "subprocess_process_isolation",
+      "success": false,
+      "duration": 0.0010890960693359375,
+      "success_rate": 0.0,
+      "process_crashes": 0,
+      "serialization_errors": 0,
+      "pool_recoveries": 0,
+      "details": {
+        "error": "No subprocess test tools found"
+      }
+    },
+    {
+      "test_name": "worker_process_crash_recovery",
+      "success": false,
+      "duration": 0.0004010200500488281,
+      "success_rate": 0.0,
+      "process_crashes": 0,
+      "serialization_errors": 0,
+      "pool_recoveries": 0,
+      "details": {
+        "error": "No tools found for crash recovery test",
+        "process_crashes": 0,
+        "pool_recoveries": 0
+      }
+    },
+    {
+      "test_name": "serialization_robustness",
+      "success": false,
+      "duration": 0.0004830360412597656,
+      "success_rate": 0.0,
+      "process_crashes": 0,
+      "serialization_errors": 0,
+      "pool_recoveries": 0,
+      "details": {
+        "error": "No tools found for serialization test",
+        "serialization_errors": 0
+      }
+    },
+    {
+      "test_name": "subprocess_timeout_handling",
+      "success": false,
+      "duration": 0.0007452964782714844,
+      "success_rate": 0.0,
+      "process_crashes": 0,
+      "serialization_errors": 0,
+      "pool_recoveries": 0,
+      "details": {
+        "error": "No tools found for timeout test"
+      }
+    },
+    {
+      "test_name": "concurrent_subprocess_stress",
+      "success": false,
+      "duration": 0.0006830692291259766,
+      "success_rate": 0.0,
+      "process_crashes": 0,
+      "serialization_errors": 0,
+      "pool_recoveries": 0,
+      "details": {
+        "error": "No tools found for subprocess stress test"
+      }
+    }
+  ]
+}

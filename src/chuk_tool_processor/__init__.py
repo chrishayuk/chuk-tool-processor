@@ -160,6 +160,7 @@ from chuk_tool_processor.registry import (
     ToolInfo,
     ToolRegistryProvider,
     create_registry,
+    ensure_registrations,
     get_default_registry,
     initialize,
 )
@@ -228,6 +229,7 @@ __all__ = [
     # Registry
     "ToolInfo",
     "initialize",
+    "ensure_registrations",
     "get_default_registry",
     "create_registry",
     "ToolRegistryProvider",

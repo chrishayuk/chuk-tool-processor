@@ -1,0 +1,56 @@
+{
+  "transport_type": "SSE",
+  "summary": {
+    "total_tests": 4,
+    "passed_tests": 0,
+    "failed_tests": 4,
+    "overall_success_rate": 0,
+    "total_operations": 0,
+    "total_errors": 0,
+    "total_recoveries": 0,
+    "sse_specific_issues": 0,
+    "resilience_grade": "needs_improvement"
+  },
+  "test_results": [
+    {
+      "test_name": "sse_connection_recovery",
+      "success": false,
+      "duration": 0.04770207405090332,
+      "success_rate": 0.0,
+      "sse_specific_issues": 0,
+      "details": {
+        "error": "No SSE tools found - check server configuration"
+      }
+    },
+    {
+      "test_name": "sse_dual_endpoint_coordination",
+      "success": false,
+      "duration": 0.046767234802246094,
+      "success_rate": 0.0,
+      "sse_specific_issues": 0,
+      "details": {
+        "error": "No tools found for SSE dual endpoint test"
+      }
+    },
+    {
+      "test_name": "sse_stream_timeout_recovery",
+      "success": false,
+      "duration": 0.047860145568847656,
+      "success_rate": 0.0,
+      "sse_specific_issues": 0,
+      "details": {
+        "error": "No tools found for SSE timeout test"
+      }
+    },
+    {
+      "test_name": "sse_concurrent_stress",
+      "success": false,
+      "duration": 0.0502171516418457,
+      "success_rate": 0.0,
+      "sse_specific_issues": 0,
+      "details": {
+        "error": "No tools found for SSE stress test"
+      }
+    }
+  ]
+}

@@ -1,0 +1,70 @@
+{
+  "summary": {
+    "total_tests": 4,
+    "passed_tests": 0,
+    "failed_tests": 4,
+    "overall_success_rate": 0,
+    "total_operations": 0,
+    "total_errors": 0,
+    "total_recoveries": 0,
+    "resilience_grade": "needs_improvement"
+  },
+  "test_results": [
+    {
+      "test_name": "basic_connection_recovery",
+      "success": false,
+      "duration": 1.304663896560669,
+      "success_rate": 0.0,
+      "total_operations": 0,
+      "error_count": 0,
+      "recovery_count": 0,
+      "details": {
+        "error": "No tools found in resilience_test namespace"
+      }
+    },
+    {
+      "test_name": "server_process_recovery",
+      "success": false,
+      "duration": 0.22600173950195312,
+      "success_rate": 0.0,
+      "total_operations": 0,
+      "error_count": 0,
+      "recovery_count": 0,
+      "details": {
+        "error": "No tools found in process_recovery namespace"
+      }
+    },
+    {
+      "test_name": "network_timeout_recovery",
+      "success": false,
+      "duration": 0.24008607864379883,
+      "success_rate": 0.0,
+      "total_operations": 0,
+      "error_count": 0,
+      "recovery_count": 0,
+      "details": {
+        "error": "No tools found in timeout_test namespace"
+      }
+    },
+    {
+      "test_name": "concurrent_stress_with_failures",
+      "success": false,
+      "duration": 0.722071647644043,
+      "success_rate": 0.0,
+      "total_operations": 0,
+      "error_count": 0,
+      "recovery_count": 0,
+      "details": {
+        "error": "No stress calls could be generated"
+      }
+    }
+  ],
+  "available_tools_discovered": {
+    "resilience_test": [],
+    "process_recovery": [],
+    "timeout_test": [],
+    "stress_test_0": [],
+    "stress_test_1": [],
+    "stress_test_2": []
+  }
+}
