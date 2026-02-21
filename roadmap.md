@@ -99,19 +99,54 @@ Comprehensive audit and fix of architecture principle violations:
 ## Next — Features (v0.23)
 
 ### Guard Integration with Processor
-Guards exist as a standalone system. Wire them into the processor pipeline.
+Guards are already built as a standalone `GuardChain` system with pre/post-execution hooks. The integration into the processor pipeline should be clean since the API was designed for exactly this wiring.
 
 - [ ] `guards=` parameter on `ToolProcessor`
-- [ ] Pre-execution guard chain (before tool call)
-- [ ] Post-execution guard chain (validate outputs)
-- [ ] Guard metrics in observability layer
+- [ ] Pre-execution guard chain (before tool call) — schema validation, sensitive data, network policy
+- [ ] Post-execution guard chain (validate outputs) — output size, provenance, saturation
+- [ ] Guard metrics in observability layer (block rate, warn rate, latency overhead)
+- [ ] Default guard presets (`"strict"`, `"permissive"`) for common configurations
 
 ### Distributed Caching (Redis)
-Redis-backed rate limiting and circuit breakers are shipped. Caching is next.
+Redis-backed circuit breakers and rate limiting are already shipped. Redis caching completes the distributed story — after this, the entire resilience stack (cache + rate limit + circuit breaker) works across multi-process and multi-machine deployments.
 
 - [ ] Redis cache provider implementing existing `CacheInterface`
 - [ ] TTL and eviction policy configuration
 - [ ] Cache key prefixing for multi-tenant isolation
+- [ ] Cache invalidation via pub/sub for cross-instance consistency
+
+### Batch/Bulk Execution API
+DAG scheduling and bulkheads handle concurrency, but planner-driven workflows (chuk-ai-planner, chuk-acp-agent) often emit large plans in a single shot. A dedicated bulk API with automatic chunking and backpressure serves this directly.
+
+- [ ] `processor.process_batch()` accepting hundreds of calls
+- [ ] Automatic chunking with configurable batch size
+- [ ] Backpressure — pause accepting new calls when downstream is saturated
+- [ ] Progress callbacks (`on_batch_progress(completed, total, failures)`)
+- [ ] Partial result streaming — return results as batches complete
+
+### Dry Run / Simulation Mode
+Run the full pipeline (parsing, guards, middleware) without actually executing tools. Useful for planner validation — "would this plan pass all guards and fit within budget?" The guard chain and PlanShapeGuard are already there; dry run is a natural extension.
+
+- [ ] `processor.process(calls, dry_run=True)` — returns guard verdicts, budget estimates, schema validation
+- [ ] Simulation of middleware stack (would circuit breaker trip? would rate limit block?)
+- [ ] Plan cost estimation (time budget, monetary cost, concurrency slots)
+- [ ] Integration with PlanShapeGuard for full plan validation before execution
+
+### Tool Versioning
+As the MCP ecosystem grows, remote servers will upgrade tool schemas. A versioning layer on the registry prevents silent breakage when schemas change under you.
+
+- [ ] Schema hash tracking on tool registration (detect changes)
+- [ ] Compatibility checks — warn on breaking schema changes (removed fields, type changes)
+- [ ] Deprecation warnings for tools marked as sunset
+- [ ] Version pinning — `registry.get_tool("calc", version="1.x")`
+
+### Cost Tracking Guard
+TimeoutBudgetGuard handles wall-clock time. A parallel CostBudgetGuard tracks estimated monetary cost per tool call — especially valuable for paid APIs and MCP services in multi-tenant deployments where you're billing back to tenants.
+
+- [ ] `CostBudgetGuard` with per-tool cost estimates and soft/hard limits
+- [ ] Per-tenant cost tracking and enforcement
+- [ ] Cost attribution in ExecutionContext (roll up per-request costs)
+- [ ] Integration with observability layer (Prometheus cost metrics)
 
 ### Cache Key Normalization
 Improve cache hit rates for tools with volatile arguments.
@@ -125,11 +160,12 @@ Improve cache hit rates for tools with volatile arguments.
 ## Near-Term
 
 ### WebAssembly Sandbox
-Infrastructure is already scaffolded (`IsolationLevel.WASM`).
+Infrastructure is already scaffolded (`IsolationLevel.WASM`). The subprocess/isolated strategy works but has noticeable per-call overhead. WASM gives near-native speed with proper sandboxing — especially relevant for MCP tool execution where you don't control what's running on remote servers.
 
 - [ ] WASM runtime integration (wasmtime or similar)
-- [ ] Lightweight, portable tool isolation
-- [ ] Resource limits (memory, CPU cycles) within WASM boundary
+- [ ] Lightweight, portable tool isolation with near-native performance
+- [ ] Resource limits (memory, CPU cycles, wall-clock time) within WASM boundary
+- [ ] MCP tool execution in WASM sandbox for untrusted remote tools
 
 ### Type Safety Hardening
 Systematic module-by-module tightening of mypy strictness.
@@ -176,6 +212,38 @@ MCP subsystem mixes two error patterns — standardize.
 ---
 
 ## Longer-Term
+
+### Tool Call Replay / Audit Log
+Persistent execution log (tool name, args, result hash, latency, guard verdicts, context) that enables replay for debugging and compliance. ProvenanceGuard already tracks lineage — this extends it to a full audit trail.
+
+- [ ] Append-only execution log (pluggable backends — file, database, cloud storage)
+- [ ] Replay API — re-execute a recorded sequence with optional argument overrides
+- [ ] Diff mode — compare replay results against original for regression detection
+- [ ] Compliance export (JSON-lines, CSV) for audit requirements
+
+### Adaptive Middleware Tuning
+Circuit breaker thresholds and rate limits are currently static config. An adaptive layer that adjusts based on observed error rates and latency distributions reduces operational toil. The Prometheus metrics already feed the data needed.
+
+- [ ] Adaptive circuit breaker — adjust failure threshold based on rolling error rate
+- [ ] Adaptive rate limiting — scale limits based on observed latency P95/P99
+- [ ] Anomaly detection — alert on sudden latency shifts or error rate spikes
+- [ ] Feedback loop from metrics → middleware config (control plane pattern)
+
+### MCP Tool Schema Caching & Diffing
+On connection to an MCP server, cache tool schemas and diff on reconnect. Alert when schemas change unexpectedly. Ties into tool versioning but specifically for the remote/MCP case where you don't control the server.
+
+- [ ] Schema snapshot on first connect (persisted to registry)
+- [ ] Diff on reconnect — detect added/removed/changed tools
+- [ ] Breaking change alerts (removed required fields, type changes)
+- [ ] Optional auto-quarantine of tools with unexpected schema changes
+
+### Federation / Tool Routing Table
+As MCP servers proliferate, a routing table that maps tool name patterns to backends with fallback chains simplifies configuration. Think DNS for tools.
+
+- [ ] Pattern-based routing — `"notion.*" → mcp.notion.com`, `"db.*" → local-stdio`
+- [ ] Fallback chains — primary → secondary → local stub
+- [ ] Health-aware failover — route away from unhealthy backends automatically
+- [ ] Routing table hot-reload without processor restart
 
 ### A2A (Agent-to-Agent) Protocol
 As the chuk-acp ecosystem matures, tool processor becomes the execution substrate for agent-to-agent communication.
