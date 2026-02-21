@@ -133,7 +133,7 @@ class StdioTransport(MCPBaseTransport):
                     "memory_mb": memory_info.rss / 1024 / 1024,
                     "cpu_percent": process.cpu_percent(),
                     "create_time": process.create_time(),
-                    "uptime": time.time() - self._process_start_time if self._process_start_time else 0,
+                    "uptime": time.monotonic() - self._process_start_time if self._process_start_time else 0,
                 }
         except (psutil.NoSuchProcess, psutil.AccessDenied, AttributeError, TypeError, ValueError):
             # FIXED: Handle all possible errors including TypeError from mock objects
@@ -178,7 +178,7 @@ class StdioTransport(MCPBaseTransport):
             logger.debug("Transport already initialized")
             return True
 
-        start_time = time.time()
+        start_time = time.monotonic()
 
         try:
             logger.debug("Initializing STDIO transport...")
@@ -190,7 +190,7 @@ class StdioTransport(MCPBaseTransport):
             # Capture process information for monitoring (NEW)
             if self.process_monitor and hasattr(self._context, "_process"):
                 self._process_id = getattr(self._context._process, "pid", None)
-                self._process_start_time = time.time()
+                self._process_start_time = time.monotonic()
                 logger.debug("Subprocess PID: %s", self._process_id)
 
             # Send initialize message with timeout
@@ -199,10 +199,10 @@ class StdioTransport(MCPBaseTransport):
             if init_result:
                 # Enhanced health verification (like SSE)
                 logger.debug("Verifying connection with ping...")
-                ping_start = time.time()
+                ping_start = time.monotonic()
                 # Use default timeout for initial ping verification
                 ping_success = await asyncio.wait_for(send_ping(*self._streams), timeout=self.default_timeout)
-                ping_time = time.time() - ping_start
+                ping_time = time.monotonic() - ping_start
 
                 if ping_success:
                     self._initialized = True
@@ -210,13 +210,13 @@ class StdioTransport(MCPBaseTransport):
                     self._consecutive_failures = 0
 
                     if self.enable_metrics:
-                        init_time = time.time() - start_time
+                        init_time = time.monotonic() - start_time
                         self._metrics["initialization_time"] = init_time
                         self._metrics["last_ping_time"] = ping_time
 
                     logger.debug(
                         "STDIO transport initialized successfully in %.3fs (ping: %.3fs)",
-                        time.time() - start_time,
+                        time.monotonic() - start_time,
                         ping_time,
                     )
                     return True
@@ -226,7 +226,7 @@ class StdioTransport(MCPBaseTransport):
                     self._initialized = True
                     self._consecutive_failures = 1
                     if self.enable_metrics:
-                        self._metrics["initialization_time"] = time.time() - start_time
+                        self._metrics["initialization_time"] = time.monotonic() - start_time
                     return True
             else:
                 logger.warning("STDIO initialization failed")
@@ -338,7 +338,7 @@ class StdioTransport(MCPBaseTransport):
             self._consecutive_failures += 1
             return False
 
-        start_time = time.time()
+        start_time = time.monotonic()
         try:
             result = await asyncio.wait_for(send_ping(*self._streams), timeout=self.default_timeout)
 
@@ -351,7 +351,7 @@ class StdioTransport(MCPBaseTransport):
                 self._consecutive_failures += 1
 
             if self.enable_metrics:
-                ping_time = time.time() - start_time
+                ping_time = time.monotonic() - start_time
                 self._metrics["last_ping_time"] = ping_time
                 logger.debug("STDIO ping completed in %.3fs: %s", ping_time, success)
 
@@ -385,7 +385,7 @@ class StdioTransport(MCPBaseTransport):
             logger.debug("Cannot get tools: transport not initialized")
             return []
 
-        start_time = time.time()
+        start_time = time.monotonic()
         try:
             response = await asyncio.wait_for(send_tools_list(*self._streams), timeout=self.default_timeout)
 
@@ -433,7 +433,7 @@ class StdioTransport(MCPBaseTransport):
             self._consecutive_failures = 0
 
             if self.enable_metrics:
-                response_time = time.time() - start_time
+                response_time = time.monotonic() - start_time
                 logger.debug("Retrieved %d tools in %.3fs", len(tools), response_time)
 
             return tools
@@ -457,7 +457,7 @@ class StdioTransport(MCPBaseTransport):
             return {"isError": True, "error": "Transport not initialized"}
 
         tool_timeout = timeout or self.default_timeout
-        start_time = time.time()
+        start_time = time.monotonic()
 
         if self.enable_metrics:
             self._metrics["total_calls"] += 1
@@ -470,14 +470,14 @@ class StdioTransport(MCPBaseTransport):
                 logger.debug("Connection unhealthy, attempting recovery...")
                 if not await self._attempt_recovery():
                     if self.enable_metrics:
-                        self._update_metrics(time.time() - start_time, False)
+                        self._update_metrics(time.monotonic() - start_time, False)
                     return {"isError": True, "error": "Failed to recover connection"}
 
             response = await asyncio.wait_for(
                 send_tools_call(*self._streams, tool_name, arguments, timeout=tool_timeout), timeout=tool_timeout
             )
 
-            response_time = time.time() - start_time
+            response_time = time.monotonic() - start_time
             result = self._normalize_mcp_response(response)
 
             # Reset failure count and update health on success
@@ -497,7 +497,7 @@ class StdioTransport(MCPBaseTransport):
             return result
 
         except TimeoutError:
-            response_time = time.time() - start_time
+            response_time = time.monotonic() - start_time
             self._consecutive_failures += 1
             if self.enable_metrics:
                 self._update_metrics(response_time, False)
@@ -506,7 +506,7 @@ class StdioTransport(MCPBaseTransport):
             logger.error("Tool '%s' %s", tool_name, error_msg)
             return {"isError": True, "error": error_msg}
         except Exception as e:
-            response_time = time.time() - start_time
+            response_time = time.monotonic() - start_time
             self._consecutive_failures += 1
             if self.enable_metrics:
                 self._update_metrics(response_time, False)
@@ -679,7 +679,7 @@ class StdioTransport(MCPBaseTransport):
                 "last_successful_ping": self._last_successful_ping,
                 "max_consecutive_failures": self._max_consecutive_failures,
                 "process_id": self._process_id,
-                "process_uptime": (time.time() - self._process_start_time) if self._process_start_time else 0,
+                "process_uptime": (time.monotonic() - self._process_start_time) if self._process_start_time else 0,
             }
         )
         return metrics

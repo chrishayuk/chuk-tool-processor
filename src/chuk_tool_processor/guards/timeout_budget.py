@@ -7,7 +7,7 @@ Enforces per-turn and per-plan time budgets with soft/hard limits.
 from __future__ import annotations
 
 import time
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -16,7 +16,7 @@ from chuk_tool_processor.guards.base import BaseGuard, GuardResult
 from chuk_tool_processor.guards.models import EnforcementLevel
 
 
-class DegradeAction(str, Enum):
+class DegradeAction(StrEnum):
     """Actions to take when soft budget is exceeded."""
 
     DISABLE_RETRIES = "disable_retries"
@@ -25,7 +25,7 @@ class DegradeAction(str, Enum):
     REDUCE_TIMEOUT = "reduce_timeout"
 
 
-class BudgetStatus(str, Enum):
+class BudgetStatus(StrEnum):
     """Current budget status."""
 
     OK = "ok"

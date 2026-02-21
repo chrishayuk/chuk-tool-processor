@@ -11,7 +11,7 @@ Async-native, Pydantic-based middleware configuration for:
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
@@ -43,7 +43,7 @@ logger = get_logger("chuk_tool_processor.mcp.middleware")
 # ============================================================================
 
 
-class MiddlewareLayer(str, Enum):
+class MiddlewareLayer(StrEnum):
     """Middleware layer identifiers."""
 
     RETRY = "retry"
@@ -51,7 +51,7 @@ class MiddlewareLayer(str, Enum):
     RATE_LIMITING = "rate_limiting"
 
 
-class RetryableError(str, Enum):
+class RetryableError(StrEnum):
     """Error patterns that should trigger retry."""
 
     TRANSPORT_NOT_INITIALIZED = "Transport not initialized"
@@ -62,7 +62,7 @@ class RetryableError(str, Enum):
     CLOSED = "closed"
 
 
-class NonRetryableError(str, Enum):
+class NonRetryableError(StrEnum):
     """Error patterns that should NOT be retried."""
 
     OAUTH = "oauth"

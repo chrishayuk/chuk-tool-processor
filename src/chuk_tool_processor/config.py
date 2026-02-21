@@ -66,12 +66,13 @@ Example:
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
+from pydantic import BaseModel, Field
 
-class BackendType(str, Enum):
+
+class BackendType(StrEnum):
     """Backend type for registry and resilience features."""
 
     MEMORY = "memory"
@@ -115,8 +116,7 @@ def _get_float(key: str, default: float | None = None) -> float | None:
         return default
 
 
-@dataclass
-class CircuitBreakerConfig:
+class CircuitBreakerConfig(BaseModel):
     """Circuit breaker configuration."""
 
     enabled: bool = False
@@ -139,14 +139,13 @@ class CircuitBreakerConfig:
         )
 
 
-@dataclass
-class RateLimitConfig:
+class RateLimitConfig(BaseModel):
     """Rate limiting configuration."""
 
     enabled: bool = False
     global_limit: int | None = None
     global_period: float = 60.0
-    tool_limits: dict[str, tuple[int, float]] = field(default_factory=dict)
+    tool_limits: dict[str, tuple[int, float]] = Field(default_factory=dict)
 
     @classmethod
     def from_env(cls) -> RateLimitConfig:
@@ -172,8 +171,7 @@ class RateLimitConfig:
         )
 
 
-@dataclass
-class CacheConfig:
+class CacheConfig(BaseModel):
     """Caching configuration."""
 
     enabled: bool = True
@@ -188,8 +186,7 @@ class CacheConfig:
         )
 
 
-@dataclass
-class RetryConfig:
+class RetryConfig(BaseModel):
     """Retry configuration."""
 
     enabled: bool = True
@@ -210,8 +207,7 @@ class RetryConfig:
         )
 
 
-@dataclass
-class RegistryConfig:
+class RegistryConfig(BaseModel):
     """Registry configuration."""
 
     backend: BackendType = BackendType.MEMORY
@@ -236,8 +232,7 @@ class RegistryConfig:
         )
 
 
-@dataclass
-class ProcessorConfig:
+class ProcessorConfig(BaseModel):
     """
     Complete configuration for ToolProcessor with environment variable support.
 
@@ -266,7 +261,7 @@ class ProcessorConfig:
     """
 
     # Registry configuration
-    registry: RegistryConfig = field(default_factory=RegistryConfig)
+    registry: RegistryConfig = Field(default_factory=RegistryConfig)
 
     # Resilience backend selection (rate limiting, circuit breaker)
     resilience_backend: BackendType = BackendType.MEMORY
@@ -280,10 +275,10 @@ class ProcessorConfig:
     max_concurrency: int | None = None
 
     # Feature configs
-    circuit_breaker: CircuitBreakerConfig = field(default_factory=CircuitBreakerConfig)
-    rate_limit: RateLimitConfig = field(default_factory=RateLimitConfig)
-    cache: CacheConfig = field(default_factory=CacheConfig)
-    retry: RetryConfig = field(default_factory=RetryConfig)
+    circuit_breaker: CircuitBreakerConfig = Field(default_factory=CircuitBreakerConfig)
+    rate_limit: RateLimitConfig = Field(default_factory=RateLimitConfig)
+    cache: CacheConfig = Field(default_factory=CacheConfig)
+    retry: RetryConfig = Field(default_factory=RetryConfig)
 
     # Backwards compatibility alias
     @property

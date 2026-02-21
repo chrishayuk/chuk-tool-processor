@@ -5,16 +5,25 @@ Async registry provider implementations and factory functions.
 
 import asyncio
 import os
+from enum import StrEnum
 from typing import Any
 
 from chuk_tool_processor.registry.interface import ToolRegistryInterface
+
+
+class ProviderType(StrEnum):
+    """Registry provider types."""
+
+    MEMORY = "memory"
+    REDIS = "redis"
+
 
 # Cache for initialized registries
 _REGISTRY_CACHE: dict[str, ToolRegistryInterface] = {}
 _REGISTRY_LOCKS: dict[str, asyncio.Lock] = {}
 
 
-async def get_registry(provider_type: str | None = None, **kwargs: Any) -> ToolRegistryInterface:
+async def get_registry(provider_type: str | ProviderType | None = None, **kwargs: Any) -> ToolRegistryInterface:
     """
     Factory function to get a registry implementation asynchronously.
 
@@ -48,10 +57,17 @@ async def get_registry(provider_type: str | None = None, **kwargs: Any) -> ToolR
     """
     # Use environment variable if not specified
     if provider_type is None:
-        provider_type = os.environ.get("CHUK_TOOL_REGISTRY_PROVIDER", "memory")
+        provider_type = os.environ.get("CHUK_TOOL_REGISTRY_PROVIDER", ProviderType.MEMORY.value)
+
+    # Normalize to enum
+    if isinstance(provider_type, str):
+        try:
+            provider_type = ProviderType(provider_type)
+        except ValueError:
+            raise ValueError(f"Unknown registry provider type: {provider_type}")
 
     # Check cache first
-    cache_key = f"{provider_type}:{hash(frozenset(kwargs.items()))}"
+    cache_key = f"{provider_type.value}:{hash(frozenset(kwargs.items()))}"
     if cache_key in _REGISTRY_CACHE:
         return _REGISTRY_CACHE[cache_key]
 
@@ -67,11 +83,11 @@ async def get_registry(provider_type: str | None = None, **kwargs: Any) -> ToolR
 
         # Create the appropriate provider
         registry: ToolRegistryInterface
-        if provider_type == "memory":
+        if provider_type == ProviderType.MEMORY:
             from chuk_tool_processor.registry.providers.memory import InMemoryToolRegistry
 
             registry = InMemoryToolRegistry()
-        elif provider_type == "redis":
+        elif provider_type == ProviderType.REDIS:
             from chuk_tool_processor.registry.providers.redis import create_redis_registry
 
             redis_url = kwargs.get("redis_url", "redis://localhost:6379/0")

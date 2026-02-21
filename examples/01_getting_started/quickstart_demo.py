@@ -23,6 +23,7 @@ from chuk_tool_processor import (
     register_tool
 )
 import asyncio
+import json
 import time
 from collections.abc import AsyncIterator
 from datetime import datetime
@@ -235,10 +236,15 @@ async def concurrent_execution():
     # Display results
     print("\nResults:")
     for i, result in enumerate(results):
-        if i == 0 or i == 2:  # Calculator results
+        if result.tool == "calculator":
             res = result.result
-            print(f"  Tool {i + 1}: {res['x']} {res['operation']} {res['y']} = {res['result']}")
-        else:  # Greeter result
+            if isinstance(res, str):
+                res = json.loads(res.replace("'", '"'))
+            if isinstance(res, dict):
+                print(f"  Tool {i + 1}: {res['x']} {res['operation']} {res['y']} = {res['result']}")
+            else:
+                print(f"  Tool {i + 1}: {res}")
+        else:
             print(f"  Tool {i + 1}: {result.result}")
 
     print(f"\nConcurrent execution time: {duration:.3f}s")

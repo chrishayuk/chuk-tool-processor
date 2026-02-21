@@ -30,6 +30,7 @@ from abc import ABC, abstractmethod
 from collections import defaultdict
 from collections.abc import AsyncIterator
 from datetime import datetime
+from enum import StrEnum
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
@@ -407,16 +408,32 @@ class FileTraceSink(BaseTraceSink):
         async with self._lock:
             await self._maybe_rotate(self._spans_path)
             line = json.dumps(span.model_dump(), default=str) + "\n"
-            with self._spans_path.open("a") as f:
-                f.write(line)
+            await asyncio.to_thread(self._write_line, self._spans_path, line)
 
     async def record_trace(self, trace: ExecutionTrace) -> None:
         """Append trace to file."""
         async with self._lock:
             await self._maybe_rotate(self._traces_path)
             line = json.dumps(trace.model_dump(), default=str) + "\n"
-            with self._traces_path.open("a") as f:
-                f.write(line)
+            await asyncio.to_thread(self._write_line, self._traces_path, line)
+
+    @staticmethod
+    def _write_line(path: Path, line: str) -> None:
+        """Write a single line to a file (sync, for use with to_thread)."""
+        with path.open("a") as f:
+            f.write(line)
+
+    @staticmethod
+    def _read_lines(path: Path) -> list[str]:
+        """Read all lines from a file (sync, for use with to_thread)."""
+        with path.open() as f:
+            return f.readlines()
+
+    @staticmethod
+    def _count_lines(path: Path) -> int:
+        """Count lines in a file (sync, for use with to_thread)."""
+        with path.open() as f:
+            return sum(1 for _ in f)
 
     async def _maybe_rotate(self, path: Path) -> None:
         """Rotate file if it exceeds size limit."""
@@ -442,32 +459,30 @@ class FileTraceSink(BaseTraceSink):
         if not self._spans_path.exists():
             return
 
+        lines = await asyncio.to_thread(self._read_lines, self._spans_path)
         count = 0
         skipped = 0
 
-        # Read file in reverse for newest-first ordering would be expensive
-        # For now, just read forward
-        with self._spans_path.open() as f:
-            for line in f:
-                try:
-                    data = json.loads(line)
-                    span = ExecutionSpan.model_validate(data)
+        for line in lines:
+            try:
+                data = json.loads(line)
+                span = ExecutionSpan.model_validate(data)
 
-                    if not self._span_matches_query(span, query):
-                        continue
+                if not self._span_matches_query(span, query):
+                    continue
 
-                    if skipped < query.offset:
-                        skipped += 1
-                        continue
+                if skipped < query.offset:
+                    skipped += 1
+                    continue
 
-                    yield span
-                    count += 1
+                yield span
+                count += 1
 
-                    if count >= query.limit:
-                        break
+                if count >= query.limit:
+                    break
 
-                except (json.JSONDecodeError, Exception) as e:
-                    logger.warning(f"Failed to parse span line: {e}")
+            except (json.JSONDecodeError, Exception) as e:
+                logger.warning(f"Failed to parse span line: {e}")
 
     async def query_traces(self, query: TraceQuery | None = None) -> AsyncIterator[ExecutionTrace]:
         """Query traces from file."""
@@ -476,30 +491,30 @@ class FileTraceSink(BaseTraceSink):
         if not self._traces_path.exists():
             return
 
+        lines = await asyncio.to_thread(self._read_lines, self._traces_path)
         count = 0
         skipped = 0
 
-        with self._traces_path.open() as f:
-            for line in f:
-                try:
-                    data = json.loads(line)
-                    trace = ExecutionTrace.model_validate(data)
+        for line in lines:
+            try:
+                data = json.loads(line)
+                trace = ExecutionTrace.model_validate(data)
 
-                    if not self._trace_matches_query(trace, query):
-                        continue
+                if not self._trace_matches_query(trace, query):
+                    continue
 
-                    if skipped < query.offset:
-                        skipped += 1
-                        continue
+                if skipped < query.offset:
+                    skipped += 1
+                    continue
 
-                    yield trace
-                    count += 1
+                yield trace
+                count += 1
 
-                    if count >= query.limit:
-                        break
+                if count >= query.limit:
+                    break
 
-                except (json.JSONDecodeError, Exception) as e:
-                    logger.warning(f"Failed to parse trace line: {e}")
+            except (json.JSONDecodeError, Exception) as e:
+                logger.warning(f"Failed to parse trace line: {e}")
 
     async def get_stats(self) -> TraceSinkStats:
         """Get statistics (expensive - reads entire file)."""
@@ -511,25 +526,24 @@ class FileTraceSink(BaseTraceSink):
         trace_count = 0
 
         if self._spans_path.exists():
-            with self._spans_path.open() as f:
-                for line in f:
-                    try:
-                        data = json.loads(line)
-                        span_count += 1
-                        outcome_counts[data.get("outcome", "unknown")] += 1
-                        tools_seen.add(data.get("tool_name", "unknown"))
+            lines = await asyncio.to_thread(self._read_lines, self._spans_path)
+            for line in lines:
+                try:
+                    data = json.loads(line)
+                    span_count += 1
+                    outcome_counts[data.get("outcome", "unknown")] += 1
+                    tools_seen.add(data.get("tool_name", "unknown"))
 
-                        created = datetime.fromisoformat(data.get("created_at", ""))
-                        if oldest is None or created < oldest:
-                            oldest = created
-                        if newest is None or created > newest:
-                            newest = created
-                    except Exception:
-                        pass
+                    created = datetime.fromisoformat(data.get("created_at", ""))
+                    if oldest is None or created < oldest:
+                        oldest = created
+                    if newest is None or created > newest:
+                        newest = created
+                except Exception:
+                    pass
 
         if self._traces_path.exists():
-            with self._traces_path.open() as f:
-                trace_count = sum(1 for _ in f)
+            trace_count = await asyncio.to_thread(self._count_lines, self._traces_path)
 
         return TraceSinkStats(
             span_count=span_count,
@@ -649,26 +663,41 @@ def set_trace_sink(sink: BaseTraceSink) -> None:
     _global_sink = sink
 
 
+class TraceSinkType(StrEnum):
+    """Trace sink implementation types."""
+
+    MEMORY = "memory"
+    FILE = "file"
+    NOOP = "noop"
+
+
 def init_trace_sink(
-    sink_type: str = "memory",
+    sink_type: str | TraceSinkType = TraceSinkType.MEMORY,
     **kwargs: Any,
 ) -> BaseTraceSink:
     """
     Initialize and set the global trace sink.
 
     Args:
-        sink_type: "memory", "file", "noop"
+        sink_type: TraceSinkType or string ("memory", "file", "noop")
         **kwargs: Additional arguments for sink constructor
 
     Returns:
         The initialized sink
     """
+    # Normalize to enum
+    if isinstance(sink_type, str):
+        try:
+            sink_type = TraceSinkType(sink_type)
+        except ValueError:
+            raise ValueError(f"Unknown sink type: {sink_type}")
+
     sink: BaseTraceSink
-    if sink_type == "memory":
+    if sink_type == TraceSinkType.MEMORY:
         sink = InMemoryTraceSink(**kwargs)
-    elif sink_type == "file":
+    elif sink_type == TraceSinkType.FILE:
         sink = FileTraceSink(**kwargs)
-    elif sink_type == "noop":
+    elif sink_type == TraceSinkType.NOOP:
         sink = NoOpTraceSink()
     else:
         raise ValueError(f"Unknown sink type: {sink_type}")

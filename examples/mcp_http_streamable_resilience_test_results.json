@@ -1,0 +1,63 @@
+{
+  "transport_type": "HTTP_Streamable",
+  "summary": {
+    "total_tests": 4,
+    "passed_tests": 0,
+    "failed_tests": 4,
+    "overall_success_rate": 0,
+    "total_operations": 0,
+    "total_errors": 0,
+    "total_recoveries": 0,
+    "streaming_operations": 0,
+    "session_issues": 0,
+    "resilience_grade": "needs_improvement"
+  },
+  "test_results": [
+    {
+      "test_name": "http_streamable_endpoint_recovery",
+      "success": false,
+      "duration": 0.15801286697387695,
+      "success_rate": 0.0,
+      "streaming_operations": 0,
+      "session_issues": 0,
+      "details": {
+        "error": "No HTTP Streamable tools found - check server configuration"
+      }
+    },
+    {
+      "test_name": "http_streamable_session_management",
+      "success": false,
+      "duration": 0.155228853225708,
+      "success_rate": 0.0,
+      "streaming_operations": 0,
+      "session_issues": 0,
+      "details": {
+        "error": "No tools found for HTTP Streamable session test",
+        "session_issues": 0
+      }
+    },
+    {
+      "test_name": "http_streamable_response_modes",
+      "success": false,
+      "duration": 0.1410050392150879,
+      "success_rate": 0.0,
+      "streaming_operations": 0,
+      "session_issues": 0,
+      "details": {
+        "error": "No tools found for HTTP Streamable response mode test",
+        "streaming_operations": 0
+      }
+    },
+    {
+      "test_name": "http_streamable_concurrent_stress",
+      "success": false,
+      "duration": 0.13727998733520508,
+      "success_rate": 0.0,
+      "streaming_operations": 0,
+      "session_issues": 0,
+      "details": {
+        "error": "No tools found for HTTP Streamable stress test"
+      }
+    }
+  ]
+}

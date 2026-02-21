@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
-from enum import Enum
+from enum import StrEnum
 from typing import Any, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -33,7 +33,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 _T = TypeVar("_T")
 
 
-class Determinism(str, Enum):
+class Determinism(StrEnum):
     """Determinism classification for tools."""
 
     PURE = "pure"  # Same inputs always produce same outputs
@@ -41,7 +41,7 @@ class Determinism(str, Enum):
     EXTERNAL = "external"  # Depends on external state (APIs, DBs)
 
 
-class LatencyHint(str, Enum):
+class LatencyHint(StrEnum):
     """Expected latency classification."""
 
     INSTANT = "instant"  # < 10ms (math, local lookups)
@@ -51,7 +51,7 @@ class LatencyHint(str, Enum):
     VERY_SLOW = "very_slow"  # > 10s (ML inference, large data)
 
 
-class SideEffectClass(str, Enum):
+class SideEffectClass(StrEnum):
     """Classification of tool side effects."""
 
     NONE = "none"  # Pure computation, no side effects
@@ -60,7 +60,7 @@ class SideEffectClass(str, Enum):
     DESTRUCTIVE = "destructive"  # Potentially irreversible (delete, overwrite)
 
 
-class ResourceRequirement(str, Enum):
+class ResourceRequirement(StrEnum):
     """Resource requirements for execution."""
 
     NETWORK = "network"  # Requires network access

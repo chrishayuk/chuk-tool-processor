@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import time
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from chuk_tool_processor.core.exceptions import ToolCircuitOpenError
@@ -50,7 +50,7 @@ except ImportError:
 # --------------------------------------------------------------------------- #
 # Circuit breaker state
 # --------------------------------------------------------------------------- #
-class CircuitState(str, Enum):
+class CircuitState(StrEnum):
     """Circuit breaker states."""
 
     CLOSED = "closed"  # Normal operation

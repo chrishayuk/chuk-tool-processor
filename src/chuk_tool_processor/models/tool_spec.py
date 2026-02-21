@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Callable
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from chuk_tool_processor.models.tool_contract import ToolContract
 
 
-class ToolCapability(str, Enum):
+class ToolCapability(StrEnum):
     """Capabilities that a tool can support."""
 
     STREAMING = "streaming"  # Tool supports streaming responses

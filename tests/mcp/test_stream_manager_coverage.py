@@ -631,3 +631,64 @@ class TestStreamManagerAdditionalCoverage:
         # Should pass timeout directly to transport
         assert result["result"] == "success"
         assert result["timeout_used"] == 20.0
+
+
+class TestStreamManagerReconnect:
+    """Tests for StreamManager.reconnect() method."""
+
+    @pytest.mark.asyncio
+    async def test_reconnect_success(self):
+        """Test successful reconnect delegates to transport._attempt_recovery."""
+        sm = StreamManager()
+        mock_transport = AsyncMock(spec=MCPBaseTransport)
+        mock_transport._attempt_recovery = AsyncMock(return_value=True)
+        sm.transports["server1"] = mock_transport
+
+        result = await sm.reconnect("server1")
+
+        assert result is True
+        mock_transport._attempt_recovery.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_reconnect_failure(self):
+        """Test reconnect when _attempt_recovery returns False."""
+        sm = StreamManager()
+        mock_transport = AsyncMock(spec=MCPBaseTransport)
+        mock_transport._attempt_recovery = AsyncMock(return_value=False)
+        sm.transports["server1"] = mock_transport
+
+        result = await sm.reconnect("server1")
+
+        assert result is False
+        mock_transport._attempt_recovery.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_reconnect_unknown_server(self):
+        """Test reconnect with unknown server name returns False."""
+        sm = StreamManager()
+
+        result = await sm.reconnect("nonexistent")
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_reconnect_closed_manager(self):
+        """Test reconnect on closed StreamManager returns False."""
+        sm = StreamManager()
+        sm._closed = True
+
+        result = await sm.reconnect("any_server")
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_reconnect_exception(self):
+        """Test reconnect handles exception from _attempt_recovery."""
+        sm = StreamManager()
+        mock_transport = AsyncMock(spec=MCPBaseTransport)
+        mock_transport._attempt_recovery = AsyncMock(side_effect=RuntimeError("recovery boom"))
+        sm.transports["server1"] = mock_transport
+
+        result = await sm.reconnect("server1")
+
+        assert result is False

@@ -37,7 +37,6 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 from chuk_tool_processor.logging import get_logger
@@ -46,14 +45,6 @@ if TYPE_CHECKING:
     from redis.asyncio import Redis
 
 logger = get_logger("chuk_tool_processor.execution.wrappers.redis_circuit_breaker")
-
-
-class CircuitState(str, Enum):
-    """Circuit breaker states."""
-
-    CLOSED = "closed"  # Normal operation
-    OPEN = "open"  # Blocking requests due to failures
-    HALF_OPEN = "half_open"  # Testing recovery with limited requests
 
 
 @dataclass

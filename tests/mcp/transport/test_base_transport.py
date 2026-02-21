@@ -321,6 +321,77 @@ class TestMCPBaseTransportAbstractMethods:
         # reset_metrics has no return value
 
 
+class TestMCPBaseTransportOAuth:
+    """Test shared OAuth and auth helper methods."""
+
+    def test_is_oauth_error_true_cases(self):
+        """Test _is_oauth_error detects OAuth-related errors."""
+        transport = ConcreteTransport()
+        assert transport._is_oauth_error("invalid_token") is True
+        assert transport._is_oauth_error("insufficient_scope for resource") is True
+        assert transport._is_oauth_error("invalid_grant response") is True
+        assert transport._is_oauth_error("OAuth validation failed") is True
+        assert transport._is_oauth_error("Unauthorized access") is True
+        assert transport._is_oauth_error("expired token detected") is True
+        assert transport._is_oauth_error("token expired") is True
+        assert transport._is_oauth_error("Authentication Failed") is True
+        assert transport._is_oauth_error("invalid access token") is True
+
+    def test_is_oauth_error_false_cases(self):
+        """Test _is_oauth_error rejects non-OAuth errors."""
+        transport = ConcreteTransport()
+        assert transport._is_oauth_error("connection timeout") is False
+        assert transport._is_oauth_error("server error 500") is False
+        assert transport._is_oauth_error("tool not found") is False
+        assert transport._is_oauth_error("") is False
+        assert transport._is_oauth_error(None) is False
+
+    def test_build_auth_headers_no_extras(self):
+        """Test _build_auth_headers with just base headers."""
+        transport = ConcreteTransport()
+        base = {"Content-Type": "application/json"}
+        result = transport._build_auth_headers(base)
+        assert result == {"Content-Type": "application/json"}
+
+    def test_build_auth_headers_with_configured_headers(self):
+        """Test _build_auth_headers merges configured_headers."""
+        transport = ConcreteTransport()
+        transport.configured_headers = {"X-Custom": "value", "Authorization": "Bearer configured"}
+        base = {"Content-Type": "application/json"}
+        result = transport._build_auth_headers(base)
+        assert result["X-Custom"] == "value"
+        assert result["Authorization"] == "Bearer configured"
+        assert result["Content-Type"] == "application/json"
+
+    def test_build_auth_headers_with_api_key(self):
+        """Test _build_auth_headers adds Bearer token from api_key."""
+        transport = ConcreteTransport()
+        transport.api_key = "test-key"
+        base = {"Content-Type": "application/json"}
+        result = transport._build_auth_headers(base)
+        assert result["Authorization"] == "Bearer test-key"
+
+    def test_build_auth_headers_api_key_no_override(self):
+        """Test _build_auth_headers does not override existing Authorization."""
+        transport = ConcreteTransport()
+        transport.api_key = "test-key"
+        transport.configured_headers = {"Authorization": "Bearer configured"}
+        base = {"Content-Type": "application/json"}
+        result = transport._build_auth_headers(base)
+        # configured_headers should win, api_key should not override
+        assert result["Authorization"] == "Bearer configured"
+
+    def test_build_auth_headers_empty_configured(self):
+        """Test _build_auth_headers with empty configured_headers."""
+        transport = ConcreteTransport()
+        transport.configured_headers = {}
+        transport.api_key = "key"
+        base = {"Accept": "text/event-stream"}
+        result = transport._build_auth_headers(base)
+        assert result["Authorization"] == "Bearer key"
+        assert result["Accept"] == "text/event-stream"
+
+
 class TestMCPBaseTransportEdgeCases:
     """Test edge cases in response normalization."""
 
@@ -341,3 +412,47 @@ class TestMCPBaseTransportEdgeCases:
         content = [{"data": "value"}]
         result = transport._extract_mcp_content(content)
         assert result == {"data": "value"}
+
+
+class TestMCPBaseTransportRecovery:
+    """Test default _attempt_recovery() implementation."""
+
+    @pytest.mark.asyncio
+    async def test_attempt_recovery_success(self):
+        """Test default recovery: close + reinitialize succeeds."""
+        transport = ConcreteTransport()
+        await transport.initialize()
+        assert transport._initialized is True
+
+        # Simulate a broken state then recover
+        transport._initialized = False
+        transport._fail_init = False
+        result = await transport._attempt_recovery()
+
+        assert result is True
+        assert transport._initialized is True
+
+    @pytest.mark.asyncio
+    async def test_attempt_recovery_failure(self):
+        """Test default recovery when reinitialize fails."""
+        transport = ConcreteTransport(fail_init=True)
+
+        result = await transport._attempt_recovery()
+
+        assert result is False
+        assert transport._initialized is False
+
+    @pytest.mark.asyncio
+    async def test_attempt_recovery_exception(self):
+        """Test default recovery when close raises an exception."""
+        transport = ConcreteTransport()
+        await transport.initialize()
+
+        # Make close raise an exception
+        async def bad_close():
+            raise RuntimeError("close exploded")
+
+        transport.close = bad_close
+
+        result = await transport._attempt_recovery()
+        assert result is False

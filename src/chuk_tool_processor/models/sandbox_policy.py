@@ -25,13 +25,13 @@ Example:
 from __future__ import annotations
 
 import fnmatch
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-class IsolationLevel(str, Enum):
+class IsolationLevel(StrEnum):
     """Level of process isolation for tool execution."""
 
     NONE = "none"  # Direct in-process (fastest, least safe)
@@ -41,7 +41,7 @@ class IsolationLevel(str, Enum):
     WASM = "wasm"  # WebAssembly sandbox (future)
 
 
-class NetworkPolicy(str, Enum):
+class NetworkPolicy(StrEnum):
     """Network access policy for sandboxed execution."""
 
     DENY = "deny"  # No network access
@@ -50,7 +50,7 @@ class NetworkPolicy(str, Enum):
     ALLOW = "allow"  # Full network access
 
 
-class FilesystemPolicy(str, Enum):
+class FilesystemPolicy(StrEnum):
     """Filesystem access policy for sandboxed execution."""
 
     DENY = "deny"  # No filesystem access
@@ -59,7 +59,7 @@ class FilesystemPolicy(str, Enum):
     READ_WRITE = "read_write"  # Full read/write access to allowed paths
 
 
-class CapabilityGrant(str, Enum):
+class CapabilityGrant(StrEnum):
     """Specific capabilities that can be granted to sandboxed tools."""
 
     # Process capabilities

@@ -1,6 +1,6 @@
 # CHUK Tool Processor — Roadmap
 
-> Last updated: 2026-02-17
+> Last updated: 2026-02-21
 
 ---
 
@@ -77,6 +77,7 @@ Everything below is production-ready on `main`.
 - [x] 90+ test files with comprehensive coverage
 - [x] 20+ working examples
 - [x] Apache 2.0 license
+- [x] Architecture Principles document (`ARCHITECTURE_PRINCIPLES.md`)
 
 ---
 
@@ -90,7 +91,92 @@ Current branch: `mcp-apps`
 
 ---
 
-## Near-Term
+## Next — Principle Compliance & Fixups (v0.22)
+
+Audit from 2026-02-21 identified violations of architecture principles.
+See `ARCHITECTURE_PRINCIPLES.md` for the full set of rules.
+
+### Eliminate Magic Strings
+
+Add enums/constants for all string-compared values.
+
+- [ ] `TransportType` enum (`stdio`, `sse`, `http_streamable`) — used in `stream_manager.py`
+- [ ] `ProviderType` enum (`memory`, `redis`) — used in `registry/providers/__init__.py`
+- [ ] `TraceSinkType` enum (`memory`, `file`, `noop`) — used in `observability/trace_sink.py`
+- [ ] `GuardVerdict` enum (`ALLOW`, `WARN`, `BLOCK`, `REPAIR`) — replace string field in `GuardDecision`
+- [ ] `DifferenceSeverity` enum (`error`, `warning`) — used in `execution_trace.py`
+- [ ] `CircuitState` consistency — `redis_circuit_breaker.py` uses raw strings, local version uses enum
+
+### Reduce Dictionary Goop
+
+Replace `dict[str, Any]` with Pydantic models where shapes are known.
+
+- [ ] `StreamManager.all_tools` → `list[ToolDefinition]` model
+- [ ] `StreamManager.server_info` → `list[ServerInfo]` model
+- [ ] Transport params dicts in `stream_manager.py:initialize()` → Pydantic config models
+- [ ] `register_mcp_tools.py` metadata dict → `ToolMetadata` model
+- [ ] `core/processor.py` OpenAI dict parsing (lines ~459-481) → use existing parser models
+
+### Fix Async Violations
+
+Remove blocking calls from async code paths.
+
+- [ ] `observability/trace_sink.py` — synchronous `open()`/`write()` → `aiofiles` or executor
+- [ ] `mcp/mcp_tool.py` — `time.time()` usage for circuit breaker timing → `time.monotonic()`
+- [ ] `mcp/transport/stdio_transport.py` — `time.time()` for duration tracking → `time.monotonic()`
+
+### config.py Pydantic Migration
+
+- [ ] Convert `config.py` from dataclass to Pydantic `BaseModel`
+- [ ] Add field validators for tool limit parsing
+- [ ] Add `ConfigDict(frozen=True)` for immutability
+
+### MCP Transport DRY
+
+SSE and HTTP Streamable transports share ~200 lines of duplicate code.
+
+- [ ] Extract shared OAuth error detection to `base_transport.py`
+- [ ] Extract shared header construction to base
+- [ ] Extract shared session ID extraction logic
+- [ ] Consolidate response normalization (stdio has its own copy)
+
+### Fix 5 Failing Observability Tests
+
+- [ ] `test_tracing.py` — 5 tests failing on disabled-tracing paths (likely OTel SDK mock issue)
+
+---
+
+## Near-Term — Test Coverage to 90% Per File (v0.23)
+
+Overall coverage is 90.83% but 11 files are below the 90% target.
+
+| File | Current | Gap |
+|------|---------|-----|
+| `execution/wrappers/redis_rate_limiting.py` | 19% | needs Redis mock tests |
+| `observability/setup.py` | 17% | needs OTel SDK mock tests |
+| `execution/wrappers/redis_circuit_breaker.py` | 29% | needs Redis mock tests |
+| `execution/wrappers/factory.py` | 30% | needs wrapper assembly tests |
+| `observability/trace_sink.py` | 42% | needs file/memory sink tests |
+| `models/tool_spec.py` | 84% | needs export format edge cases |
+| `mcp/transport/sse_transport.py` | 87% | needs SSE event parsing tests |
+| `observability/metrics.py` | 88% | needs Prometheus mock tests |
+| `discovery/searchable.py` | 88% | needs protocol compliance tests |
+| `plugins/parsers/base.py` | 88% | needs error path test |
+| `observability/tracing.py` | 89% | needs disabled-mode tests |
+
+Priority order:
+- [ ] `redis_rate_limiting.py` (19% → 90%) — fakeredis tests
+- [ ] `observability/setup.py` (17% → 90%) — mock OTel provider
+- [ ] `redis_circuit_breaker.py` (29% → 90%) — fakeredis tests
+- [ ] `factory.py` (30% → 90%) — wrapper assembly with mocked wrappers
+- [ ] `trace_sink.py` (42% → 90%) — file sink, memory sink, query tests
+- [ ] `tool_spec.py` (84% → 90%) — export edge cases
+- [ ] `sse_transport.py` (87% → 90%) — endpoint discovery, reconnection
+- [ ] Remaining 4 files (88-89%) — small targeted tests
+
+---
+
+## Near-Term — Features
 
 ### Distributed Caching (Redis)
 Redis-backed rate limiting and circuit breakers are shipped. Caching is next.
@@ -130,6 +216,7 @@ Systematic module-by-module tightening of mypy strictness.
 
 - [ ] Enable `disallow_untyped_defs` for public APIs (`core.processor`)
 - [ ] Enable `disallow_untyped_calls` gradually
+- [ ] Replace `any` type hints with proper `Callable` signatures (e.g., `stream_manager.py` oauth callbacks)
 - [ ] Reduce mypy `ignore_errors` overrides for:
   - `mcp.*`
   - `plugins.*`
@@ -158,6 +245,13 @@ StreamManager already has `list_resources()`, `read_resource()`, `list_prompts()
 - [ ] Streaming results via async generators
 - [ ] Backpressure handling for slow consumers
 - [ ] Streaming through MCP transports
+
+### Error Handling Consistency
+MCP subsystem mixes two error patterns — standardize.
+
+- [ ] Replace `{"isError": True, "error": ...}` dicts with `ToolResult.create_error()`
+- [ ] Replace broad `except Exception` with specific exception types
+- [ ] Distinguish "no results" from "error" in MCP calls (currently both return empty collections)
 
 ---
 

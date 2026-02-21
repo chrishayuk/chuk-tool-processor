@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import ipaddress
 import re
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 from urllib.parse import urlparse
 
@@ -18,7 +18,7 @@ from chuk_tool_processor.guards.base import BaseGuard, GuardResult
 from chuk_tool_processor.guards.models import EnforcementLevel
 
 
-class NetworkViolationType(str, Enum):
+class NetworkViolationType(StrEnum):
     """Types of network policy violations."""
 
     DOMAIN_NOT_ALLOWED = "domain_not_allowed"

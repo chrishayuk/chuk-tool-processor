@@ -288,7 +288,7 @@ class TestRecordGuardDecision:
         assert len(builder._guard_decisions) == 1
         decision = builder._guard_decisions[0]
         assert decision.guard_name == "TestGuard"
-        assert decision.verdict == "ALLOW"
+        assert decision.verdict == GuardVerdict.ALLOW
         assert decision.duration_ms == 5.5
 
     def test_record_block_decision(self):
@@ -309,7 +309,7 @@ class TestRecordGuardDecision:
         assert len(builder._guard_decisions) == 1
         decision = builder._guard_decisions[0]
         assert decision.guard_name == "BlockGuard"
-        assert decision.verdict == "BLOCK"
+        assert decision.verdict == GuardVerdict.BLOCK
         assert decision.reason == "Access denied"
         assert decision.details == {"code": 403}
 

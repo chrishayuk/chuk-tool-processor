@@ -6,7 +6,7 @@ Guards against overly long chains, excessive unique tools, and fan-out explosion
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -15,7 +15,7 @@ from chuk_tool_processor.guards.base import BaseGuard, GuardResult
 from chuk_tool_processor.guards.models import EnforcementLevel
 
 
-class PlanShapeViolationType(str, Enum):
+class PlanShapeViolationType(StrEnum):
     """Types of plan shape violations."""
 
     CHAIN_TOO_LONG = "chain_too_long"

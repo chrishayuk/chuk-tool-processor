@@ -30,7 +30,7 @@ import hashlib
 import json
 import os
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Self
 from uuid import uuid4
 
@@ -41,12 +41,19 @@ from chuk_tool_processor.models.execution_span import ExecutionOutcome, Executio
 from chuk_tool_processor.models.tool_call import ToolCall
 
 
-class ReplayMode(str, Enum):
+class ReplayMode(StrEnum):
     """Mode for replay execution."""
 
     STRICT = "strict"  # Fail if any output differs
     LENIENT = "lenient"  # Allow non-deterministic differences
     COMPARE_ONLY = "compare_only"  # Don't re-execute, just compare traces
+
+
+class DifferenceSeverity(StrEnum):
+    """Severity of a replay difference."""
+
+    ERROR = "error"  # Deterministic mismatch
+    WARNING = "warning"  # Acceptable variance
 
 
 class ReplayDifference(BaseModel):
@@ -59,9 +66,9 @@ class ReplayDifference(BaseModel):
     field: str = Field(..., description="Field that differed")
     expected: Any = Field(..., description="Expected value from original trace")
     actual: Any = Field(..., description="Actual value from replay")
-    severity: str = Field(
-        default="error",
-        description="Severity: 'error' (deterministic mismatch), 'warning' (acceptable variance)",
+    severity: DifferenceSeverity = Field(
+        default=DifferenceSeverity.ERROR,
+        description="Severity of the difference",
     )
 
 
@@ -399,9 +406,9 @@ class ExecutionTrace(BaseModel):
         ended_at = datetime.now(UTC)
 
         # Calculate match statistics
-        spans_matched = len(self.spans) - len([d for d in differences if d.severity == "error"])
+        spans_matched = len(self.spans) - len([d for d in differences if d.severity == DifferenceSeverity.ERROR])
 
-        success = len([d for d in differences if d.severity == "error"]) == 0
+        success = len([d for d in differences if d.severity == DifferenceSeverity.ERROR]) == 0
 
         return ReplayResult(
             original_trace_id=self.trace_id,
@@ -435,14 +442,14 @@ class ExecutionTrace(BaseModel):
                     field="outcome",
                     expected=original.outcome.value,
                     actual=replay.outcome.value,
-                    severity="error",
+                    severity=DifferenceSeverity.ERROR,
                 )
             )
 
         # Compare result for deterministic tools
         should_compare = original.deterministic or mode == ReplayMode.STRICT
         if should_compare and str(original.result) != str(replay.result):
-            severity = "error" if original.deterministic else "warning"
+            severity = DifferenceSeverity.ERROR if original.deterministic else DifferenceSeverity.WARNING
             differences.append(
                 ReplayDifference(
                     span_index=index,
@@ -463,7 +470,7 @@ class ExecutionTrace(BaseModel):
                     field="final_verdict",
                     expected=original.final_verdict,
                     actual=replay.final_verdict,
-                    severity="error",
+                    severity=DifferenceSeverity.ERROR,
                 )
             )
 

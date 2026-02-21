@@ -7,7 +7,7 @@ Blocks or auto-fixes calls that don't conform to tool JSON schemas.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -16,7 +16,7 @@ from chuk_tool_processor.guards.base import BaseGuard, GuardResult
 from chuk_tool_processor.guards.models import EnforcementLevel
 
 
-class SchemaViolationType(str, Enum):
+class SchemaViolationType(StrEnum):
     """Types of schema violations."""
 
     MISSING_REQUIRED = "missing_required"

@@ -7,7 +7,7 @@ Labels tools as read_only/write/destructive and enforces policies.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -16,7 +16,7 @@ from chuk_tool_processor.guards.base import BaseGuard, GuardResult
 from chuk_tool_processor.guards.models import EnforcementLevel, ToolClassification
 
 
-class SideEffectClass(str, Enum):
+class SideEffectClass(StrEnum):
     """Classification of tool side effects."""
 
     READ_ONLY = "read_only"
@@ -24,7 +24,7 @@ class SideEffectClass(str, Enum):
     DESTRUCTIVE = "destructive"
 
 
-class ExecutionMode(str, Enum):
+class ExecutionMode(StrEnum):
     """Allowed execution modes."""
 
     READ_ONLY = "read_only"  # Only read operations allowed
@@ -32,7 +32,7 @@ class ExecutionMode(str, Enum):
     DESTRUCTIVE_ALLOWED = "destructive_allowed"  # All operations allowed
 
 
-class Environment(str, Enum):
+class Environment(StrEnum):
     """Deployment environment."""
 
     DEV = "dev"

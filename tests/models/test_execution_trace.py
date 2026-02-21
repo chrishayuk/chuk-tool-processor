@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from chuk_tool_processor.core.context import ExecutionContext
+from chuk_tool_processor.guards.base import GuardVerdict
 from chuk_tool_processor.models.execution_span import (
     ExecutionOutcome,
     ExecutionSpan,
@@ -396,7 +397,7 @@ class TestExecutionTrace:
         original_span = ExecutionSpan(
             tool_name="test_tool",
             outcome=ExecutionOutcome.SUCCESS,
-            final_verdict="ALLOW",
+            final_verdict=GuardVerdict.ALLOW,
         )
         tool_call = ToolCall(tool="test_tool", arguments={})
         trace = ExecutionTrace(spans=[original_span], tool_calls=[tool_call])
@@ -405,7 +406,7 @@ class TestExecutionTrace:
         replay_span = ExecutionSpan(
             tool_name="test_tool",
             outcome=ExecutionOutcome.SUCCESS,
-            final_verdict="WARN",
+            final_verdict=GuardVerdict.WARN,
         )
         mock_executor.run.return_value = [replay_span]
 

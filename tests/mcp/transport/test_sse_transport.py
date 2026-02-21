@@ -221,6 +221,8 @@ class TestSSETransport:
     async def test_call_tool_success(self, transport):
         """Test SSE call tool when initialized with metrics tracking."""
         transport._initialized = True
+        transport.session_id = "test-session"
+        transport._initialization_time = time.time()
         transport.message_url = "http://test.com/messages/test"
         response = {"result": {"content": [{"type": "text", "text": '{"answer": "success"}'}]}}
 
@@ -239,6 +241,8 @@ class TestSSETransport:
     async def test_call_tool_with_timeout(self, transport):
         """Test SSE call tool with custom timeout parameter."""
         transport._initialized = True
+        transport.session_id = "test-session"
+        transport._initialization_time = time.time()
         transport.message_url = "http://test.com/messages/test"
         response = {"result": {"content": [{"type": "text", "text": "success"}]}}
 
@@ -263,6 +267,8 @@ class TestSSETransport:
     async def test_call_tool_error_response(self, transport):
         """Test SSE call tool with error response and metrics tracking."""
         transport._initialized = True
+        transport.session_id = "test-session"
+        transport._initialization_time = time.time()
         transport.message_url = "http://test.com/messages/test"
         response = {"error": {"message": "Tool failed"}}
 
@@ -280,6 +286,8 @@ class TestSSETransport:
     async def test_call_tool_timeout(self, transport):
         """Test SSE call tool with timeout and metrics tracking."""
         transport._initialized = True
+        transport.session_id = "test-session"
+        transport._initialization_time = time.time()
         transport.message_url = "http://test.com/messages/test"
 
         with patch.object(transport, "_send_request", AsyncMock(side_effect=asyncio.TimeoutError)):
@@ -570,6 +578,8 @@ class TestSSETransport:
     async def test_response_normalization(self, transport):
         """Test that response normalization uses base class methods."""
         transport._initialized = True
+        transport.session_id = "test-session"
+        transport._initialization_time = time.time()
         transport.message_url = "http://test.com/messages/test"
 
         # Test various response formats
@@ -794,6 +804,8 @@ class TestSSETransport:
     async def test_call_tool_with_different_response_formats(self, transport):
         """Test call_tool with various response formats."""
         transport._initialized = True
+        transport.session_id = "test-session"
+        transport._initialization_time = time.time()
         transport.message_url = "http://test.com/messages/test"
 
         # Test with error response
@@ -828,6 +840,8 @@ class TestSSETransport:
     async def test_call_tool_with_explicit_timeout(self, transport):
         """Test call_tool with explicit timeout parameter."""
         transport._initialized = True
+        transport.session_id = "test-session"
+        transport._initialization_time = time.time()
         transport.message_url = "http://test.com/messages/test"
 
         with patch.object(
@@ -858,6 +872,8 @@ class TestSSETransport:
     async def test_call_tool_oauth_error_with_refresh_success(self, transport):
         """Test call_tool handles OAuth error with successful token refresh."""
         transport._initialized = True
+        transport.session_id = "test-session"
+        transport._initialization_time = time.time()
         transport.message_url = "http://test.com/messages/test"
 
         # Mock OAuth refresh callback
@@ -887,6 +903,8 @@ class TestSSETransport:
     async def test_call_tool_oauth_error_without_callback(self, transport):
         """Test call_tool handles OAuth error without refresh callback."""
         transport._initialized = True
+        transport.session_id = "test-session"
+        transport._initialization_time = time.time()
         transport.message_url = "http://test.com/messages/test"
         transport.oauth_refresh_callback = None
 
@@ -903,6 +921,8 @@ class TestSSETransport:
     async def test_call_tool_oauth_error_refresh_fails(self, transport):
         """Test call_tool when OAuth refresh callback raises exception."""
         transport._initialized = True
+        transport.session_id = "test-session"
+        transport._initialization_time = time.time()
         transport.message_url = "http://test.com/messages/test"
 
         async def mock_oauth_refresh():
@@ -923,6 +943,8 @@ class TestSSETransport:
     async def test_call_tool_oauth_error_refresh_no_auth_header(self, transport):
         """Test call_tool when OAuth refresh doesn't return Authorization header."""
         transport._initialized = True
+        transport.session_id = "test-session"
+        transport._initialization_time = time.time()
         transport.message_url = "http://test.com/messages/test"
 
         async def mock_oauth_refresh():
@@ -943,6 +965,8 @@ class TestSSETransport:
     async def test_call_tool_oauth_error_refresh_returns_none(self, transport):
         """Test call_tool when OAuth refresh returns None."""
         transport._initialized = True
+        transport.session_id = "test-session"
+        transport._initialization_time = time.time()
         transport.message_url = "http://test.com/messages/test"
 
         async def mock_oauth_refresh():
@@ -963,6 +987,8 @@ class TestSSETransport:
     async def test_call_tool_oauth_error_retry_also_fails(self, transport):
         """Test call_tool when retry after OAuth refresh also fails."""
         transport._initialized = True
+        transport.session_id = "test-session"
+        transport._initialization_time = time.time()
         transport.message_url = "http://test.com/messages/test"
 
         async def mock_oauth_refresh():
@@ -984,6 +1010,8 @@ class TestSSETransport:
     async def test_call_tool_oauth_error_retry_different_error(self, transport):
         """Test call_tool when retry fails with different error."""
         transport._initialized = True
+        transport.session_id = "test-session"
+        transport._initialization_time = time.time()
         transport.message_url = "http://test.com/messages/test"
 
         async def mock_oauth_refresh():
@@ -1306,3 +1334,765 @@ class TestSSETransport:
         assert transport._metrics.initialization_time == 2.0
         assert transport._metrics.session_discoveries == 3
         assert transport._metrics.total_calls == 0
+
+
+class TestSSETransportRecovery:
+    """Test SSE transport _attempt_recovery and call_tool health guard."""
+
+    @pytest.fixture
+    def transport(self):
+        return SSETransport(
+            "http://test.com", api_key="api_key", connection_timeout=30.0, default_timeout=30.0, enable_metrics=True
+        )
+
+    @pytest.mark.asyncio
+    async def test_attempt_recovery_success(self, transport):
+        """Test successful recovery: cleanup + reinitialize."""
+        transport._initialized = True
+        transport.session_id = "old-session"
+
+        with (
+            patch.object(transport, "_cleanup", AsyncMock()) as mock_cleanup,
+            patch.object(transport, "initialize", AsyncMock(return_value=True)) as mock_init,
+        ):
+            result = await transport._attempt_recovery()
+
+        assert result is True
+        mock_cleanup.assert_awaited_once()
+        mock_init.assert_awaited_once()
+        assert transport._metrics.recovery_attempts == 1
+
+    @pytest.mark.asyncio
+    async def test_attempt_recovery_failure(self, transport):
+        """Test recovery when reinitialize returns False."""
+        with (
+            patch.object(transport, "_cleanup", AsyncMock()),
+            patch.object(transport, "initialize", AsyncMock(return_value=False)),
+        ):
+            result = await transport._attempt_recovery()
+
+        assert result is False
+        assert transport._metrics.recovery_attempts == 1
+
+    @pytest.mark.asyncio
+    async def test_attempt_recovery_exception(self, transport):
+        """Test recovery when cleanup raises an exception."""
+        with patch.object(transport, "_cleanup", AsyncMock(side_effect=RuntimeError("boom"))):
+            result = await transport._attempt_recovery()
+
+        assert result is False
+        assert transport._metrics.recovery_attempts == 1
+
+    @pytest.mark.asyncio
+    async def test_attempt_recovery_no_metrics(self):
+        """Test recovery with metrics disabled."""
+        transport = SSETransport("http://test.com", enable_metrics=False)
+
+        with (
+            patch.object(transport, "_cleanup", AsyncMock()),
+            patch.object(transport, "initialize", AsyncMock(return_value=True)),
+        ):
+            result = await transport._attempt_recovery()
+
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_call_tool_unhealthy_triggers_recovery(self, transport):
+        """Test call_tool attempts recovery when is_connected() returns False."""
+        transport._initialized = True
+        transport.session_id = "test-session"
+
+        with (
+            patch.object(transport, "is_connected", return_value=False),
+            patch.object(transport, "_attempt_recovery", AsyncMock(return_value=True)),
+            patch.object(
+                transport,
+                "_send_request",
+                AsyncMock(return_value={"result": {"content": [{"type": "text", "text": "ok"}]}}),
+            ),
+        ):
+            result = await transport.call_tool("test_tool", {"arg": "val"})
+
+        assert result["isError"] is False
+
+    @pytest.mark.asyncio
+    async def test_call_tool_unhealthy_recovery_fails(self, transport):
+        """Test call_tool returns error when recovery fails."""
+        transport._initialized = True
+        transport.session_id = "test-session"
+
+        with (
+            patch.object(transport, "is_connected", return_value=False),
+            patch.object(transport, "_attempt_recovery", AsyncMock(return_value=False)),
+        ):
+            result = await transport.call_tool("test_tool", {"arg": "val"})
+
+        assert result["isError"] is True
+        assert "Failed to recover SSE connection" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_call_tool_healthy_no_recovery(self, transport):
+        """Test call_tool skips recovery when is_connected() returns True."""
+        transport._initialized = True
+        transport.session_id = "test-session"
+
+        with (
+            patch.object(transport, "is_connected", return_value=True),
+            patch.object(transport, "_attempt_recovery", AsyncMock()) as mock_recovery,
+            patch.object(
+                transport,
+                "_send_request",
+                AsyncMock(return_value={"result": {"content": [{"type": "text", "text": "ok"}]}}),
+            ),
+        ):
+            result = await transport.call_tool("test_tool", {"arg": "val"})
+
+        mock_recovery.assert_not_awaited()
+        assert result["isError"] is False
+
+
+class TestSSETransportUncoveredLines:
+    """Tests specifically targeting uncovered lines for coverage improvement."""
+
+    @pytest.fixture
+    def transport(self):
+        return SSETransport(
+            "http://test.com",
+            api_key="api_key",
+            connection_timeout=30.0,
+            default_timeout=30.0,
+            enable_metrics=True,
+        )
+
+    @pytest.fixture
+    def transport_no_metrics(self):
+        return SSETransport("http://test.com", api_key="api_key", enable_metrics=False)
+
+    # ── Lines 182-184: session endpoint discovery timeout ──
+
+    @pytest.mark.asyncio
+    async def test_initialize_session_discovery_timeout(self, transport):
+        """Lines 182-184: message_url never set, loop exits on timeout."""
+        transport.timeout_config.connect = 0.3  # very short timeout
+
+        mock_stream_client = AsyncMock()
+        mock_send_client = AsyncMock()
+        mock_stream_client.aclose = AsyncMock()
+        mock_send_client.aclose = AsyncMock()
+
+        # SSE stream that yields data but never sets message_url (no /messages/ or endpoint event)
+        async def mock_aiter_lines():
+            while True:
+                yield "data: ping"
+                await asyncio.sleep(0.05)
+
+        mock_sse_response = AsyncMock()
+        mock_sse_response.status_code = 200
+        mock_sse_response.aiter_lines = mock_aiter_lines
+
+        class AsyncStreamContext:
+            def __init__(self, response):
+                self.response = response
+
+            async def __aenter__(self):
+                return self.response
+
+            async def __aexit__(self, exc_type, exc, tb):
+                pass
+
+        mock_stream_client.stream = Mock(return_value=AsyncStreamContext(mock_sse_response))
+
+        with patch("httpx.AsyncClient", side_effect=[mock_stream_client, mock_send_client]):
+            result = await transport.initialize()
+
+        assert result is False
+        assert transport._initialized is False
+        assert transport.message_url is None
+
+    # ── Lines 224-227: MCP handshake failure exception path ──
+
+    @pytest.mark.asyncio
+    async def test_initialize_handshake_exception(self, transport):
+        """Lines 224-227: _send_request raises during MCP handshake."""
+        mock_stream_client = AsyncMock()
+        mock_send_client = AsyncMock()
+        mock_stream_client.aclose = AsyncMock()
+        mock_send_client.aclose = AsyncMock()
+
+        async def mock_aiter_lines():
+            yield "data: /messages/session?session_id=test-session"
+            while True:
+                yield "data: ping"
+                await asyncio.sleep(0.1)
+
+        mock_sse_response = AsyncMock()
+        mock_sse_response.status_code = 200
+        mock_sse_response.aiter_lines = mock_aiter_lines
+
+        class AsyncStreamContext:
+            def __init__(self, response):
+                self.response = response
+
+            async def __aenter__(self):
+                return self.response
+
+            async def __aexit__(self, exc_type, exc, tb):
+                pass
+
+        mock_stream_client.stream = Mock(return_value=AsyncStreamContext(mock_sse_response))
+
+        with (
+            patch("httpx.AsyncClient", side_effect=[mock_stream_client, mock_send_client]),
+            patch.object(
+                transport,
+                "_send_request",
+                AsyncMock(side_effect=ConnectionError("handshake connection lost")),
+            ),
+        ):
+            result = await transport.initialize()
+
+        assert result is False
+        assert transport._initialized is False
+
+    # ── Line 244: blank line in SSE stream (continue) ──
+
+    @pytest.mark.asyncio
+    async def test_process_sse_stream_blank_lines(self, transport):
+        """Line 244: blank lines are skipped via continue."""
+        mock_response = AsyncMock()
+
+        async def mock_lines():
+            yield ""
+            yield "   "
+            yield "data: /messages/session?session_id=blank-test"
+
+        mock_response.aiter_lines = mock_lines
+        transport.sse_response = mock_response
+
+        task = asyncio.create_task(transport._process_sse_stream())
+        await asyncio.sleep(0.2)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+        # Blank lines were skipped; session was still discovered from non-blank line
+        assert transport.session_id == "blank-test"
+        assert transport.message_url == "http://test.com/messages/session?session_id=blank-test"
+
+    # ── Lines 262, 266: full URL endpoint with sessionId= and uuid fallback ──
+
+    @pytest.mark.asyncio
+    async def test_process_sse_stream_full_url_sessionId_param(self, transport):
+        """Line 262: endpoint with full URL using sessionId= query parameter."""
+        mock_response = AsyncMock()
+
+        async def mock_lines():
+            yield "event: endpoint"
+            yield "data: http://server.com/sse/message?sessionId=abc-123&extra=1"
+
+        mock_response.aiter_lines = mock_lines
+        transport.sse_response = mock_response
+
+        task = asyncio.create_task(transport._process_sse_stream())
+        await asyncio.sleep(0.2)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+        assert transport.message_url == "http://server.com/sse/message?sessionId=abc-123&extra=1"
+        assert transport.session_id == "abc-123"
+
+    @pytest.mark.asyncio
+    async def test_process_sse_stream_full_url_no_session_params(self, transport):
+        """Line 266: endpoint with full URL but no session_id or sessionId params -> uuid fallback."""
+        mock_response = AsyncMock()
+
+        async def mock_lines():
+            yield "event: endpoint"
+            yield "data: http://server.com/sse/message?other=param"
+
+        mock_response.aiter_lines = mock_lines
+        transport.sse_response = mock_response
+
+        task = asyncio.create_task(transport._process_sse_stream())
+        await asyncio.sleep(0.2)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+        assert transport.message_url == "http://server.com/sse/message?other=param"
+        # session_id should be a generated UUID (not None)
+        assert transport.session_id is not None
+        assert len(transport.session_id) == 36  # UUID format
+
+    # ── Lines 279-282: relative path endpoint with sessionId= and uuid fallback ──
+
+    @pytest.mark.asyncio
+    async def test_process_sse_stream_relative_path_sessionId_param(self, transport):
+        """Lines 279-280: relative path with sessionId= query parameter."""
+        mock_response = AsyncMock()
+
+        async def mock_lines():
+            yield "event: endpoint"
+            yield "data: /sse/message?sessionId=rel-456&extra=1"
+
+        mock_response.aiter_lines = mock_lines
+        transport.sse_response = mock_response
+
+        task = asyncio.create_task(transport._process_sse_stream())
+        await asyncio.sleep(0.2)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+        assert transport.message_url == "http://test.com/sse/message?sessionId=rel-456&extra=1"
+        assert transport.session_id == "rel-456"
+
+    @pytest.mark.asyncio
+    async def test_process_sse_stream_relative_path_no_session_params(self, transport):
+        """Lines 281-282: relative path without session_id/sessionId -> uuid fallback."""
+        mock_response = AsyncMock()
+
+        async def mock_lines():
+            yield "event: endpoint"
+            yield "data: /sse/message?other=param"
+
+        mock_response.aiter_lines = mock_lines
+        transport.sse_response = mock_response
+
+        task = asyncio.create_task(transport._process_sse_stream())
+        await asyncio.sleep(0.2)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+        assert transport.message_url == "http://test.com/sse/message?other=param"
+        assert transport.session_id is not None
+        assert len(transport.session_id) == 36  # UUID format
+
+    # ── Lines 326-329: SSE stream processing error with metrics ──
+
+    @pytest.mark.asyncio
+    async def test_process_sse_stream_exception_updates_metrics(self, transport):
+        """Lines 326-329: exception in SSE stream processing increments stream_errors."""
+        mock_response = AsyncMock()
+
+        async def mock_lines():
+            raise ConnectionError("SSE stream lost")
+            yield  # make it an async generator  # noqa: E501
+
+        mock_response.aiter_lines = mock_lines
+        transport.sse_response = mock_response
+
+        await transport._process_sse_stream()
+
+        assert transport._metrics.stream_errors == 1
+
+    @pytest.mark.asyncio
+    async def test_process_sse_stream_exception_no_metrics(self, transport_no_metrics):
+        """Lines 327-328: exception path when metrics are disabled (no _metrics)."""
+        mock_response = AsyncMock()
+
+        async def mock_lines():
+            raise RuntimeError("stream error")
+            yield  # noqa: E501
+
+        mock_response.aiter_lines = mock_lines
+        transport_no_metrics.sse_response = mock_response
+
+        # Should not raise even without metrics
+        await transport_no_metrics._process_sse_stream()
+
+    # ── Line 338: _send_request with no message_url ──
+
+    @pytest.mark.asyncio
+    async def test_send_request_no_message_url(self, transport):
+        """Line 338: _send_request raises RuntimeError when message_url is None."""
+        transport.message_url = None
+
+        with pytest.raises(RuntimeError, match="SSE transport not connected - no message URL"):
+            await transport._send_request("tools/list", {})
+
+    # ── Lines 367-368: _send_request status 200 with tools/ method resets failures ──
+
+    @pytest.mark.asyncio
+    async def test_send_request_200_tools_method_resets_failures(self, transport):
+        """Lines 367-368: status 200 with tools/ method resets consecutive failures."""
+        transport.message_url = "http://test.com/messages/test"
+        transport.send_client = AsyncMock()
+        transport._consecutive_failures = 3
+
+        mock_response = AsyncMock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"jsonrpc": "2.0", "result": {"tools": []}})
+        transport.send_client.post.return_value = mock_response
+
+        result = await transport._send_request("tools/list", {})
+
+        assert result["result"]["tools"] == []
+        assert transport._consecutive_failures == 0
+        assert transport._last_successful_ping is not None
+
+    @pytest.mark.asyncio
+    async def test_send_request_200_non_tools_method_no_reset(self, transport):
+        """Lines 366-368: status 200 with non-tools method does NOT reset failures."""
+        transport.message_url = "http://test.com/messages/test"
+        transport.send_client = AsyncMock()
+        transport._consecutive_failures = 3
+
+        mock_response = AsyncMock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"jsonrpc": "2.0", "result": {}})
+        transport.send_client.post.return_value = mock_response
+
+        await transport._send_request("initialize", {})
+
+        assert transport._consecutive_failures == 3  # unchanged
+
+    # ── Line 381: _send_request timeout with tools/ method increments failures ──
+
+    @pytest.mark.asyncio
+    async def test_send_request_timeout_tools_method_increments_failures(self, transport):
+        """Line 381: TimeoutError with tools/ method increments _consecutive_failures."""
+        transport.message_url = "http://test.com/messages/test"
+        transport.send_client = AsyncMock()
+        transport._consecutive_failures = 0
+
+        mock_response = AsyncMock()
+        mock_response.status_code = 202
+        transport.send_client.post.return_value = mock_response
+
+        with pytest.raises(asyncio.TimeoutError):
+            await transport._send_request("tools/call", {"name": "test"}, timeout=0.01)
+
+        assert transport._consecutive_failures == 1
+
+    @pytest.mark.asyncio
+    async def test_send_request_timeout_non_tools_method_no_increment(self, transport):
+        """Line 380: TimeoutError with non-tools method does NOT increment failures."""
+        transport.message_url = "http://test.com/messages/test"
+        transport.send_client = AsyncMock()
+        transport._consecutive_failures = 0
+
+        mock_response = AsyncMock()
+        mock_response.status_code = 202
+        transport.send_client.post.return_value = mock_response
+
+        with pytest.raises(asyncio.TimeoutError):
+            await transport._send_request("initialize", {}, timeout=0.01)
+
+        assert transport._consecutive_failures == 0  # not incremented
+
+    # ── Line 393: _send_notification with no message_url ──
+
+    @pytest.mark.asyncio
+    async def test_send_notification_no_message_url(self, transport):
+        """Line 393: _send_notification raises RuntimeError when message_url is None."""
+        transport.message_url = None
+
+        with pytest.raises(RuntimeError, match="SSE transport not connected - no message URL"):
+            await transport._send_notification("notifications/initialized")
+
+    # ── Lines 426-429: send_ping failure exception path ──
+
+    @pytest.mark.asyncio
+    async def test_send_ping_exception(self, transport):
+        """Lines 426-429: send_ping catches exception and returns False."""
+        transport._initialized = True
+        transport.message_url = "http://test.com/messages/test"
+
+        with patch.object(
+            transport,
+            "_send_request",
+            AsyncMock(side_effect=ConnectionError("ping connection lost")),
+        ):
+            result = await transport.send_ping()
+
+        assert result is False
+
+    # ── Lines 502-504: get_tools exception path ──
+
+    @pytest.mark.asyncio
+    async def test_get_tools_exception(self, transport):
+        """Lines 502-504: get_tools catches exception and returns []."""
+        transport._initialized = True
+
+        with patch.object(
+            transport,
+            "_send_request",
+            AsyncMock(side_effect=RuntimeError("tools fetch failed")),
+        ):
+            tools = await transport.get_tools()
+
+        assert tools == []
+
+    # ── Lines 596-601: call_tool general exception path ──
+
+    @pytest.mark.asyncio
+    async def test_call_tool_general_exception(self, transport):
+        """Lines 596-601: call_tool catches non-timeout exception."""
+        transport._initialized = True
+        transport.session_id = "test-session"
+        transport._initialization_time = time.time()
+        transport.message_url = "http://test.com/messages/test"
+
+        with patch.object(
+            transport,
+            "_send_request",
+            AsyncMock(side_effect=RuntimeError("unexpected failure")),
+        ):
+            result = await transport.call_tool("search", {"query": "test"})
+
+        assert result["isError"] is True
+        assert result["error"] == "unexpected failure"
+
+        # Metrics should track the failure
+        metrics = transport.get_metrics()
+        assert metrics["total_calls"] == 1
+        assert metrics["failed_calls"] == 1
+
+    # ── Line 606: _update_metrics with no metrics returns early ──
+
+    def test_update_metrics_no_metrics_object(self, transport_no_metrics):
+        """Line 606: _update_metrics returns early when _metrics is None."""
+        assert transport_no_metrics._metrics is None
+        # Should not raise
+        transport_no_metrics._update_metrics(1.0, True)
+
+    # ── Lines 629-644: read_resource ──
+
+    @pytest.mark.asyncio
+    async def test_read_resource_not_initialized(self, transport):
+        """Line 629: read_resource returns {} when not initialized."""
+        transport._initialized = False
+        result = await transport.read_resource("file:///test.txt")
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_read_resource_error_response(self, transport):
+        """Lines 635-637: read_resource returns {} on error response."""
+        transport._initialized = True
+
+        with patch.object(
+            transport,
+            "_send_request",
+            AsyncMock(return_value={"error": {"message": "Resource not found"}}),
+        ):
+            result = await transport.read_resource("file:///missing.txt")
+
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_read_resource_success(self, transport):
+        """Lines 634-638: read_resource returns result from dict response."""
+        transport._initialized = True
+
+        with patch.object(
+            transport,
+            "_send_request",
+            AsyncMock(return_value={"result": {"contents": [{"text": "hello"}]}}),
+        ):
+            result = await transport.read_resource("file:///test.txt")
+
+        assert result == {"contents": [{"text": "hello"}]}
+
+    @pytest.mark.asyncio
+    async def test_read_resource_model_dump_response(self, transport):
+        """Lines 639-640: read_resource calls model_dump on non-dict response."""
+        transport._initialized = True
+
+        class FakeResponse:
+            def model_dump(self):
+                return {"dumped": True}
+
+        with patch.object(
+            transport,
+            "_send_request",
+            AsyncMock(return_value=FakeResponse()),
+        ):
+            result = await transport.read_resource("file:///test.txt")
+
+        assert result == {"dumped": True}
+
+    @pytest.mark.asyncio
+    async def test_read_resource_exception(self, transport):
+        """Lines 642-644: read_resource catches exception and returns {}."""
+        transport._initialized = True
+
+        with patch.object(
+            transport,
+            "_send_request",
+            AsyncMock(side_effect=ConnectionError("read failed")),
+        ):
+            result = await transport.read_resource("file:///test.txt")
+
+        assert result == {}
+
+    # ── Lines 663-678: get_prompt ──
+
+    @pytest.mark.asyncio
+    async def test_get_prompt_not_initialized(self, transport):
+        """Line 663: get_prompt returns {} when not initialized."""
+        transport._initialized = False
+        result = await transport.get_prompt("my-prompt")
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_get_prompt_error_response(self, transport):
+        """Lines 672-674: get_prompt returns {} on error response."""
+        transport._initialized = True
+
+        with patch.object(
+            transport,
+            "_send_request",
+            AsyncMock(return_value={"error": {"message": "Prompt not found"}}),
+        ):
+            result = await transport.get_prompt("missing-prompt", {"arg": "val"})
+
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_get_prompt_success(self, transport):
+        """Lines 675: get_prompt returns result on success."""
+        transport._initialized = True
+
+        with patch.object(
+            transport,
+            "_send_request",
+            AsyncMock(return_value={"result": {"messages": [{"role": "user", "content": "hello"}]}}),
+        ):
+            result = await transport.get_prompt("my-prompt")
+
+        assert result == {"messages": [{"role": "user", "content": "hello"}]}
+
+    @pytest.mark.asyncio
+    async def test_get_prompt_exception(self, transport):
+        """Lines 676-678: get_prompt catches exception and returns {}."""
+        transport._initialized = True
+
+        with patch.object(
+            transport,
+            "_send_request",
+            AsyncMock(side_effect=RuntimeError("prompt fetch failed")),
+        ):
+            result = await transport.get_prompt("my-prompt")
+
+        assert result == {}
+
+    # ── Lines 748-749: set_session_id method ──
+
+    def test_set_session_id(self, transport):
+        """Lines 748-749: set_session_id updates session_id."""
+        assert transport.session_id is None
+
+        transport.set_session_id("new-session-abc")
+        assert transport.session_id == "new-session-abc"
+
+        transport.set_session_id(None)
+        assert transport.session_id is None
+
+    # ── Line 777: reset_metrics with no metrics returns early ──
+
+    def test_reset_metrics_no_metrics(self, transport_no_metrics):
+        """Line 777: reset_metrics returns early when _metrics is None."""
+        assert transport_no_metrics._metrics is None
+        # Should not raise
+        transport_no_metrics.reset_metrics()
+
+    # ── Additional: send_request non-200/202 with tools/ method increments failures ──
+
+    @pytest.mark.asyncio
+    async def test_send_request_error_status_tools_method_increments_failures(self, transport):
+        """Lines 373-374: non-200/202 status with tools/ method increments failures.
+
+        The RuntimeError raised in the else branch is then caught by the generic
+        except Exception handler, which also increments, so total is 2.
+        """
+        transport.message_url = "http://test.com/messages/test"
+        transport.send_client = AsyncMock()
+        transport._consecutive_failures = 0
+
+        mock_response = AsyncMock()
+        mock_response.status_code = 500
+        transport.send_client.post.return_value = mock_response
+
+        with pytest.raises(RuntimeError, match="HTTP request failed with status: 500"):
+            await transport._send_request("tools/call", {"name": "test"})
+
+        # Incremented once in else block (line 374) and once in except Exception (line 387)
+        assert transport._consecutive_failures == 2
+
+    @pytest.mark.asyncio
+    async def test_send_request_generic_exception_tools_method_increments_failures(self, transport):
+        """Lines 386-388: generic exception with tools/ method increments failures."""
+        transport.message_url = "http://test.com/messages/test"
+        transport.send_client = AsyncMock()
+        transport._consecutive_failures = 0
+        transport.send_client.post.side_effect = ConnectionError("connection lost")
+
+        with pytest.raises(ConnectionError):
+            await transport._send_request("tools/call", {"name": "test"})
+
+        assert transport._consecutive_failures == 1
+
+    # ── Additional: full URL endpoint with session_id= (line 261-262 not sessionId) ──
+
+    @pytest.mark.asyncio
+    async def test_process_sse_stream_full_url_session_id_param(self, transport):
+        """Line 262: endpoint full URL with session_id= (not sessionId=)."""
+        mock_response = AsyncMock()
+
+        async def mock_lines():
+            yield "event: endpoint"
+            yield "data: http://server.com/sse/message?session_id=sid-789&extra=1"
+
+        mock_response.aiter_lines = mock_lines
+        transport.sse_response = mock_response
+
+        task = asyncio.create_task(transport._process_sse_stream())
+        await asyncio.sleep(0.2)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+        assert transport.message_url == "http://server.com/sse/message?session_id=sid-789&extra=1"
+        assert transport.session_id == "sid-789"
+
+    # ── Additional: read_resource returns {} for non-dict, non-model_dump response ──
+
+    @pytest.mark.asyncio
+    async def test_read_resource_non_dict_no_model_dump(self, transport):
+        """Line 641: read_resource returns {} when response has no model_dump."""
+        transport._initialized = True
+
+        with patch.object(
+            transport,
+            "_send_request",
+            AsyncMock(return_value="just a string"),
+        ):
+            result = await transport.read_resource("file:///test.txt")
+
+        assert result == {}
+
+    # ── Additional: call_tool general exception with metrics disabled ──
+
+    @pytest.mark.asyncio
+    async def test_call_tool_general_exception_no_metrics(self, transport_no_metrics):
+        """Lines 597-598: call_tool exception path with metrics disabled."""
+        transport_no_metrics._initialized = True
+        transport_no_metrics.session_id = "test-session"
+        transport_no_metrics._initialization_time = time.time()
+        transport_no_metrics.message_url = "http://test.com/messages/test"
+
+        with (
+            patch.object(transport_no_metrics, "is_connected", return_value=True),
+            patch.object(
+                transport_no_metrics,
+                "_send_request",
+                AsyncMock(side_effect=ValueError("bad value")),
+            ),
+        ):
+            result = await transport_no_metrics.call_tool("search", {"query": "test"})
+
+        assert result["isError"] is True
+        assert result["error"] == "bad value"

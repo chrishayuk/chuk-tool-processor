@@ -6,18 +6,19 @@ Pydantic models for MCP server configurations.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
 
-class MCPTransport(str, Enum):
+class MCPTransport(StrEnum):
     """Supported MCP transport types."""
 
     STDIO = "stdio"
     SSE = "sse"
     HTTP = "http"
+    HTTP_STREAMABLE = "http_streamable"
 
 
 class MCPServerConfig(BaseModel):
@@ -46,7 +47,7 @@ class MCPServerConfig(BaseModel):
             if not self.command:
                 raise ValueError("command is required for stdio transport")
         else:
-            # SSE/HTTP
+            # SSE/HTTP/HTTP_STREAMABLE
             if not self.url:
                 raise ValueError(f"url is required for {self.transport} transport")
             # Extract API key from Authorization header if present

@@ -7,7 +7,17 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class MCPToolDefinition(BaseModel):
+    """A tool definition as returned by MCP servers."""
+
+    model_config = ConfigDict(extra="allow")
+
+    name: str = Field(description="Tool name")
+    description: str = Field(default="", description="Tool description")
+    inputSchema: dict[str, Any] = Field(default_factory=dict, description="JSON Schema for inputs")
 
 
 class TimeoutConfig(BaseModel):
