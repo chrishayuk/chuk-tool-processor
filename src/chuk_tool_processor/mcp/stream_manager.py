@@ -1059,3 +1059,30 @@ class StreamManager:
                 health_info["transports"][name] = {"status": "error", "ping_success": False, "error": str(e)}
 
         return health_info
+
+    async def reconnect(self, server_name: str) -> bool:
+        """Reconnect a specific transport by name.
+
+        Calls the transport's _attempt_recovery() which does cleanup + reinitialize.
+        Returns True if reconnection succeeded, False otherwise.
+        """
+        if self._closed:
+            logger.warning("Cannot reconnect: StreamManager is closed")
+            return False
+
+        transport = self.transports.get(server_name)
+        if not transport:
+            logger.warning("Cannot reconnect: unknown server %s", server_name)
+            return False
+
+        logger.info("Reconnecting server: %s", server_name)
+        try:
+            success = await transport._attempt_recovery()
+            if success:
+                logger.info("Server %s reconnected successfully", server_name)
+            else:
+                logger.warning("Server %s reconnection failed", server_name)
+            return success
+        except Exception as exc:
+            logger.error("Error reconnecting server %s: %s", server_name, exc)
+            return False

@@ -139,6 +139,21 @@ class MCPBaseTransport(ABC):
         raise NotImplementedError
 
     # ------------------------------------------------------------------ #
+    #  Recovery                                                          #
+    # ------------------------------------------------------------------ #
+    async def _attempt_recovery(self) -> bool:
+        """Attempt to recover from connection issues.
+
+        Default implementation: cleanup then reinitialize.
+        Subclasses may override for transport-specific recovery.
+        """
+        try:
+            await self.close()
+            return await self.initialize()
+        except Exception:
+            return False
+
+    # ------------------------------------------------------------------ #
     #  Backward compatibility and utility methods                       #
     # ------------------------------------------------------------------ #
     def get_streams(self) -> list[tuple]:

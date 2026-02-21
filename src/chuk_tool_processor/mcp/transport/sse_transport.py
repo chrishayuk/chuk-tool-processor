@@ -473,6 +473,20 @@ class SSETransport(MCPBaseTransport):
         logger.debug("No clear health indicators - defaulting to healthy")
         return True
 
+    async def _attempt_recovery(self) -> bool:
+        """Attempt to recover from SSE connection issues."""
+        if self.enable_metrics and self._metrics:
+            self._metrics.recovery_attempts += 1
+
+        logger.debug("Attempting SSE connection recovery...")
+
+        try:
+            await self._cleanup()
+            return await self.initialize()
+        except Exception as e:
+            logger.warning("SSE recovery attempt failed: %s", e)
+            return False
+
     async def get_tools(self) -> list[dict[str, Any]]:
         """Get list of available tools from the server."""
         if not self._initialized:
@@ -509,6 +523,14 @@ class SSETransport(MCPBaseTransport):
         start_time = time.time()
         if self.enable_metrics and self._metrics:
             self._metrics.total_calls += 1
+
+        # Check connection health before executing
+        if not self.is_connected():
+            logger.debug("SSE connection unhealthy, attempting recovery...")
+            if not await self._attempt_recovery():
+                if self.enable_metrics:
+                    self._update_metrics(time.time() - start_time, False)
+                return {"isError": True, "error": "Failed to recover SSE connection"}
 
         try:
             logger.debug("Calling tool '%s' with arguments: %s", tool_name, arguments)

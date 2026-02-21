@@ -221,6 +221,8 @@ class TestSSETransport:
     async def test_call_tool_success(self, transport):
         """Test SSE call tool when initialized with metrics tracking."""
         transport._initialized = True
+        transport.session_id = "test-session"
+        transport._initialization_time = time.time()
         transport.message_url = "http://test.com/messages/test"
         response = {"result": {"content": [{"type": "text", "text": '{"answer": "success"}'}]}}
 
@@ -239,6 +241,8 @@ class TestSSETransport:
     async def test_call_tool_with_timeout(self, transport):
         """Test SSE call tool with custom timeout parameter."""
         transport._initialized = True
+        transport.session_id = "test-session"
+        transport._initialization_time = time.time()
         transport.message_url = "http://test.com/messages/test"
         response = {"result": {"content": [{"type": "text", "text": "success"}]}}
 
@@ -263,6 +267,8 @@ class TestSSETransport:
     async def test_call_tool_error_response(self, transport):
         """Test SSE call tool with error response and metrics tracking."""
         transport._initialized = True
+        transport.session_id = "test-session"
+        transport._initialization_time = time.time()
         transport.message_url = "http://test.com/messages/test"
         response = {"error": {"message": "Tool failed"}}
 
@@ -280,6 +286,8 @@ class TestSSETransport:
     async def test_call_tool_timeout(self, transport):
         """Test SSE call tool with timeout and metrics tracking."""
         transport._initialized = True
+        transport.session_id = "test-session"
+        transport._initialization_time = time.time()
         transport.message_url = "http://test.com/messages/test"
 
         with patch.object(transport, "_send_request", AsyncMock(side_effect=asyncio.TimeoutError)):
@@ -570,6 +578,8 @@ class TestSSETransport:
     async def test_response_normalization(self, transport):
         """Test that response normalization uses base class methods."""
         transport._initialized = True
+        transport.session_id = "test-session"
+        transport._initialization_time = time.time()
         transport.message_url = "http://test.com/messages/test"
 
         # Test various response formats
@@ -794,6 +804,8 @@ class TestSSETransport:
     async def test_call_tool_with_different_response_formats(self, transport):
         """Test call_tool with various response formats."""
         transport._initialized = True
+        transport.session_id = "test-session"
+        transport._initialization_time = time.time()
         transport.message_url = "http://test.com/messages/test"
 
         # Test with error response
@@ -828,6 +840,8 @@ class TestSSETransport:
     async def test_call_tool_with_explicit_timeout(self, transport):
         """Test call_tool with explicit timeout parameter."""
         transport._initialized = True
+        transport.session_id = "test-session"
+        transport._initialization_time = time.time()
         transport.message_url = "http://test.com/messages/test"
 
         with patch.object(
@@ -858,6 +872,8 @@ class TestSSETransport:
     async def test_call_tool_oauth_error_with_refresh_success(self, transport):
         """Test call_tool handles OAuth error with successful token refresh."""
         transport._initialized = True
+        transport.session_id = "test-session"
+        transport._initialization_time = time.time()
         transport.message_url = "http://test.com/messages/test"
 
         # Mock OAuth refresh callback
@@ -887,6 +903,8 @@ class TestSSETransport:
     async def test_call_tool_oauth_error_without_callback(self, transport):
         """Test call_tool handles OAuth error without refresh callback."""
         transport._initialized = True
+        transport.session_id = "test-session"
+        transport._initialization_time = time.time()
         transport.message_url = "http://test.com/messages/test"
         transport.oauth_refresh_callback = None
 
@@ -903,6 +921,8 @@ class TestSSETransport:
     async def test_call_tool_oauth_error_refresh_fails(self, transport):
         """Test call_tool when OAuth refresh callback raises exception."""
         transport._initialized = True
+        transport.session_id = "test-session"
+        transport._initialization_time = time.time()
         transport.message_url = "http://test.com/messages/test"
 
         async def mock_oauth_refresh():
@@ -923,6 +943,8 @@ class TestSSETransport:
     async def test_call_tool_oauth_error_refresh_no_auth_header(self, transport):
         """Test call_tool when OAuth refresh doesn't return Authorization header."""
         transport._initialized = True
+        transport.session_id = "test-session"
+        transport._initialization_time = time.time()
         transport.message_url = "http://test.com/messages/test"
 
         async def mock_oauth_refresh():
@@ -943,6 +965,8 @@ class TestSSETransport:
     async def test_call_tool_oauth_error_refresh_returns_none(self, transport):
         """Test call_tool when OAuth refresh returns None."""
         transport._initialized = True
+        transport.session_id = "test-session"
+        transport._initialization_time = time.time()
         transport.message_url = "http://test.com/messages/test"
 
         async def mock_oauth_refresh():
@@ -963,6 +987,8 @@ class TestSSETransport:
     async def test_call_tool_oauth_error_retry_also_fails(self, transport):
         """Test call_tool when retry after OAuth refresh also fails."""
         transport._initialized = True
+        transport.session_id = "test-session"
+        transport._initialization_time = time.time()
         transport.message_url = "http://test.com/messages/test"
 
         async def mock_oauth_refresh():
@@ -984,6 +1010,8 @@ class TestSSETransport:
     async def test_call_tool_oauth_error_retry_different_error(self, transport):
         """Test call_tool when retry fails with different error."""
         transport._initialized = True
+        transport.session_id = "test-session"
+        transport._initialization_time = time.time()
         transport.message_url = "http://test.com/messages/test"
 
         async def mock_oauth_refresh():
@@ -1306,3 +1334,118 @@ class TestSSETransport:
         assert transport._metrics.initialization_time == 2.0
         assert transport._metrics.session_discoveries == 3
         assert transport._metrics.total_calls == 0
+
+
+class TestSSETransportRecovery:
+    """Test SSE transport _attempt_recovery and call_tool health guard."""
+
+    @pytest.fixture
+    def transport(self):
+        return SSETransport(
+            "http://test.com", api_key="api_key", connection_timeout=30.0, default_timeout=30.0, enable_metrics=True
+        )
+
+    @pytest.mark.asyncio
+    async def test_attempt_recovery_success(self, transport):
+        """Test successful recovery: cleanup + reinitialize."""
+        transport._initialized = True
+        transport.session_id = "old-session"
+
+        with (
+            patch.object(transport, "_cleanup", AsyncMock()) as mock_cleanup,
+            patch.object(transport, "initialize", AsyncMock(return_value=True)) as mock_init,
+        ):
+            result = await transport._attempt_recovery()
+
+        assert result is True
+        mock_cleanup.assert_awaited_once()
+        mock_init.assert_awaited_once()
+        assert transport._metrics.recovery_attempts == 1
+
+    @pytest.mark.asyncio
+    async def test_attempt_recovery_failure(self, transport):
+        """Test recovery when reinitialize returns False."""
+        with (
+            patch.object(transport, "_cleanup", AsyncMock()),
+            patch.object(transport, "initialize", AsyncMock(return_value=False)),
+        ):
+            result = await transport._attempt_recovery()
+
+        assert result is False
+        assert transport._metrics.recovery_attempts == 1
+
+    @pytest.mark.asyncio
+    async def test_attempt_recovery_exception(self, transport):
+        """Test recovery when cleanup raises an exception."""
+        with patch.object(transport, "_cleanup", AsyncMock(side_effect=RuntimeError("boom"))):
+            result = await transport._attempt_recovery()
+
+        assert result is False
+        assert transport._metrics.recovery_attempts == 1
+
+    @pytest.mark.asyncio
+    async def test_attempt_recovery_no_metrics(self):
+        """Test recovery with metrics disabled."""
+        transport = SSETransport("http://test.com", enable_metrics=False)
+
+        with (
+            patch.object(transport, "_cleanup", AsyncMock()),
+            patch.object(transport, "initialize", AsyncMock(return_value=True)),
+        ):
+            result = await transport._attempt_recovery()
+
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_call_tool_unhealthy_triggers_recovery(self, transport):
+        """Test call_tool attempts recovery when is_connected() returns False."""
+        transport._initialized = True
+        transport.session_id = "test-session"
+
+        with (
+            patch.object(transport, "is_connected", return_value=False),
+            patch.object(transport, "_attempt_recovery", AsyncMock(return_value=True)),
+            patch.object(
+                transport,
+                "_send_request",
+                AsyncMock(return_value={"result": {"content": [{"type": "text", "text": "ok"}]}}),
+            ),
+        ):
+            result = await transport.call_tool("test_tool", {"arg": "val"})
+
+        assert result["isError"] is False
+
+    @pytest.mark.asyncio
+    async def test_call_tool_unhealthy_recovery_fails(self, transport):
+        """Test call_tool returns error when recovery fails."""
+        transport._initialized = True
+        transport.session_id = "test-session"
+
+        with (
+            patch.object(transport, "is_connected", return_value=False),
+            patch.object(transport, "_attempt_recovery", AsyncMock(return_value=False)),
+        ):
+            result = await transport.call_tool("test_tool", {"arg": "val"})
+
+        assert result["isError"] is True
+        assert "Failed to recover SSE connection" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_call_tool_healthy_no_recovery(self, transport):
+        """Test call_tool skips recovery when is_connected() returns True."""
+        transport._initialized = True
+        transport.session_id = "test-session"
+
+        with (
+            patch.object(transport, "is_connected", return_value=True),
+            patch.object(transport, "_attempt_recovery", AsyncMock()) as mock_recovery,
+            patch.object(
+                transport,
+                "_send_request",
+                AsyncMock(return_value={"result": {"content": [{"type": "text", "text": "ok"}]}}),
+            ),
+        ):
+            result = await transport.call_tool("test_tool", {"arg": "val"})
+
+        mock_recovery.assert_not_awaited()
+        assert result["isError"] is False

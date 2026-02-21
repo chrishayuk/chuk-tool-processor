@@ -341,3 +341,47 @@ class TestMCPBaseTransportEdgeCases:
         content = [{"data": "value"}]
         result = transport._extract_mcp_content(content)
         assert result == {"data": "value"}
+
+
+class TestMCPBaseTransportRecovery:
+    """Test default _attempt_recovery() implementation."""
+
+    @pytest.mark.asyncio
+    async def test_attempt_recovery_success(self):
+        """Test default recovery: close + reinitialize succeeds."""
+        transport = ConcreteTransport()
+        await transport.initialize()
+        assert transport._initialized is True
+
+        # Simulate a broken state then recover
+        transport._initialized = False
+        transport._fail_init = False
+        result = await transport._attempt_recovery()
+
+        assert result is True
+        assert transport._initialized is True
+
+    @pytest.mark.asyncio
+    async def test_attempt_recovery_failure(self):
+        """Test default recovery when reinitialize fails."""
+        transport = ConcreteTransport(fail_init=True)
+
+        result = await transport._attempt_recovery()
+
+        assert result is False
+        assert transport._initialized is False
+
+    @pytest.mark.asyncio
+    async def test_attempt_recovery_exception(self):
+        """Test default recovery when close raises an exception."""
+        transport = ConcreteTransport()
+        await transport.initialize()
+
+        # Make close raise an exception
+        async def bad_close():
+            raise RuntimeError("close exploded")
+
+        transport.close = bad_close
+
+        result = await transport._attempt_recovery()
+        assert result is False
