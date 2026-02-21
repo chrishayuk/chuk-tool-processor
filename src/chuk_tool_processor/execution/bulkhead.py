@@ -33,7 +33,7 @@ import asyncio
 import fnmatch
 from collections import defaultdict
 from contextlib import asynccontextmanager
-from enum import Enum
+from enum import StrEnum
 from functools import lru_cache
 from typing import Any
 
@@ -44,7 +44,7 @@ from chuk_tool_processor.logging import get_logger
 logger = get_logger("chuk_tool_processor.execution.bulkhead")
 
 
-class BulkheadLimitType(str, Enum):
+class BulkheadLimitType(StrEnum):
     """Types of bulkhead limits that can be exceeded."""
 
     TOOL = "tool"

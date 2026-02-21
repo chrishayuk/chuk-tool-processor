@@ -38,7 +38,7 @@ Example:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from chuk_tool_processor.execution.wrappers.circuit_breaker import (
@@ -62,7 +62,7 @@ if TYPE_CHECKING:
 logger = get_logger("chuk_tool_processor.execution.wrappers.factory")
 
 
-class WrapperBackend(str, Enum):
+class WrapperBackend(StrEnum):
     """Backend type for production wrappers."""
 
     MEMORY = "memory"  # In-memory, single-instance

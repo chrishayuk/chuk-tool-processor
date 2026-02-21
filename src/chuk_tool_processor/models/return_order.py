@@ -3,10 +3,10 @@
 Return order enum for tool execution results.
 """
 
-from enum import Enum
+from enum import StrEnum
 
 
-class ReturnOrder(str, Enum):
+class ReturnOrder(StrEnum):
     """
     Specifies the order in which tool results should be returned.
 

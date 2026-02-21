@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import time
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -17,7 +17,7 @@ from chuk_tool_processor.guards.base import BaseGuard, GuardResult
 from chuk_tool_processor.guards.models import EnforcementLevel
 
 
-class ErrorClass(str, Enum):
+class ErrorClass(StrEnum):
     """Classification of errors for retry decisions."""
 
     VALIDATION = "validation"

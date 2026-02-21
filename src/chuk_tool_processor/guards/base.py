@@ -8,13 +8,13 @@ Each guard focuses on one concern and returns a typed result.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
 
 from pydantic import BaseModel, Field
 
 
-class GuardVerdict(str, Enum):
+class GuardVerdict(StrEnum):
     """Verdict from a guard check."""
 
     ALLOW = "allow"  # Proceed with execution

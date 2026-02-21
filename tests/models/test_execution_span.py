@@ -5,6 +5,7 @@ Tests for ExecutionSpan and SpanBuilder.
 
 from datetime import UTC, datetime
 
+from chuk_tool_processor.guards.base import GuardVerdict
 from chuk_tool_processor.models.execution_span import (
     ErrorInfo,
     ExecutionOutcome,
@@ -105,17 +106,17 @@ class TestGuardDecision:
         decision = GuardDecision(
             guard_name="SchemaGuard",
             guard_class="guards.schema.SchemaGuard",
-            verdict="ALLOW",
+            verdict=GuardVerdict.ALLOW,
         )
         assert decision.guard_name == "SchemaGuard"
-        assert decision.verdict == "ALLOW"
+        assert decision.verdict == GuardVerdict.ALLOW
 
     def test_guard_decision_with_repair(self):
         """Test guard decision with repaired args."""
         decision = GuardDecision(
             guard_name="RepairGuard",
             guard_class="guards.repair.RepairGuard",
-            verdict="REPAIR",
+            verdict=GuardVerdict.REPAIR,
             reason="Repaired invalid argument",
             repaired_args={"x": 10},
         )
@@ -210,20 +211,20 @@ class TestExecutionSpan:
     def test_guard_warnings_property(self):
         """Test guard_warnings property."""
         decisions = [
-            GuardDecision(guard_name="G1", guard_class="c1", verdict="ALLOW"),
-            GuardDecision(guard_name="G2", guard_class="c2", verdict="WARN"),
-            GuardDecision(guard_name="G3", guard_class="c3", verdict="WARN"),
+            GuardDecision(guard_name="G1", guard_class="c1", verdict=GuardVerdict.ALLOW),
+            GuardDecision(guard_name="G2", guard_class="c2", verdict=GuardVerdict.WARN),
+            GuardDecision(guard_name="G3", guard_class="c3", verdict=GuardVerdict.WARN),
         ]
         span = ExecutionSpan(tool_name="test_tool", guard_decisions=decisions)
         warnings = span.guard_warnings
         assert len(warnings) == 2
-        assert all(w.verdict == "WARN" for w in warnings)
+        assert all(w.verdict == GuardVerdict.WARN for w in warnings)
 
     def test_blocking_guard_property(self):
         """Test blocking_guard property."""
         decisions = [
-            GuardDecision(guard_name="G1", guard_class="c1", verdict="ALLOW"),
-            GuardDecision(guard_name="G2", guard_class="c2", verdict="BLOCK"),
+            GuardDecision(guard_name="G1", guard_class="c1", verdict=GuardVerdict.ALLOW),
+            GuardDecision(guard_name="G2", guard_class="c2", verdict=GuardVerdict.BLOCK),
         ]
         span = ExecutionSpan(tool_name="test_tool", guard_decisions=decisions)
         assert span.blocking_guard is not None
@@ -232,7 +233,7 @@ class TestExecutionSpan:
     def test_blocking_guard_property_none(self):
         """Test blocking_guard property when no blocking guard."""
         decisions = [
-            GuardDecision(guard_name="G1", guard_class="c1", verdict="ALLOW"),
+            GuardDecision(guard_name="G1", guard_class="c1", verdict=GuardVerdict.ALLOW),
         ]
         span = ExecutionSpan(tool_name="test_tool", guard_decisions=decisions)
         assert span.blocking_guard is None
@@ -359,28 +360,28 @@ class TestSpanBuilder:
     def test_add_guard_decision_allow(self):
         """Test adding ALLOW guard decision."""
         builder = SpanBuilder(tool_name="test", arguments={})
-        decision = GuardDecision(guard_name="G1", guard_class="c1", verdict="ALLOW")
+        decision = GuardDecision(guard_name="G1", guard_class="c1", verdict=GuardVerdict.ALLOW)
         result = builder.add_guard_decision(decision)
 
         assert result is builder
         assert len(builder._guard_decisions) == 1
-        assert builder._final_verdict == "ALLOW"
+        assert builder._final_verdict == GuardVerdict.ALLOW
 
     def test_add_guard_decision_warn(self):
         """Test adding WARN guard decision."""
         builder = SpanBuilder(tool_name="test", arguments={})
-        decision = GuardDecision(guard_name="G1", guard_class="c1", verdict="WARN")
+        decision = GuardDecision(guard_name="G1", guard_class="c1", verdict=GuardVerdict.WARN)
         builder.add_guard_decision(decision)
 
-        assert builder._final_verdict == "WARN"
+        assert builder._final_verdict == GuardVerdict.WARN
 
     def test_add_guard_decision_block(self):
         """Test adding BLOCK guard decision."""
         builder = SpanBuilder(tool_name="test", arguments={})
-        decision = GuardDecision(guard_name="G1", guard_class="c1", verdict="BLOCK")
+        decision = GuardDecision(guard_name="G1", guard_class="c1", verdict=GuardVerdict.BLOCK)
         builder.add_guard_decision(decision)
 
-        assert builder._final_verdict == "BLOCK"
+        assert builder._final_verdict == GuardVerdict.BLOCK
 
     def test_add_guard_decision_repair(self):
         """Test adding REPAIR guard decision."""
@@ -388,24 +389,24 @@ class TestSpanBuilder:
         decision = GuardDecision(
             guard_name="G1",
             guard_class="c1",
-            verdict="REPAIR",
+            verdict=GuardVerdict.REPAIR,
             repaired_args={"x": 10},
         )
         builder.add_guard_decision(decision)
 
-        assert builder._final_verdict == "REPAIR"
+        assert builder._final_verdict == GuardVerdict.REPAIR
         assert builder._repaired_arguments == {"x": 10}
 
     def test_add_guard_decision_block_overrides_repair(self):
         """Test BLOCK verdict overrides REPAIR."""
         builder = SpanBuilder(tool_name="test", arguments={})
-        repair = GuardDecision(guard_name="G1", guard_class="c1", verdict="REPAIR")
-        block = GuardDecision(guard_name="G2", guard_class="c2", verdict="BLOCK")
+        repair = GuardDecision(guard_name="G1", guard_class="c1", verdict=GuardVerdict.REPAIR)
+        block = GuardDecision(guard_name="G2", guard_class="c2", verdict=GuardVerdict.BLOCK)
 
         builder.add_guard_decision(repair)
         builder.add_guard_decision(block)
 
-        assert builder._final_verdict == "BLOCK"
+        assert builder._final_verdict == GuardVerdict.BLOCK
 
     def test_set_effective_arguments(self):
         """Test set_effective_arguments."""

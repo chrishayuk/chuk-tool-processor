@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from redis.asyncio import Redis
 
 
-class RedisKeyType(str, Enum):
+class RedisKeyType(StrEnum):
     """Redis key types for registry storage."""
 
     TOOLS = "tools"

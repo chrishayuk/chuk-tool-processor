@@ -7,7 +7,7 @@ Caps bytes, tokens, array lengths, and nesting depth.
 from __future__ import annotations
 
 import json
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from chuk_tool_processor.guards.base import BaseGuard, GuardResult
 
 
-class TruncationMode(str, Enum):
+class TruncationMode(StrEnum):
     """How to handle oversized outputs."""
 
     ERROR = "error"  # Block with error
@@ -23,7 +23,7 @@ class TruncationMode(str, Enum):
     PAGINATE = "paginate"  # Return with pagination info
 
 
-class SizeViolationType(str, Enum):
+class SizeViolationType(StrEnum):
     """Types of size violations."""
 
     BYTES_EXCEEDED = "bytes_exceeded"

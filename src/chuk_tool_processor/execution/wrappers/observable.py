@@ -162,7 +162,7 @@ class ObservableExecutor:
         decision = GuardDecision(
             guard_name=guard_name,
             guard_class=type(guard_result).__module__,
-            verdict=guard_result.verdict.value.upper(),
+            verdict=guard_result.verdict,
             reason=guard_result.reason,
             details=guard_result.details,
             duration_ms=duration_ms,

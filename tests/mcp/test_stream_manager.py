@@ -173,10 +173,12 @@ class TestStreamManager:
 
     def test_get_all_tools(self, stream_manager, mock_transport):
         """Test getting all tools."""
+        from chuk_tool_processor.mcp.transport.models import MCPToolDefinition
+
         stream_manager.transports["server1"] = mock_transport
         stream_manager.all_tools = [
-            {"name": "tool1", "description": "Tool 1"},
-            {"name": "tool2", "description": "Tool 2"},
+            MCPToolDefinition(name="tool1", description="Tool 1"),
+            MCPToolDefinition(name="tool2", description="Tool 2"),
         ]
 
         # get_all_tools is not async
@@ -188,9 +190,11 @@ class TestStreamManager:
 
     def test_get_server_info(self, stream_manager):
         """Test getting server info."""
+        from chuk_tool_processor.mcp.transport.models import ServerInfo
+
         stream_manager.server_info = [
-            {"name": "server1", "transport_type": "stdio"},
-            {"name": "server2", "transport_type": "sse"},
+            ServerInfo(id=0, name="server1", tools=1, status="Up"),
+            ServerInfo(id=1, name="server2", tools=2, status="Up"),
         ]
 
         # get_server_info is not async

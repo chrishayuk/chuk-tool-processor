@@ -106,21 +106,13 @@ class HTTPStreamableTransport(MCPBaseTransport):
         self._metrics = TransportMetrics() if enable_metrics else None
 
     def _get_headers(self) -> dict[str, str]:
-        """Get headers with authentication and custom headers (like SSE)."""
-        headers = {
+        """Get headers with authentication and custom headers."""
+        base = {
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
             "User-Agent": "chuk-tool-processor/1.0.0",
         }
-
-        # Add configured headers first
-        if self.configured_headers:
-            headers.update(self.configured_headers)
-
-        # Add API key as Bearer token if provided and no Authorization header exists
-        # This prevents clobbering OAuth tokens from configured_headers
-        if self.api_key and "Authorization" not in headers:
-            headers["Authorization"] = f"Bearer {self.api_key}"
+        headers = self._build_auth_headers(base)
 
         # Add session ID if provided (use mcp-session-id header expected by MCP server)
         if self.session_id:
@@ -542,36 +534,7 @@ class HTTPStreamableTransport(MCPBaseTransport):
 
         self._metrics.update_call_metrics(response_time, success)
 
-    def _is_oauth_error(self, error_msg: str) -> bool:
-        """
-        Detect if error is OAuth-related per RFC 6750 and MCP OAuth spec.
-
-        Checks for:
-        - RFC 6750 Section 3.1 Bearer token errors (invalid_token, insufficient_scope)
-        - OAuth 2.1 token refresh errors (invalid_grant)
-        - MCP spec OAuth validation failures (401/403 responses)
-        """
-        if not error_msg:
-            return False
-
-        error_lower = error_msg.lower()
-        oauth_indicators = [
-            # RFC 6750 Section 3.1 - Standard Bearer token errors
-            "invalid_token",  # Token expired, revoked, malformed, or invalid
-            "insufficient_scope",  # Request requires higher privileges (403 Forbidden)
-            # OAuth 2.1 token refresh errors
-            "invalid_grant",  # Refresh token errors
-            # MCP spec - OAuth validation failures (401 Unauthorized)
-            "oauth validation",
-            "unauthorized",
-            # Common OAuth error descriptions
-            "expired token",
-            "token expired",
-            "authentication failed",
-            "invalid access token",
-        ]
-
-        return any(indicator in error_lower for indicator in oauth_indicators)
+    # _is_oauth_error is inherited from MCPBaseTransport
 
     async def list_resources(self) -> dict[str, Any]:
         """Enhanced resource listing with error handling."""

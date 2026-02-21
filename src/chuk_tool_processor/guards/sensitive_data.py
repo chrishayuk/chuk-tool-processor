@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -17,7 +17,7 @@ from chuk_tool_processor.guards.base import BaseGuard, GuardResult
 from chuk_tool_processor.guards.models import EnforcementLevel
 
 
-class SensitiveDataType(str, Enum):
+class SensitiveDataType(StrEnum):
     """Types of sensitive data patterns."""
 
     API_KEY = "api_key"
@@ -30,7 +30,7 @@ class SensitiveDataType(str, Enum):
     BASIC_AUTH = "basic_auth"
 
 
-class RedactMode(str, Enum):
+class RedactMode(StrEnum):
     """How to handle detected secrets."""
 
     BLOCK = "block"  # Block execution entirely

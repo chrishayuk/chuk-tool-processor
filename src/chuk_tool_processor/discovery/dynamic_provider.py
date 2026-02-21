@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 import logging
 from abc import ABC, abstractmethod
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Generic, TypeVar
 
 from chuk_tool_processor.discovery.search import (
@@ -77,7 +77,7 @@ def _error_response(
     return response
 
 
-class DynamicToolName(str, Enum):
+class DynamicToolName(StrEnum):
     """Names of available dynamic tools - no magic strings!"""
 
     LIST_TOOLS = "list_tools"

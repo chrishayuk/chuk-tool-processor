@@ -180,6 +180,48 @@ class MCPBaseTransport(ABC):
         await self.close()
 
     # ------------------------------------------------------------------ #
+    #  Shared OAuth and auth helpers                                     #
+    # ------------------------------------------------------------------ #
+    def _is_oauth_error(self, error_msg: str) -> bool:
+        """
+        Detect if error is OAuth-related per RFC 6750 and MCP OAuth spec.
+        """
+        if not error_msg:
+            return False
+
+        error_lower = error_msg.lower()
+        oauth_indicators = [
+            "invalid_token",
+            "insufficient_scope",
+            "invalid_grant",
+            "oauth validation",
+            "unauthorized",
+            "expired token",
+            "token expired",
+            "authentication failed",
+            "invalid access token",
+        ]
+
+        return any(indicator in error_lower for indicator in oauth_indicators)
+
+    def _build_auth_headers(self, base_headers: dict[str, str]) -> dict[str, str]:
+        """
+        Apply configured headers and API key auth to transport-specific base headers.
+
+        Merges configured_headers (e.g., from OAuth) and adds Bearer token
+        from api_key if no Authorization header exists.
+        """
+        headers = dict(base_headers)
+
+        if hasattr(self, "configured_headers") and self.configured_headers:
+            headers.update(self.configured_headers)
+
+        if hasattr(self, "api_key") and self.api_key and "Authorization" not in headers:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
+        return headers
+
+    # ------------------------------------------------------------------ #
     #  Shared helper methods for response normalization                  #
     # ------------------------------------------------------------------ #
     def _normalize_mcp_response(self, response: dict[str, Any]) -> dict[str, Any]:

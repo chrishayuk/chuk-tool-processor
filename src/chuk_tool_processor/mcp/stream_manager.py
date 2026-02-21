@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 from chuk_mcp.config import load_config  # type: ignore[import-untyped]
 
 from chuk_tool_processor.logging import get_logger
+from chuk_tool_processor.mcp.models import MCPTransport
 from chuk_tool_processor.mcp.transport import (
     HTTPStreamableTransport,
     MCPBaseTransport,
@@ -28,6 +29,7 @@ from chuk_tool_processor.mcp.transport import (
     StdioTransport,
     TimeoutConfig,
 )
+from chuk_tool_processor.mcp.transport.models import MCPToolDefinition, ServerInfo
 
 if TYPE_CHECKING:
     from chuk_tool_processor.mcp.middleware import MiddlewareConfig, MiddlewareStack
@@ -68,10 +70,10 @@ class StreamManager:
         middleware_config: MiddlewareConfig | None = None,
     ) -> None:
         self.transports: dict[str, MCPBaseTransport] = {}
-        self.server_info: list[dict[str, Any]] = []
+        self.server_info: list[ServerInfo] = []
         self.tool_to_server_map: dict[str, str] = {}
         self.server_names: dict[int, str] = {}
-        self.all_tools: list[dict[str, Any]] = []
+        self.all_tools: list[MCPToolDefinition] = []
         self._lock = asyncio.Lock()
         self._closed = False  # Track if we've been closed
         self.timeout_config = timeout_config or TimeoutConfig()
@@ -219,12 +221,19 @@ class StreamManager:
         if self._closed:
             raise RuntimeError("Cannot initialize a closed StreamManager")
 
+        # Convert transport_type string to enum
+        try:
+            transport_enum = MCPTransport(transport_type)
+        except ValueError:
+            logger.error("Unsupported transport type: %s", transport_type)
+            return
+
         async with self._lock:
             self.server_names = server_names or {}
 
             for idx, server_name in enumerate(servers):
                 try:
-                    if transport_type == "stdio":
+                    if transport_enum == MCPTransport.STDIO:
                         params, server_timeout = await load_config(config_file, server_name)
                         # Use per-server timeout if specified, otherwise use global default
                         effective_timeout = server_timeout if server_timeout is not None else default_timeout
@@ -236,7 +245,7 @@ class StreamManager:
                         transport: MCPBaseTransport = StdioTransport(
                             params, connection_timeout=initialization_timeout, default_timeout=effective_timeout
                         )
-                    elif transport_type == "sse":
+                    elif transport_enum == MCPTransport.SSE:
                         logger.debug(
                             "Using SSE transport in initialize() - consider using initialize_with_sse() instead"
                         )
@@ -261,7 +270,7 @@ class StreamManager:
 
                         transport = SSETransport(**transport_params)
 
-                    elif transport_type == "http_streamable":
+                    elif transport_enum in (MCPTransport.HTTP, MCPTransport.HTTP_STREAMABLE):
                         logger.debug(
                             "Using HTTP Streamable transport in initialize() - consider using initialize_with_http_streamable() instead"
                         )
@@ -322,22 +331,15 @@ class StreamManager:
                         if await asyncio.wait_for(transport.send_ping(), timeout=self.timeout_config.operation)
                         else "Down"
                     )
-                    tools = await asyncio.wait_for(transport.get_tools(), timeout=self.timeout_config.operation)
+                    raw_tools = await asyncio.wait_for(transport.get_tools(), timeout=self.timeout_config.operation)
+                    tools = [MCPToolDefinition.model_validate(t) for t in raw_tools]
 
                     for t in tools:
-                        name = t.get("name")
-                        if name:
-                            self.tool_to_server_map[name] = server_name
+                        if t.name:
+                            self.tool_to_server_map[t.name] = server_name
                     self.all_tools.extend(tools)
 
-                    self.server_info.append(
-                        {
-                            "id": idx,
-                            "name": server_name,
-                            "tools": len(tools),
-                            "status": status,
-                        }
-                    )
+                    self.server_info.append(ServerInfo(id=idx, name=server_name, tools=len(tools), status=status))
                     logger.debug("Initialised %s - %d tool(s)", server_name, len(tools))
                 except TimeoutError:
                     logger.error("Timeout initialising %s", server_name)
@@ -408,15 +410,15 @@ class StreamManager:
                         if await asyncio.wait_for(transport.send_ping(), timeout=self.timeout_config.operation)
                         else "Down"
                     )
-                    tools = await asyncio.wait_for(transport.get_tools(), timeout=self.timeout_config.operation)
+                    raw_tools = await asyncio.wait_for(transport.get_tools(), timeout=self.timeout_config.operation)
+                    tools = [MCPToolDefinition.model_validate(t) for t in raw_tools]
 
                     for t in tools:
-                        tname = t.get("name")
-                        if tname:
-                            self.tool_to_server_map[tname] = name
+                        if t.name:
+                            self.tool_to_server_map[t.name] = name
                     self.all_tools.extend(tools)
 
-                    self.server_info.append({"id": idx, "name": name, "tools": len(tools), "status": status})
+                    self.server_info.append(ServerInfo(id=idx, name=name, tools=len(tools), status=status))
                     logger.debug("Initialised SSE %s - %d tool(s)", name, len(tools))
                 except TimeoutError:
                     logger.error("Timeout initialising SSE %s", name)
@@ -484,15 +486,15 @@ class StreamManager:
                         if await asyncio.wait_for(transport.send_ping(), timeout=self.timeout_config.operation)
                         else "Down"
                     )
-                    tools = await asyncio.wait_for(transport.get_tools(), timeout=self.timeout_config.operation)
+                    raw_tools = await asyncio.wait_for(transport.get_tools(), timeout=self.timeout_config.operation)
+                    tools = [MCPToolDefinition.model_validate(t) for t in raw_tools]
 
                     for t in tools:
-                        tname = t.get("name")
-                        if tname:
-                            self.tool_to_server_map[tname] = name
+                        if t.name:
+                            self.tool_to_server_map[t.name] = name
                     self.all_tools.extend(tools)
 
-                    self.server_info.append({"id": idx, "name": name, "tools": len(tools), "status": status})
+                    self.server_info.append(ServerInfo(id=idx, name=name, tools=len(tools), status=status))
                     logger.debug("Initialised STDIO %s - %d tool(s)", name, len(tools))
                 except TimeoutError:
                     logger.error("Timeout initialising STDIO %s", name)
@@ -570,15 +572,15 @@ class StreamManager:
                         if await asyncio.wait_for(transport.send_ping(), timeout=self.timeout_config.operation)
                         else "Down"
                     )
-                    tools = await asyncio.wait_for(transport.get_tools(), timeout=self.timeout_config.operation)
+                    raw_tools = await asyncio.wait_for(transport.get_tools(), timeout=self.timeout_config.operation)
+                    tools = [MCPToolDefinition.model_validate(t) for t in raw_tools]
 
                     for t in tools:
-                        tname = t.get("name")
-                        if tname:
-                            self.tool_to_server_map[tname] = name
+                        if t.name:
+                            self.tool_to_server_map[t.name] = name
                     self.all_tools.extend(tools)
 
-                    self.server_info.append({"id": idx, "name": name, "tools": len(tools), "status": status})
+                    self.server_info.append(ServerInfo(id=idx, name=name, tools=len(tools), status=status))
                     logger.debug("Initialised HTTP Streamable %s - %d tool(s)", name, len(tools))
                 except TimeoutError:
                     logger.error("Timeout initialising HTTP Streamable %s", name)
@@ -595,13 +597,13 @@ class StreamManager:
     #  queries                                                           #
     # ------------------------------------------------------------------ #
     def get_all_tools(self) -> list[dict[str, Any]]:
-        return self.all_tools
+        return [t.model_dump() for t in self.all_tools]
 
     def get_server_for_tool(self, tool_name: str) -> str | None:
         return self.tool_to_server_map.get(tool_name)
 
     def get_server_info(self) -> list[dict[str, Any]]:
-        return self.server_info
+        return [s.model_dump() for s in self.server_info]
 
     def set_session_id(self, session_id: str | None) -> None:
         """

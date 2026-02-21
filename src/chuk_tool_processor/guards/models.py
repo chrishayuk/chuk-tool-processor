@@ -6,10 +6,10 @@ Defines tool classifications and enforcement levels used by guards.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 
-class EnforcementLevel(str, Enum):
+class EnforcementLevel(StrEnum):
     """Enforcement level for guards and constraints."""
 
     OFF = "off"  # No enforcement

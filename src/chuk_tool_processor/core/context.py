@@ -23,13 +23,13 @@ import contextlib
 import contextvars
 import uuid
 from datetime import UTC, datetime, timedelta
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-class ContextHeader(str, Enum):
+class ContextHeader(StrEnum):
     """Standard HTTP headers for context propagation."""
 
     REQUEST_ID = "X-Request-ID"
@@ -42,7 +42,7 @@ class ContextHeader(str, Enum):
     BUDGET = "X-Budget"
 
 
-class ContextKey(str, Enum):
+class ContextKey(StrEnum):
     """Standard keys for context dictionary representation."""
 
     REQUEST_ID = "request_id"

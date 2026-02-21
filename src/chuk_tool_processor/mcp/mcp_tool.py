@@ -393,7 +393,7 @@ class MCPTool:
         # Check if we should open the circuit breaker
         if self._consecutive_failures >= self.recovery_config.circuit_breaker_threshold and not self._circuit_open:
             self._circuit_open = True
-            self._circuit_open_time = time.time()
+            self._circuit_open_time = time.monotonic()
             self.connection_state = ConnectionState.FAILED
             logger.error(
                 f"Circuit breaker opened for tool '{self.tool_name}' after {self._consecutive_failures} consecutive failures"
@@ -407,7 +407,7 @@ class MCPTool:
         # Check if enough time has passed to close the circuit
         if (
             self._circuit_open_time
-            and time.time() - self._circuit_open_time >= self.recovery_config.circuit_breaker_timeout
+            and time.monotonic() - self._circuit_open_time >= self.recovery_config.circuit_breaker_timeout
         ):
             self._circuit_open = False
             self._circuit_open_time = None

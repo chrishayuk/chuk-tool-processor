@@ -19,14 +19,16 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from chuk_tool_processor.guards.base import GuardVerdict
 
-class ExecutionOutcome(str, Enum):
+
+class ExecutionOutcome(StrEnum):
     """Outcome of a tool execution attempt."""
 
     SUCCESS = "success"  # Tool executed and returned result
@@ -37,7 +39,7 @@ class ExecutionOutcome(str, Enum):
     REPAIRED = "repaired"  # Executed with repaired arguments
 
 
-class SandboxType(str, Enum):
+class SandboxType(StrEnum):
     """Type of sandbox used for execution."""
 
     NONE = "none"  # Direct in-process execution
@@ -47,7 +49,7 @@ class SandboxType(str, Enum):
     MCP = "mcp"  # Remote MCP server
 
 
-class ExecutionStrategy(str, Enum):
+class ExecutionStrategy(StrEnum):
     """Strategy used to execute the tool."""
 
     INPROCESS = "inprocess"  # InProcessStrategy
@@ -65,7 +67,7 @@ class GuardDecision(BaseModel):
 
     guard_name: str = Field(..., description="Name/type of the guard")
     guard_class: str = Field(..., description="Fully qualified class name")
-    verdict: str = Field(..., description="ALLOW, WARN, BLOCK, or REPAIR")
+    verdict: GuardVerdict = Field(..., description="Guard verdict")
     reason: str = Field(default="", description="Human-readable reason")
     details: dict[str, Any] = Field(default_factory=dict, description="Guard-specific details")
     duration_ms: float = Field(default=0.0, description="Time spent in this guard")
@@ -148,7 +150,7 @@ class ExecutionSpan(BaseModel):
         >>> print(span.duration_ms)
         12.5
         >>> print(span.guard_decisions)
-        [GuardDecision(guard_name="SchemaGuard", verdict="ALLOW")]
+        [GuardDecision(guard_name="SchemaGuard", verdict=GuardVerdict.ALLOW)]
 
     The span can be:
     - Exported to OpenTelemetry
@@ -200,9 +202,9 @@ class ExecutionSpan(BaseModel):
         default_factory=list,
         description="Ordered list of guard decisions",
     )
-    final_verdict: str = Field(
-        default="ALLOW",
-        description="Final verdict after all guards (ALLOW, WARN, BLOCK, REPAIR)",
+    final_verdict: GuardVerdict = Field(
+        default=GuardVerdict.ALLOW,
+        description="Final verdict after all guards",
     )
     repaired_arguments: dict[str, Any] | None = Field(
         default=None,
@@ -343,13 +345,13 @@ class ExecutionSpan(BaseModel):
     @property
     def guard_warnings(self) -> list[GuardDecision]:
         """Guards that returned WARN verdict."""
-        return [g for g in self.guard_decisions if g.verdict == "WARN"]
+        return [g for g in self.guard_decisions if g.verdict == GuardVerdict.WARN]
 
     @property
     def blocking_guard(self) -> GuardDecision | None:
         """The guard that blocked execution (if any)."""
         for g in self.guard_decisions:
-            if g.verdict == "BLOCK":
+            if g.verdict == GuardVerdict.BLOCK:
                 return g
         return None
 
@@ -452,7 +454,7 @@ class SpanBuilder:
         self._repaired_arguments: dict[str, Any] | None = None
 
         self._guard_decisions: list[GuardDecision] = []
-        self._final_verdict = "ALLOW"
+        self._final_verdict = GuardVerdict.ALLOW
         self._guard_start: datetime | None = None
         self._guard_duration_ms = 0.0
 
@@ -497,14 +499,14 @@ class SpanBuilder:
         self._guard_decisions.append(decision)
 
         # Track the most restrictive verdict
-        if decision.verdict == "BLOCK":
-            self._final_verdict = "BLOCK"
-        elif decision.verdict == "REPAIR" and self._final_verdict != "BLOCK":
-            self._final_verdict = "REPAIR"
+        if decision.verdict == GuardVerdict.BLOCK:
+            self._final_verdict = GuardVerdict.BLOCK
+        elif decision.verdict == GuardVerdict.REPAIR and self._final_verdict != GuardVerdict.BLOCK:
+            self._final_verdict = GuardVerdict.REPAIR
             if decision.repaired_args:
                 self._repaired_arguments = decision.repaired_args
-        elif decision.verdict == "WARN" and self._final_verdict == "ALLOW":
-            self._final_verdict = "WARN"
+        elif decision.verdict == GuardVerdict.WARN and self._final_verdict == GuardVerdict.ALLOW:
+            self._final_verdict = GuardVerdict.WARN
 
         return self
 

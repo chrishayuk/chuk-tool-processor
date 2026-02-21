@@ -9,7 +9,7 @@ that enable planners to make intelligent retry and fallback decisions.
 from __future__ import annotations
 
 from difflib import get_close_matches
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     pass  # For future type hints if needed
 
 
-class ErrorCode(str, Enum):
+class ErrorCode(StrEnum):
     """Machine-readable error codes for tool processor errors."""
 
     # Tool registry errors
@@ -57,7 +57,7 @@ class ErrorCode(str, Enum):
     CONFIGURATION_ERROR = "CONFIGURATION_ERROR"
 
 
-class ErrorCategory(str, Enum):
+class ErrorCategory(StrEnum):
     """
     High-level error categories for planner decision-making.
 

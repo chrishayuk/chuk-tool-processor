@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+import chuk_tool_processor.observability.tracing as tracing_module
 from chuk_tool_processor.observability.tracing import (
     NoOpTracer,
     add_span_event,
@@ -20,15 +21,18 @@ from chuk_tool_processor.observability.tracing import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _reset_tracing_state():
+    """Reset tracing module state before and after every test."""
+    tracing_module._tracer = None
+    tracing_module._tracing_enabled = False
+    yield
+    tracing_module._tracer = None
+    tracing_module._tracing_enabled = False
+
+
 class TestInitTracer:
     """Tests for tracer initialization."""
-
-    def teardown_method(self):
-        """Reset global state after each test."""
-        import chuk_tool_processor.observability.tracing as tracing_module
-
-        tracing_module._tracer = None
-        tracing_module._tracing_enabled = False
 
     def test_init_tracer_success(self):
         """Test successful tracer initialization.
@@ -65,13 +69,6 @@ class TestInitTracer:
 
     def test_get_tracer_not_initialized(self):
         """Test get_tracer when not initialized."""
-        # Import to ensure we use the non-reloaded module
-        import chuk_tool_processor.observability.tracing as tracing_module
-
-        # Ensure tracer is not initialized
-        tracing_module._tracer = None
-        tracing_module._tracing_enabled = False
-
         tracer = tracing_module.get_tracer()
         assert isinstance(tracer, tracing_module.NoOpTracer)
 
@@ -89,20 +86,6 @@ class TestNoOpTracer:
 
 class TestTraceToolExecution:
     """Tests for trace_tool_execution context manager."""
-
-    def setup_method(self):
-        """Reset global state before test."""
-        import chuk_tool_processor.observability.tracing as tracing_module
-
-        tracing_module._tracer = None
-        tracing_module._tracing_enabled = False
-
-    def teardown_method(self):
-        """Reset global state."""
-        import chuk_tool_processor.observability.tracing as tracing_module
-
-        tracing_module._tracer = None
-        tracing_module._tracing_enabled = False
 
     def test_trace_tool_execution_disabled(self):
         """Test trace_tool_execution when tracing disabled."""
@@ -131,20 +114,6 @@ class TestTraceToolExecution:
 class TestTraceCacheOperation:
     """Tests for trace_cache_operation context manager."""
 
-    def setup_method(self):
-        """Reset global state before test."""
-        import chuk_tool_processor.observability.tracing as tracing_module
-
-        tracing_module._tracer = None
-        tracing_module._tracing_enabled = False
-
-    def teardown_method(self):
-        """Reset global state."""
-        import chuk_tool_processor.observability.tracing as tracing_module
-
-        tracing_module._tracer = None
-        tracing_module._tracing_enabled = False
-
     def test_trace_cache_disabled(self):
         """Test trace_cache_operation when disabled."""
         with trace_cache_operation("lookup", "calculator", hit=True) as span:
@@ -162,20 +131,6 @@ class TestTraceCacheOperation:
 
 class TestTraceRetryAttempt:
     """Tests for trace_retry_attempt context manager."""
-
-    def setup_method(self):
-        """Reset global state before test."""
-        import chuk_tool_processor.observability.tracing as tracing_module
-
-        tracing_module._tracer = None
-        tracing_module._tracing_enabled = False
-
-    def teardown_method(self):
-        """Reset global state."""
-        import chuk_tool_processor.observability.tracing as tracing_module
-
-        tracing_module._tracer = None
-        tracing_module._tracing_enabled = False
 
     def test_trace_retry_disabled(self):
         """Test trace_retry_attempt when disabled."""
@@ -195,20 +150,6 @@ class TestTraceRetryAttempt:
 class TestTraceCircuitBreaker:
     """Tests for trace_circuit_breaker context manager."""
 
-    def setup_method(self):
-        """Reset global state before test."""
-        import chuk_tool_processor.observability.tracing as tracing_module
-
-        tracing_module._tracer = None
-        tracing_module._tracing_enabled = False
-
-    def teardown_method(self):
-        """Reset global state."""
-        import chuk_tool_processor.observability.tracing as tracing_module
-
-        tracing_module._tracer = None
-        tracing_module._tracing_enabled = False
-
     def test_trace_circuit_breaker_disabled(self):
         """Test trace_circuit_breaker when disabled."""
         with trace_circuit_breaker("api_tool", "OPEN") as span:
@@ -226,20 +167,6 @@ class TestTraceCircuitBreaker:
 
 class TestTraceRateLimit:
     """Tests for trace_rate_limit context manager."""
-
-    def setup_method(self):
-        """Reset global state before test."""
-        import chuk_tool_processor.observability.tracing as tracing_module
-
-        tracing_module._tracer = None
-        tracing_module._tracing_enabled = False
-
-    def teardown_method(self):
-        """Reset global state."""
-        import chuk_tool_processor.observability.tracing as tracing_module
-
-        tracing_module._tracer = None
-        tracing_module._tracing_enabled = False
 
     def test_trace_rate_limit_disabled(self):
         """Test trace_rate_limit when disabled."""
@@ -259,30 +186,13 @@ class TestTraceRateLimit:
 class TestSpanHelpers:
     """Tests for span helper functions."""
 
-    def setup_method(self):
-        """Reset global state before each test."""
-        import chuk_tool_processor.observability.tracing as tracing_module
-
-        tracing_module._tracer = None
-        tracing_module._tracing_enabled = False
-
-    def teardown_method(self):
-        """Reset global state."""
-        import chuk_tool_processor.observability.tracing as tracing_module
-
-        tracing_module._tracer = None
-        tracing_module._tracing_enabled = False
-
     def test_add_span_event_no_span(self):
         """Test add_span_event with None span."""
         # Should not raise
         add_span_event(None, "test_event", {"key": "value"})
 
-    @pytest.mark.skip(reason="Mock assertion fails in full suite. Passes individually.")
     def test_add_span_event_with_span(self):
         """Test add_span_event with valid span."""
-        import chuk_tool_processor.observability.tracing as tracing_module
-
         # Enable tracing so the function doesn't early return
         tracing_module._tracing_enabled = True
 
@@ -306,11 +216,8 @@ class TestSpanHelpers:
         # Should not raise
         set_span_error(None, Exception("test"))
 
-    @pytest.mark.skip(reason="Mock assertion fails in full suite. Passes individually.")
     def test_set_span_error_with_exception(self):
         """Test set_span_error with exception."""
-        import chuk_tool_processor.observability.tracing as tracing_module
-
         # Enable tracing so the function doesn't early return
         tracing_module._tracing_enabled = True
 
@@ -336,11 +243,8 @@ class TestSpanHelpers:
             mock_span.set_status.assert_called_once()
             mock_span.record_exception.assert_called_once_with(error)
 
-    @pytest.mark.skip(reason="Mock assertion fails in full suite. Passes individually.")
     def test_set_span_error_with_string(self):
         """Test set_span_error with string error."""
-        import chuk_tool_processor.observability.tracing as tracing_module
-
         # Enable tracing so the function doesn't early return
         tracing_module._tracing_enabled = True
 
