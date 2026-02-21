@@ -77,8 +77,8 @@ class TestTimeoutBudgetGuard:
         """Test degrade actions are set when soft limit exceeded."""
         guard = TimeoutBudgetGuard(
             config=TimeoutBudgetConfig(
-                per_turn_budget_ms=100,
-                soft_budget_ratio=0.3,
+                per_turn_budget_ms=1000,
+                soft_budget_ratio=0.01,  # 10ms soft limit
                 degrade_actions=[
                     DegradeAction.DISABLE_RETRIES,
                     DegradeAction.REDUCE_PARALLELISM,
@@ -86,7 +86,7 @@ class TestTimeoutBudgetGuard:
             )
         )
         guard.start_turn()
-        time.sleep(0.05)
+        time.sleep(0.1)  # 100ms - well past 10ms soft limit
         guard.check("tool", {})
 
         assert guard.should_disable_retries()
