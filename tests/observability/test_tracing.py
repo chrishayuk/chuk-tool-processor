@@ -279,5 +279,150 @@ class TestSpanHelpers:
         set_span_error(mock_span, Exception("test"))
 
 
+class TestTracingWithMockedTracer:
+    """Tests that exercise the enabled tracing code paths using a mocked tracer.
+
+    These ensure coverage even when OpenTelemetry is not installed (e.g. in CI).
+    """
+
+    @pytest.fixture(autouse=True)
+    def _setup_mock_tracer(self):
+        """Set up a mock tracer so the enabled code paths execute."""
+        mock_tracer = MagicMock()
+        mock_span = MagicMock()
+        mock_tracer.start_as_current_span.return_value.__enter__ = MagicMock(return_value=mock_span)
+        mock_tracer.start_as_current_span.return_value.__exit__ = MagicMock(return_value=False)
+        tracing_module._tracer = mock_tracer
+        tracing_module._tracing_enabled = True
+        self.mock_tracer = mock_tracer
+        self.mock_span = mock_span
+        yield
+        tracing_module._tracer = None
+        tracing_module._tracing_enabled = False
+
+    def test_trace_tool_execution_basic(self):
+        """Test trace_tool_execution with mock tracer — basic call."""
+        with trace_tool_execution("calculator"):
+            pass
+        self.mock_tracer.start_as_current_span.assert_called_once()
+        call_kwargs = self.mock_tracer.start_as_current_span.call_args
+        assert call_kwargs[0][0] == "tool.execute"
+        assert call_kwargs[1]["attributes"]["tool.name"] == "calculator"
+
+    def test_trace_tool_execution_with_namespace(self):
+        """Test trace_tool_execution with namespace attribute."""
+        with trace_tool_execution("calculator", namespace="math"):
+            pass
+        attrs = self.mock_tracer.start_as_current_span.call_args[1]["attributes"]
+        assert attrs["tool.namespace"] == "math"
+
+    def test_trace_tool_execution_with_str_attribute(self):
+        """Test trace_tool_execution with string attribute."""
+        with trace_tool_execution("calc", attributes={"operation": "add"}):
+            pass
+        attrs = self.mock_tracer.start_as_current_span.call_args[1]["attributes"]
+        assert attrs["tool.operation"] == "add"
+
+    def test_trace_tool_execution_with_int_attribute(self):
+        """Test trace_tool_execution with int attribute."""
+        with trace_tool_execution("calc", attributes={"count": 42}):
+            pass
+        attrs = self.mock_tracer.start_as_current_span.call_args[1]["attributes"]
+        assert attrs["tool.count"] == 42
+
+    def test_trace_tool_execution_with_complex_attribute(self):
+        """Test trace_tool_execution with non-primitive attribute (gets str-converted)."""
+        with trace_tool_execution("calc", attributes={"obj": {"nested": "val"}}):
+            pass
+        attrs = self.mock_tracer.start_as_current_span.call_args[1]["attributes"]
+        assert attrs["tool.obj"] == "{'nested': 'val'}"
+
+    def test_trace_cache_operation_hit(self):
+        """Test trace_cache_operation with hit=True."""
+        with trace_cache_operation("lookup", "calc", hit=True):
+            pass
+        attrs = self.mock_tracer.start_as_current_span.call_args[1]["attributes"]
+        assert attrs["cache.hit"] is True
+        assert attrs["cache.operation"] == "lookup"
+
+    def test_trace_cache_operation_no_hit(self):
+        """Test trace_cache_operation with hit=None."""
+        with trace_cache_operation("set", "calc"):
+            pass
+        attrs = self.mock_tracer.start_as_current_span.call_args[1]["attributes"]
+        assert "cache.hit" not in attrs
+
+    def test_trace_cache_operation_with_complex_attr(self):
+        """Test trace_cache_operation with non-primitive attribute."""
+        with trace_cache_operation("lookup", "calc", attributes={"data": [1, 2]}):
+            pass
+        attrs = self.mock_tracer.start_as_current_span.call_args[1]["attributes"]
+        assert attrs["cache.data"] == "[1, 2]"
+
+    def test_trace_retry_attempt_basic(self):
+        """Test trace_retry_attempt with mock tracer."""
+        with trace_retry_attempt("api_tool", 2, 5):
+            pass
+        attrs = self.mock_tracer.start_as_current_span.call_args[1]["attributes"]
+        assert attrs["retry.attempt"] == 2
+        assert attrs["retry.max_attempts"] == 5
+
+    def test_trace_retry_attempt_with_complex_attr(self):
+        """Test trace_retry_attempt with non-primitive attribute."""
+        with trace_retry_attempt("api_tool", 1, 3, attributes={"errors": [1, 2]}):
+            pass
+        attrs = self.mock_tracer.start_as_current_span.call_args[1]["attributes"]
+        assert attrs["retry.errors"] == "[1, 2]"
+
+    def test_trace_circuit_breaker_basic(self):
+        """Test trace_circuit_breaker with mock tracer."""
+        with trace_circuit_breaker("api_tool", "OPEN"):
+            pass
+        attrs = self.mock_tracer.start_as_current_span.call_args[1]["attributes"]
+        assert attrs["circuit.state"] == "OPEN"
+
+    def test_trace_circuit_breaker_with_complex_attr(self):
+        """Test trace_circuit_breaker with non-primitive attribute."""
+        with trace_circuit_breaker("api_tool", "CLOSED", attributes={"info": {"a": 1}}):
+            pass
+        attrs = self.mock_tracer.start_as_current_span.call_args[1]["attributes"]
+        assert attrs["circuit.info"] == "{'a': 1}"
+
+    def test_trace_rate_limit_basic(self):
+        """Test trace_rate_limit with mock tracer."""
+        with trace_rate_limit("api_tool", allowed=False):
+            pass
+        attrs = self.mock_tracer.start_as_current_span.call_args[1]["attributes"]
+        assert attrs["rate_limit.allowed"] is False
+
+    def test_trace_rate_limit_with_complex_attr(self):
+        """Test trace_rate_limit with non-primitive attribute."""
+        with trace_rate_limit("api_tool", allowed=True, attributes={"meta": [1]}):
+            pass
+        attrs = self.mock_tracer.start_as_current_span.call_args[1]["attributes"]
+        assert attrs["rate_limit.meta"] == "[1]"
+
+    def test_add_span_event_with_mock(self):
+        """Test add_span_event with mock span and tracing enabled."""
+        mock_span = MagicMock()
+        add_span_event(mock_span, "test_event", {"key": "value"})
+        mock_span.add_event.assert_called_once_with("test_event", attributes={"key": "value"})
+
+    def test_add_span_event_no_attributes(self):
+        """Test add_span_event with no attributes defaults to empty dict."""
+        mock_span = MagicMock()
+        add_span_event(mock_span, "test_event")
+        mock_span.add_event.assert_called_once_with("test_event", attributes={})
+
+    def test_get_tracer_returns_mock(self):
+        """Test get_tracer returns the mock tracer when set."""
+        tracer = tracing_module.get_tracer()
+        assert tracer is self.mock_tracer
+
+    def test_is_tracing_enabled_true(self):
+        """Test is_tracing_enabled returns True when enabled."""
+        assert is_tracing_enabled() is True
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

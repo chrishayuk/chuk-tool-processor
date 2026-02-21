@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chuk-tool-processor"
-version = "0.22"
+version = "0.22.1"
 description = "Async-native framework for registering, discovering, and executing tools referenced in LLM responses"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -82,6 +82,14 @@ addopts = "-v --cov=src --cov-report=term --cov-report=xml --cov-report=html"
 asyncio_default_fixture_loop_scope = "function"
 asyncio_mode = "strict"
 minversion = "8.0"
+filterwarnings = [
+    # Pydantic V1 compat warning from LangChain (third-party, can't fix)
+    "ignore::pydantic.warnings.PydanticDeprecatedSince20",
+    # RuntimeWarning from mock coroutines never awaited in tests
+    "ignore:coroutine .* was never awaited:RuntimeWarning",
+    # PytestCollectionWarning for test helper classes with __init__
+    "ignore::pytest.PytestCollectionWarning",
+]
 
 [dependency-groups]
 dev = [

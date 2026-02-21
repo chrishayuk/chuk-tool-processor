@@ -5,7 +5,7 @@ Tool metadata models for the registry with async-native support.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
@@ -83,8 +83,12 @@ class ToolMetadata(BaseModel):
     result_schema: dict[str, Any] | None = Field(None, description="Schema for the tool's result")
     requires_auth: bool = Field(False, description="Whether the tool requires authentication")
     tags: set[str] = Field(default_factory=set, description="Tags associated with the tool")
-    created_at: datetime = Field(default_factory=datetime.utcnow, description="When the tool was first registered")
-    updated_at: datetime = Field(default_factory=datetime.utcnow, description="When the tool was last updated")
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC), description="When the tool was first registered"
+    )
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC), description="When the tool was last updated"
+    )
     source: str | None = Field(None, description="Source of the tool (e.g., 'function', 'class', 'langchain')")
     source_name: str | None = Field(None, description="Source identifier (e.g., function name, class name)")
     concurrency_limit: int | None = Field(None, description="Maximum concurrent executions (None = unlimited)")
@@ -113,7 +117,7 @@ class ToolMetadata(BaseModel):
 
     def with_updated_timestamp(self) -> ToolMetadata:
         """Create a copy with updated timestamp."""
-        return self.model_copy(update={"updated_at": datetime.utcnow()})
+        return self.model_copy(update={"updated_at": datetime.now(UTC)})
 
     def __str__(self) -> str:
         """String representation of the tool metadata."""

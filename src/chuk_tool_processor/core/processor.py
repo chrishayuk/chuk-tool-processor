@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import json as stdlib_json  # Use stdlib json for consistent hashing
 import time
 from typing import Any
@@ -863,7 +864,7 @@ class ToolProcessor:
             # Close the executor if it has a close method
             if self.executor and hasattr(self.executor, "close"):
                 close_method = self.executor.close
-                if asyncio.iscoroutinefunction(close_method):
+                if inspect.iscoroutinefunction(close_method):
                     await close_method()
                 elif callable(close_method):
                     close_method()
@@ -871,7 +872,7 @@ class ToolProcessor:
             # Close the strategy if it has a close method
             if self.strategy and hasattr(self.strategy, "close"):
                 close_method = self.strategy.close
-                if asyncio.iscoroutinefunction(close_method):
+                if inspect.iscoroutinefunction(close_method):
                     await close_method()
                 elif callable(close_method):
                     result = close_method()
@@ -887,7 +888,7 @@ class ToolProcessor:
                     if isinstance(current, CachingToolExecutor):
                         if hasattr(current.cache, "clear"):
                             clear_method = current.cache.clear
-                            if asyncio.iscoroutinefunction(clear_method):
+                            if inspect.iscoroutinefunction(clear_method):
                                 await clear_method()
                             else:
                                 clear_result = clear_method()

@@ -149,7 +149,7 @@ class AsyncContextManagerWrapper(contextlib.AbstractAsyncContextManager):
             else:
                 # Propagate the exception into the generator
                 try:
-                    await self._gen.athrow(exc_type, exc_val, exc_tb)
+                    await self._gen.athrow(exc_val)
                 except StopAsyncIteration:
                     return False
                 # If the generator swallowed the exception, suppress it;
