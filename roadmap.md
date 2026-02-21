@@ -4,7 +4,7 @@
 
 ---
 
-## Shipped (v0.20)
+## Shipped (v0.22)
 
 Everything below is production-ready on `main`.
 
@@ -15,6 +15,7 @@ Everything below is production-ready on `main`.
 - [x] Rate limiting (global + per-tool sliding windows)
 - [x] Circuit breakers with automatic recovery
 - [x] Structured error categories with retry hints for planners
+- [x] All config classes are Pydantic `BaseModel` (no dataclasses)
 
 ### Execution Strategies
 - [x] InProcess — fast, trusted tools
@@ -30,6 +31,7 @@ Everything below is production-ready on `main`.
 - [x] OAuth token refresh callbacks
 - [x] Robust shutdown handling (shield + fallback strategies)
 - [x] Health checks and diagnostics
+- [x] Shared auth header + OAuth error logic extracted to `base_transport.py`
 
 ### Multi-Tenant & Isolation
 - [x] Bulkheads — per-tool/namespace concurrency limits
@@ -70,113 +72,39 @@ Everything below is production-ready on `main`.
 - [x] Prometheus metrics (latency, error rate, cache hits, circuit state)
 - [x] Structured logging with context propagation
 
+### Architecture Compliance (v0.22)
+
+Comprehensive audit and fix of architecture principle violations:
+
+- [x] **Enums everywhere** — `MCPTransport`, `ProviderType`, `TraceSinkType`, `DifferenceSeverity`, `GuardVerdict` replace all magic strings; all enums migrated to `StrEnum`
+- [x] **Pydantic-native** — `config.py` migrated from dataclasses to `BaseModel`; `StreamManager` collections typed with Pydantic models
+- [x] **Async-clean** — `FileTraceSink` uses `asyncio.to_thread()` for file I/O; `time.monotonic()` for all duration measurements
+- [x] **MCP DRY** — shared OAuth error detection and auth header construction in `base_transport.py`
+- [x] **Deprecation-clean** — `datetime.utcnow()` → `datetime.now(UTC)`, `asyncio.iscoroutinefunction` → `inspect.iscoroutinefunction`, `athrow()` 3-arg → 1-arg form
+- [x] **Duplicate removal** — `CircuitState` enum consolidated (removed duplicate from `redis_circuit_breaker.py`)
+
 ### Developer Experience
 - [x] `@tool` and `@register_tool` decorators
 - [x] `register_fn_tool` for plain functions
 - [x] PEP 561 type stubs (`py.typed`)
-- [x] 90+ test files with comprehensive coverage
-- [x] 20+ working examples
+- [x] 120+ test files, 3000+ tests, 97% coverage (every file ≥ 90%)
+- [x] 45+ working examples
+- [x] CI on Python 3.11, 3.12, 3.13 (macOS + Linux)
+- [x] Zero test warnings (pytest warning filters for known third-party issues)
 - [x] Apache 2.0 license
 - [x] Architecture Principles document (`ARCHITECTURE_PRINCIPLES.md`)
 
 ---
 
-## In Progress — MCP Apps (v0.21)
+## Next — Features (v0.23)
 
-Current branch: `mcp-apps`
+### Guard Integration with Processor
+Guards exist as a standalone system. Wire them into the processor pipeline.
 
-- [ ] Align transport layer with latest chuk-mcp changes
-- [ ] SSE transport enhancements (base transport additions)
-- [ ] Streamline example imports for new chuk-mcp API
-
----
-
-## Next — Principle Compliance & Fixups (v0.22)
-
-Audit from 2026-02-21 identified violations of architecture principles.
-See `ARCHITECTURE_PRINCIPLES.md` for the full set of rules.
-
-### Eliminate Magic Strings
-
-Add enums/constants for all string-compared values.
-
-- [ ] `TransportType` enum (`stdio`, `sse`, `http_streamable`) — used in `stream_manager.py`
-- [ ] `ProviderType` enum (`memory`, `redis`) — used in `registry/providers/__init__.py`
-- [ ] `TraceSinkType` enum (`memory`, `file`, `noop`) — used in `observability/trace_sink.py`
-- [ ] `GuardVerdict` enum (`ALLOW`, `WARN`, `BLOCK`, `REPAIR`) — replace string field in `GuardDecision`
-- [ ] `DifferenceSeverity` enum (`error`, `warning`) — used in `execution_trace.py`
-- [ ] `CircuitState` consistency — `redis_circuit_breaker.py` uses raw strings, local version uses enum
-
-### Reduce Dictionary Goop
-
-Replace `dict[str, Any]` with Pydantic models where shapes are known.
-
-- [ ] `StreamManager.all_tools` → `list[ToolDefinition]` model
-- [ ] `StreamManager.server_info` → `list[ServerInfo]` model
-- [ ] Transport params dicts in `stream_manager.py:initialize()` → Pydantic config models
-- [ ] `register_mcp_tools.py` metadata dict → `ToolMetadata` model
-- [ ] `core/processor.py` OpenAI dict parsing (lines ~459-481) → use existing parser models
-
-### Fix Async Violations
-
-Remove blocking calls from async code paths.
-
-- [ ] `observability/trace_sink.py` — synchronous `open()`/`write()` → `aiofiles` or executor
-- [ ] `mcp/mcp_tool.py` — `time.time()` usage for circuit breaker timing → `time.monotonic()`
-- [ ] `mcp/transport/stdio_transport.py` — `time.time()` for duration tracking → `time.monotonic()`
-
-### config.py Pydantic Migration
-
-- [ ] Convert `config.py` from dataclass to Pydantic `BaseModel`
-- [ ] Add field validators for tool limit parsing
-- [ ] Add `ConfigDict(frozen=True)` for immutability
-
-### MCP Transport DRY
-
-SSE and HTTP Streamable transports share ~200 lines of duplicate code.
-
-- [ ] Extract shared OAuth error detection to `base_transport.py`
-- [ ] Extract shared header construction to base
-- [ ] Extract shared session ID extraction logic
-- [ ] Consolidate response normalization (stdio has its own copy)
-
-### Fix 5 Failing Observability Tests
-
-- [ ] `test_tracing.py` — 5 tests failing on disabled-tracing paths (likely OTel SDK mock issue)
-
----
-
-## Near-Term — Test Coverage to 90% Per File (v0.23)
-
-Overall coverage is 90.83% but 11 files are below the 90% target.
-
-| File | Current | Gap |
-|------|---------|-----|
-| `execution/wrappers/redis_rate_limiting.py` | 19% | needs Redis mock tests |
-| `observability/setup.py` | 17% | needs OTel SDK mock tests |
-| `execution/wrappers/redis_circuit_breaker.py` | 29% | needs Redis mock tests |
-| `execution/wrappers/factory.py` | 30% | needs wrapper assembly tests |
-| `observability/trace_sink.py` | 42% | needs file/memory sink tests |
-| `models/tool_spec.py` | 84% | needs export format edge cases |
-| `mcp/transport/sse_transport.py` | 87% | needs SSE event parsing tests |
-| `observability/metrics.py` | 88% | needs Prometheus mock tests |
-| `discovery/searchable.py` | 88% | needs protocol compliance tests |
-| `plugins/parsers/base.py` | 88% | needs error path test |
-| `observability/tracing.py` | 89% | needs disabled-mode tests |
-
-Priority order:
-- [ ] `redis_rate_limiting.py` (19% → 90%) — fakeredis tests
-- [ ] `observability/setup.py` (17% → 90%) — mock OTel provider
-- [ ] `redis_circuit_breaker.py` (29% → 90%) — fakeredis tests
-- [ ] `factory.py` (30% → 90%) — wrapper assembly with mocked wrappers
-- [ ] `trace_sink.py` (42% → 90%) — file sink, memory sink, query tests
-- [ ] `tool_spec.py` (84% → 90%) — export edge cases
-- [ ] `sse_transport.py` (87% → 90%) — endpoint discovery, reconnection
-- [ ] Remaining 4 files (88-89%) — small targeted tests
-
----
-
-## Near-Term — Features
+- [ ] `guards=` parameter on `ToolProcessor`
+- [ ] Pre-execution guard chain (before tool call)
+- [ ] Post-execution guard chain (validate outputs)
+- [ ] Guard metrics in observability layer
 
 ### Distributed Caching (Redis)
 Redis-backed rate limiting and circuit breakers are shipped. Caching is next.
@@ -192,24 +120,16 @@ Improve cache hit rates for tools with volatile arguments.
 - [ ] Strip timestamps, random IDs, and other volatile fields before hashing
 - [ ] Documentation and examples
 
+---
+
+## Near-Term
+
 ### WebAssembly Sandbox
 Infrastructure is already scaffolded (`IsolationLevel.WASM`).
 
 - [ ] WASM runtime integration (wasmtime or similar)
 - [ ] Lightweight, portable tool isolation
 - [ ] Resource limits (memory, CPU cycles) within WASM boundary
-
-### Guard Integration with Processor
-Guards exist as a standalone system. Wire them into the processor pipeline.
-
-- [ ] `guards=` parameter on `ToolProcessor`
-- [ ] Pre-execution guard chain (before tool call)
-- [ ] Post-execution guard chain (validate outputs)
-- [ ] Guard metrics in observability layer
-
----
-
-## Medium-Term
 
 ### Type Safety Hardening
 Systematic module-by-module tightening of mypy strictness.

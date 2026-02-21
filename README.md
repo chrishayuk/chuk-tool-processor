@@ -618,7 +618,7 @@ python examples/04_mcp_integration/notion_oauth.py
 python examples/04_mcp_integration/middleware_demo.py
 ```
 
-See [examples/](examples/) for 20+ working examples.
+See [examples/](examples/) for 45+ working examples.
 
 ---
 
