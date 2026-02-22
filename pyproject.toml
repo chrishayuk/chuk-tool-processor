@@ -51,7 +51,7 @@ fast-json = [
 
 # Redis registry for distributed deployments
 redis = [
-    "redis[hiredis]>=5.0.0,<6",
+    "redis[hiredis]>=7.2,<8",
 ]
 
 # Full feature set with performance optimizations
@@ -62,7 +62,7 @@ full = [
 # All extras combined
 all = [
     "orjson>=3.10.0,<4",
-    "redis[hiredis]>=5.0.0,<6",
+    "redis[hiredis]>=7.2,<8",
 ]
 
 # Tell setuptools to look in src/ for your a2a package
@@ -106,7 +106,7 @@ dev = [
     "pre-commit>=3.8.0",
     "coverage[toml]>=7.6.0",
     "orjson>=3.10.0",
-    "redis[hiredis]>=5.0.0,<6",
+    "redis[hiredis]>=7.2,<8",
     "fakeredis[lua]>=2.32.1",
 ]
 
